@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/apus-run/gala/registry"
-	"github.com/apus-run/gala/server"
 	"github.com/apus-run/gala/server/grpc"
 	"github.com/apus-run/gala/server/http"
 )
@@ -80,7 +79,7 @@ func TestApp(t *testing.T) {
 	app := New(
 		WithName("van"),
 		WithVersion("v1.0.0"),
-		WithServer(hs, gs),
+		WithServers(hs, gs),
 		BeforeStart(func(_ context.Context) error {
 			t.Log("BeforeStart...")
 			return nil
@@ -287,7 +286,7 @@ func TestApp_Context(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &Service{
-				options:  &Options{id: tt.id, name: tt.name, metadata: tt.metadata, version: tt.version},
+				opts:     &Options{id: tt.id, name: tt.name, metadata: tt.metadata, version: tt.version},
 				ctx:      t.Context(),
 				cancel:   nil,
 				instance: tt.instance,
@@ -332,12 +331,12 @@ func Test_App_Service(t *testing.T) {
 	})
 
 	srv := http.NewServer(
-		server.WithAddress(":9000"),
-		server.WithHandler(e),
+		http.WithAddress(":9000"),
+		http.WithHandler(e),
 	)
 	service := New(
 		WithName("gin-http"),
-		WithServer(srv),
+		WithServers(srv),
 	)
 
 	if err := service.Run(); err != nil {
