@@ -8,13 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-
-	"github.com/apus-run/gala/server"
 )
 
 func TestNewServer(t *testing.T) {
 	addr := "0.0.0.0:9090"
-	server := NewServer(server.WithAddress(addr))
+	server := NewServer(WithAddress(addr))
 
 	go func() {
 		ctx, cancelFunc := context.WithTimeout(t.Context(), time.Second*3)

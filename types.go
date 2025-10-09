@@ -4,17 +4,22 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"syscall"
+	"time"
 
+	"github.com/apus-run/gala/pkg/ctxkey"
 	"github.com/apus-run/gala/registry"
 	"github.com/apus-run/gala/server"
 )
+
+var ServiceContextKey = ctxkey.NewContextKey[Gala]()
 
 type Gala interface {
 	ID() string
 	Name() string
 	Version() string
 	Metadata() map[string]string
-	Endpoint() string
+	Endpoint() []string
 
 	Run() error
 	Stop() error
@@ -23,27 +28,30 @@ type Gala interface {
 type Option func(*Options)
 
 type Options struct {
-	// ID is the unique identifier for the service instance.
+	// service id
 	id string
-	// Name is the name of the service.
+	// service name
 	name string
-	// Version is the version of the service.
+	// service version
 	version string
-	// Metadata is the metadata associated with the service.
+	// service metadata
 	metadata map[string]string
-
-	// server endpoints
+	// service endpoints
 	endpoints []*url.URL
 
-	ctx context.Context
-
+	// registry
 	registry registry.Registry
-	servers  []server.Server
+	// registry timeout
+	registryTimeout time.Duration
+	// stop timeout
+	stopTimeout time.Duration
+	// services
+	servers []server.Server
 
 	context context.Context
 	signals []os.Signal
 
-	// Before and After func
+	// Before and After funcs
 	beforeStart []func(context.Context) error
 	beforeStop  []func(context.Context) error
 	afterStart  []func(context.Context) error
@@ -52,7 +60,10 @@ type Options struct {
 
 func NewOptions() *Options {
 	return &Options{
-		metadata: make(map[string]string),
+		context:         context.Background(),
+		metadata:        make(map[string]string),
+		signals:         []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT},
+		registryTimeout: 10 * time.Second,
 	}
 }
 
@@ -99,9 +110,9 @@ func WithContext(ctx context.Context) Option {
 	return func(o *Options) { o.context = ctx }
 }
 
-// WithServer with transport servers.
-func WithServer(srv ...server.Server) Option {
-	return func(o *Options) { o.servers = srv }
+// WithServers with transport servers.
+func WithServers(srvs ...server.Server) Option {
+	return func(o *Options) { o.servers = srvs }
 }
 
 // WithSignal with exit signals.
@@ -113,6 +124,20 @@ func WithSignal(sigs ...os.Signal) Option {
 func WithRegistry(r registry.Registry) Option {
 	return func(o *Options) {
 		o.registry = r
+	}
+}
+
+// WithRegistryTimeout with registry timeout.
+func WithRegistryTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
+		o.registryTimeout = timeout
+	}
+}
+
+// WithStopTimeout with stop timeout.
+func WithStopTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
+		o.stopTimeout = timeout
 	}
 }
 

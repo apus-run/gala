@@ -2,50 +2,87 @@ package maputils
 
 import "sync"
 
-// SyncMap interface provides methods to access a map container.
-type SyncMap[K comparable, V any] interface {
-	Store(K, V)
-	Load(K) (V, bool)
-	Access(fn func(m *map[K]V))
-	RAccess(fn func(m map[K]V))
+// SyncMap 是对 sync.Map 的一个泛型封装
+// 要注意，K 必须是 comparable 的，并且谨慎使用指针作为 K。
+// 使用指针的情况下，两个 key 是否相等，仅仅取决于它们的地址
+// 而不是地址指向的值。可以参考 Load 测试。
+// 注意，key 不存在和 key 存在但是值恰好为零值（如 nil），是两码事
+type SyncMap[K comparable, V any] struct {
+	sm sync.Map
 }
 
-type syncMapImpl[K comparable, V any] struct {
-	data map[K]V
-	mux  sync.RWMutex
+// Load 加载键值对
+func (m *SyncMap[K, V]) Load(key K) (value V, ok bool) {
+	var anyVal any
+	anyVal, ok = m.sm.Load(key)
+	if anyVal != nil {
+		value = anyVal.(V)
+	}
+	return
 }
 
-// NewSyncMap returns a new synchronized map.
-func NewSyncMap[K comparable, V any]() SyncMap[K, V] {
-	return &syncMapImpl[K, V]{data: make(map[K]V)}
+// Store 存储键值对
+func (m *SyncMap[K, V]) Store(key K, value V) {
+	m.sm.Store(key, value)
 }
 
-// Load returns the stored value by key.
-func (m *syncMapImpl[K, V]) Load(k K) (V, bool) {
-	m.mux.RLock()
-	defer m.mux.RUnlock()
-	v, ok := m.data[k]
-	return v, ok
+// LoadOrStore 加载或者存储一个键值对
+// true 代表是加载的，false 代表执行了 store
+func (m *SyncMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
+	var anyVal any
+	anyVal, loaded = m.sm.LoadOrStore(key, value)
+	if anyVal != nil {
+		actual = anyVal.(V)
+	}
+	return
 }
 
-// Store inserts the value v to the map at the key k, or updates the value if the
-// comparison predicate returns true.
-func (m *syncMapImpl[K, V]) Store(k K, v V) {
-	m.mux.Lock()
-	defer m.mux.Unlock()
-	m.data[k] = v
+// LoadOrStoreFunc 是一个优化，也就是使用该方法能够避免无意义的创建实例。
+// 如果你的初始化过程非常消耗资源，那么使用这个方法是有价值的。
+// 它的代价就是 Key 不存在的时候会多一次 Load 调用。
+// 当 fn 返回 error 的时候，LoadOrStoreFunc 也会返回 error。
+func (m *SyncMap[K, V]) LoadOrStoreFunc(key K, fn func() (V, error)) (actual V, loaded bool, err error) {
+	val, ok := m.Load(key)
+	if ok {
+		return val, true, nil
+	}
+	val, err = fn()
+	if err != nil {
+		return
+	}
+	actual, loaded = m.LoadOrStore(key, val)
+	return
 }
 
-// Access gives protected read and write access to the internal map.
-func (m *syncMapImpl[K, V]) Access(fn func(m *map[K]V)) {
-	m.mux.Lock()
-	defer m.mux.Unlock()
-	fn(&m.data)
+// LoadAndDelete 加载并且删除一个键值对
+func (m *SyncMap[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
+	var anyVal any
+	anyVal, loaded = m.sm.LoadAndDelete(key)
+	if anyVal != nil {
+		value = anyVal.(V)
+	}
+	return
 }
 
-// RAccess gives protected read access to the internal map.
-func (m *syncMapImpl[K, V]) RAccess(fn func(m map[K]V)) {
-	m.mux.RLock()
-	defer m.mux.RUnlock()
-	fn(m.data)
+// Delete 删除键值对
+func (m *SyncMap[K, V]) Delete(key K) {
+	m.sm.Delete(key)
+}
+
+// Range 遍历, f 不能为 nil
+// 传入 f 的时候，K 和 V 直接使用对应的类型，如果 f 返回 false，那么就会中断遍历
+func (m *SyncMap[K, V]) Range(f func(key K, value V) bool) {
+	m.sm.Range(func(key, value any) bool {
+		var (
+			k K
+			v V
+		)
+		if value != nil {
+			v = value.(V)
+		}
+		if key != nil {
+			k = key.(K)
+		}
+		return f(k, v)
+	})
 }

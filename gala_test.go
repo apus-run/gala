@@ -60,12 +60,18 @@ func (mr *mockRegistry) ListServices(ctx context.Context, name string) ([]regist
 	return res, nil
 }
 
-func (mr *mockRegistry) Subscribe(listener registry.Listener) {
-	return
-}
-
 func (mr *mockRegistry) Close() error {
 	return nil
+}
+
+// Subscribe is a mock implementation to satisfy the registry.Registry interface.
+func (mr *mockRegistry) Subscribe(serviceName string) <-chan registry.Event {
+	ch := make(chan registry.Event)
+	go func() {
+		defer close(ch)
+		// No events are sent in the mock.
+	}()
+	return ch
 }
 
 func TestApp(t *testing.T) {
@@ -287,9 +293,9 @@ func TestApp_Context(t *testing.T) {
 				instance: tt.instance,
 			}
 
-			ctx := NewContext(t.Context(), a)
+			ctx := ServiceContextKey.NewContext(t.Context(), a)
 
-			if got, ok := FromContext(ctx); ok {
+			if got, ok := ServiceContextKey.FromContext(ctx); ok {
 				if got.ID() != tt.want.id {
 					t.Errorf("ID() = %v, want %v", got.ID(), tt.want.id)
 				}

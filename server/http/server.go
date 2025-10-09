@@ -15,25 +15,27 @@ import (
 )
 
 var _ server.Server = (*Server)(nil)
+var _ server.Endpointer = (*Server)(nil)
 
 type Server struct {
 	*http.Server
-	options *server.ServerOptions
+
+	opts *ServerOptions
 }
 
-func NewServer(opts ...server.ServerOption) *Server {
+func NewServer(opts ...ServerOption) *Server {
 	options := Apply(opts...)
 
-	srv := &Server{
-		options: options,
+	s := &Server{
+		opts: options,
 	}
 
-	srv.Server = &http.Server{
-		Handler:   srv,
-		TLSConfig: options.TLSConfig,
+	s.Server = &http.Server{
+		Handler:   s,
+		TLSConfig: options.tlsConf,
 	}
 
-	return srv
+	return s
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -46,12 +48,12 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	var err error
-	if s.options.TLSConfig != nil {
-		slog.Info("[HTTPS] server listen on", "address", s.options.Address)
-		err = s.ServeTLS(s.options.Listener, "", "")
+	if s.opts.tlsConf != nil {
+		slog.Info("[HTTPS] server listen on", "address", s.opts.addr)
+		err = s.ServeTLS(s.opts.lis, "", "")
 	} else {
-		slog.Info("[HTTP] server listen on", "address", s.options.Address)
-		err = s.Serve(s.options.Listener)
+		slog.Info("[HTTP] server listen on", "address", s.opts.addr)
+		err = s.Serve(s.opts.lis)
 	}
 
 	if !errors.Is(err, http.ErrServerClosed) {
@@ -79,22 +81,22 @@ func (s *Server) Stop(ctx context.Context) error {
 //	Legacy: http://127.0.0.1:8000?isSecure=false
 func (s *Server) Endpoint() (*url.URL, error) {
 	if err := s.listenAndEndpoint(); err != nil {
-		return nil, s.options.Error
+		return nil, s.opts.err
 	}
-	return s.options.Endpoint, nil
+	return s.opts.endpoint, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.options.Handler.ServeHTTP(w, r)
+	s.opts.handler.ServeHTTP(w, r)
 }
 
 // Health
 func (s *Server) Health() bool {
-	if s.options.Listener == nil {
+	if s.opts.lis == nil {
 		return false
 	}
 
-	conn, err := s.options.Listener.Accept()
+	conn, err := s.opts.lis.Accept()
 	if err != nil {
 		return false
 	}
@@ -104,21 +106,21 @@ func (s *Server) Health() bool {
 }
 
 func (s *Server) listenAndEndpoint() error {
-	if s.options.Listener == nil {
-		lis, err := net.Listen(s.options.Network, s.options.Address)
+	if s.opts.lis == nil {
+		lis, err := net.Listen(s.opts.network, s.opts.addr)
 		if err != nil {
-			s.options.Error = err
+			s.opts.err = err
 			return err
 		}
-		s.options.Listener = lis
+		s.opts.lis = lis
 	}
-	if s.options.Endpoint == nil {
-		addr, err := host.Extract(s.options.Address, s.options.Listener)
+	if s.opts.endpoint == nil {
+		addr, err := host.Extract(s.opts.addr, s.opts.lis)
 		if err != nil {
-			s.options.Error = err
+			s.opts.err = err
 			return err
 		}
-		s.options.Endpoint = endpoint.NewEndpoint(endpoint.Scheme("http", s.options.TLSConfig != nil), addr)
+		s.opts.endpoint = endpoint.NewEndpoint(endpoint.Scheme("http", s.opts.tlsConf != nil), addr)
 	}
-	return s.options.Error
+	return s.opts.err
 }

@@ -16,29 +16,29 @@ import (
 )
 
 var _ server.Server = (*Server)(nil)
+var _ server.Endpointer = (*Server)(nil)
 
 type Server struct {
 	*grpc.Server
 
-	baseCtx context.Context
-	options *server.ServerOptions
+	opts *ServerOptions
 }
 
-func NewServer(opts ...server.ServerOption) *Server {
+func NewServer(opts ...ServerOption) *Server {
 	options := Apply(opts...)
 
 	srv := &Server{
-		options: options,
+		opts: options,
 	}
 
 	grpcOpts := []grpc.ServerOption{}
 
-	if options.TLSConfig != nil {
-		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(options.TLSConfig)))
+	if options.tlsConf != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(options.tlsConf)))
 	}
 
-	if len(options.Options) > 0 {
-		grpcOpts = append(grpcOpts, options.Options...)
+	if len(options.grpcOpts) > 0 {
+		grpcOpts = append(grpcOpts, options.grpcOpts...)
 	}
 
 	srv.Server = grpc.NewServer(grpcOpts...)
@@ -48,13 +48,13 @@ func NewServer(opts ...server.ServerOption) *Server {
 
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.listenAndEndpoint(); err != nil {
-		return s.options.Error
+		return s.opts.err
 	}
-	s.baseCtx = ctx
+	s.opts.baseCtx = ctx
 
-	slog.Info("[gRPC] server listen on", "address", s.options.Address)
+	slog.Info("[gRPC] server listen on", "address", s.opts.addr)
 
-	return s.Serve(s.options.Listener)
+	return s.Serve(s.opts.lis)
 }
 
 func (s *Server) Stop(ctx context.Context) error {
@@ -68,10 +68,10 @@ func (s *Server) Stop(ctx context.Context) error {
 	})
 }
 func (s *Server) Health() bool {
-	if s.options.Listener == nil {
+	if s.opts.lis == nil {
 		return false
 	}
-	conn, err := s.options.Listener.Accept()
+	conn, err := s.opts.lis.Accept()
 	if err != nil {
 		return false
 	}
@@ -85,27 +85,27 @@ func (s *Server) Health() bool {
 //	grpc://127.0.0.1:9000?isSecure=false
 func (s *Server) Endpoint() (*url.URL, error) {
 	if err := s.listenAndEndpoint(); err != nil {
-		return nil, s.options.Error
+		return nil, s.opts.err
 	}
-	return s.options.Endpoint, nil
+	return s.opts.endpoint, nil
 }
 
 func (s *Server) listenAndEndpoint() error {
-	if s.options.Listener == nil {
-		lis, err := net.Listen(s.options.Network, s.options.Address)
+	if s.opts.lis == nil {
+		lis, err := net.Listen(s.opts.network, s.opts.addr)
 		if err != nil {
-			s.options.Error = err
+			s.opts.err = err
 			return err
 		}
-		s.options.Listener = lis
+		s.opts.lis = lis
 	}
-	if s.options.Endpoint == nil {
-		addr, err := host.Extract(s.options.Address, s.options.Listener)
+	if s.opts.endpoint == nil {
+		addr, err := host.Extract(s.opts.addr, s.opts.lis)
 		if err != nil {
-			s.options.Error = err
+			s.opts.err = err
 			return err
 		}
-		s.options.Endpoint = endpoint.NewEndpoint(endpoint.Scheme("grpc", s.options.TLSConfig != nil), addr)
+		s.opts.endpoint = endpoint.NewEndpoint(endpoint.Scheme("grpc", s.opts.tlsConf != nil), addr)
 	}
-	return s.options.Error
+	return s.opts.err
 }

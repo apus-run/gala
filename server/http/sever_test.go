@@ -27,7 +27,7 @@ func TestNewServer(t *testing.T) {
 		c.String(http.StatusOK, "OK")
 	})
 
-	srv := httpServer.NewServer(server.WithHandler(g), server.WithAddress(":8080"))
+	srv := httpServer.NewServer(httpServer.WithHandler(g), httpServer.WithAddress(":8080"))
 
 	// wsManager := ws.New()
 	// wsUpgrader := ws.NewWSUpgrader(
@@ -64,7 +64,7 @@ func TestServer(t *testing.T) {
 		c.String(http.StatusOK, "OK")
 	})
 
-	srv := httpServer.NewServer(server.WithHandler(g), server.WithAddress(":8080"))
+	srv := httpServer.NewServer(httpServer.WithHandler(g), httpServer.WithAddress(":8080"))
 
 	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)
@@ -133,7 +133,7 @@ func TestServerWG(t *testing.T) {
 		c.String(http.StatusOK, "OK")
 	})
 
-	srv := httpServer.NewServer(server.WithHandler(g), server.WithAddress(":8080"))
+	srv := httpServer.NewServer(httpServer.WithHandler(g), httpServer.WithAddress(":9080"))
 
 	// graceful shutdown
 	exitSignals := []os.Signal{

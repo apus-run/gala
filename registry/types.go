@@ -7,13 +7,33 @@ import (
 	"sort"
 )
 
-type Listener func(event Event) error
+type EventType int
+
+const (
+	EventTypeUnknown EventType = iota
+	EventTypeAdd
+	EventTypeDelete
+)
+
+func (e EventType) IsAdd() bool {
+	return e == EventTypeAdd
+}
+
+func (e EventType) IsDelete() bool {
+	return e == EventTypeDelete
+}
+
+type Event struct {
+	Type     EventType
+	Instance ServiceInstance
+}
+
 type Registry interface {
 	Register(ctx context.Context, ins *ServiceInstance) error
 	Deregister(ctx context.Context, ins *ServiceInstance) error
 
-	ListServices(ctx context.Context, name string) ([]ServiceInstance, error)
-	Subscribe(listener Listener)
+	ListServices(ctx context.Context, serviceName string) ([]ServiceInstance, error)
+	Subscribe(serviceName string) <-chan Event
 
 	io.Closer
 }
@@ -44,7 +64,7 @@ func (ins *ServiceInstance) String() string {
 }
 
 // Equal returns whether i and o are equivalent.
-func (ins *ServiceInstance) Equal(o interface{}) bool {
+func (ins *ServiceInstance) Equal(o any) bool {
 	if ins == nil && o == nil {
 		return true
 	}
@@ -81,25 +101,4 @@ func (ins *ServiceInstance) Equal(o interface{}) bool {
 	}
 
 	return ins.ID == t.ID && ins.Name == t.Name && ins.Version == t.Version
-}
-
-type EventType int
-
-const (
-	EventTypeUnknown EventType = iota
-	EventTypeAdd
-	EventTypeDelete
-)
-
-func (e EventType) IsAdd() bool {
-	return e == EventTypeAdd
-}
-
-func (e EventType) IsDelete() bool {
-	return e == EventTypeDelete
-}
-
-type Event struct {
-	Type     EventType
-	Instance ServiceInstance
 }

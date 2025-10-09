@@ -10,8 +10,10 @@ var NoopRegistry Registry = &noopRegistry{}
 // NoopRegistry
 type noopRegistry struct{}
 
-func (r *noopRegistry) Subscribe(listener Listener) {
-	return
+// Subscribe implements Registry.
+func (r *noopRegistry) Subscribe(serviceName string) <-chan Event {
+	ch := make(chan Event)
+	return ch
 }
 
 func (r *noopRegistry) Register(ctx context.Context, ins *ServiceInstance) error {
@@ -22,7 +24,7 @@ func (r *noopRegistry) Deregister(ctx context.Context, ins *ServiceInstance) err
 	return nil
 }
 
-func (r *noopRegistry) ListServices(ctx context.Context, name string) ([]ServiceInstance, error) {
+func (r *noopRegistry) ListServices(ctx context.Context, serviceName string) ([]ServiceInstance, error) {
 	return nil, nil
 }
 

@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -11,8 +12,19 @@ import (
 //
 //go:generate mockgen -source=./types.go -package=mocks -destination=mocks/ws.mock.go Upgrader
 type Upgrader interface {
+	// Upgrade upgrades the HTTP server connection to the WebSocket protocol.
 	Upgrade(w http.ResponseWriter, r *http.Request, responseHeader http.Header) (*websocket.Conn, error)
 }
+
+type Dialer interface {
+	// DialContext creates a client connection to the websocket server.
+	DialContext(ctx context.Context, url string, h http.Header) (*websocket.Conn, *http.Response, error)
+}
+
+// ConnConfigureFunc is used to configure a websocket connection with
+// custom handlers. The cancel function cancels the request context when
+// invoked in the configure function.
+type ConnConfigureFunc func(conn *websocket.Conn, cancel context.CancelFunc) *websocket.Conn
 
 // Option is a function type that applies a configuration to the concrete Upgrader.
 type Option func(u *websocket.Upgrader)

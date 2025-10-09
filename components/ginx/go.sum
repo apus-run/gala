@@ -1,0 +1,4 @@
+github.com/unrolled/secure v1.17.0 h1:Io7ifFgo99Bnh0J7+Q+qcMzWM6kaDPCA5FroFZEdbWU=
+github.com/unrolled/secure v1.17.0/go.mod h1:BmF5hyM6tXczk3MpQkFf1hpKSRqCyhqcbiQtiAF7+40=
+go.opentelemetry.io/contrib v1.37.0 h1:D6KBfpW31z7ty0qbheujzwJDsqubVGYoaBJojh5vYnY=
+go.opentelemetry.io/contrib v1.37.0/go.mod h1:V0PijCkYR5XurE5ytnNJuqWMXPW60jJTPXOiKj6nvhI=

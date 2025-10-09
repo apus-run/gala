@@ -6,19 +6,18 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/apus-run/gala/registry"
+	"github.com/apus-run/gala/server"
 )
 
 type Service struct {
-	options *Options
-	ctx     context.Context
-	cancel  context.CancelFunc
+	opts   *Options
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mux      sync.Mutex
 	instance *registry.ServiceInstance
@@ -26,36 +25,30 @@ type Service struct {
 
 // New create an application lifecycle manager.
 func New(opts ...Option) *Service {
-	o := &Options{
-		context: context.Background(),
-		signals: []os.Signal{syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT},
-	}
+	options := Apply(opts...)
 	if id, err := uuid.NewUUID(); err == nil {
-		o.id = id.String()
-	}
-	for _, opt := range opts {
-		opt(o)
+		options.id = id.String()
 	}
 
-	ctx, cancel := context.WithCancel(o.context)
+	ctx, cancel := context.WithCancel(options.context)
 	return &Service{
-		ctx:     ctx,
-		cancel:  cancel,
-		options: o,
+		ctx:    ctx,
+		cancel: cancel,
+		opts:   options,
 	}
 }
 
 // ID returns app instance id.
-func (s *Service) ID() string { return s.options.id }
+func (s *Service) ID() string { return s.opts.id }
 
 // Name returns service name.
-func (s *Service) Name() string { return s.options.name }
+func (s *Service) Name() string { return s.opts.name }
 
 // Version returns app version.
-func (s *Service) Version() string { return s.options.version }
+func (s *Service) Version() string { return s.opts.version }
 
 // Metadata returns service metadata.
-func (s *Service) Metadata() map[string]string { return s.options.metadata }
+func (s *Service) Metadata() map[string]string { return s.opts.metadata }
 
 // Endpoint returns endpoints.
 func (s *Service) Endpoint() []string {
@@ -74,45 +67,51 @@ func (s *Service) Run() error {
 	s.mux.Lock()
 	s.instance = instance
 	s.mux.Unlock()
-	c := NewContext(s.ctx, s)
+	c := ServiceContextKey.NewContext(s.ctx, s)
 	eg, ctx := errgroup.WithContext(c)
 	wg := sync.WaitGroup{}
 
-	for _, fn := range s.options.beforeStart {
+	for _, fn := range s.opts.beforeStart {
 		if err = fn(c); err != nil {
 			return err
 		}
 	}
-	for _, srv := range s.options.servers {
+
+	octx := ServiceContextKey.NewContext(s.opts.context, s)
+	for _, srv := range s.opts.servers {
 		server := srv
 		eg.Go(func() error {
 			<-ctx.Done() // wait for stop signal
-			stopCtx, cancel := context.WithTimeout(NewContext(s.options.context, s), 10*time.Second)
-			defer cancel()
+			stopCtx := octx
+			if s.opts.stopTimeout > 0 {
+				var cancel context.CancelFunc
+				stopCtx, cancel = context.WithTimeout(stopCtx, s.opts.stopTimeout)
+				defer cancel()
+			}
 			return server.Stop(stopCtx)
 		})
 		wg.Add(1)
 		eg.Go(func() error {
-			wg.Done() // here is to ensure server start has begun running before register, so defer is not needed
-			return server.Start(NewContext(s.options.context, s))
+			wg.Done() // here is to ensure core start has begun running before register, so defer is not needed
+			return server.Start(octx)
 		})
 	}
 	wg.Wait()
-	if s.options.registry != nil {
-		rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
+	if s.opts.registry != nil {
+		rctx, rcancel := context.WithTimeout(ctx, s.opts.registryTimeout)
 		defer rcancel()
-		if err = s.options.registry.Register(rctx, instance); err != nil {
+		if err = s.opts.registry.Register(rctx, instance); err != nil {
 			return err
 		}
 	}
-	for _, fn := range s.options.afterStart {
+	for _, fn := range s.opts.afterStart {
 		if err = fn(c); err != nil {
 			return err
 		}
 	}
 
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, s.options.signals...)
+	signal.Notify(ch, s.opts.signals...)
 	eg.Go(func() error {
 		select {
 		case <-ctx.Done():
@@ -125,7 +124,7 @@ func (s *Service) Run() error {
 		return err
 	}
 	err = nil
-	for _, fn := range s.options.afterStop {
+	for _, fn := range s.opts.afterStop {
 		err = fn(c)
 	}
 	return err
@@ -134,9 +133,9 @@ func (s *Service) Run() error {
 // Stop gracefully stops the application.
 func (s *Service) Stop() error {
 	var err error
-	ctx := NewContext(s.ctx, s)
-	for _, fn := range s.options.beforeStop {
-		if err = fn(ctx); err != nil {
+	sctx := ServiceContextKey.NewContext(s.ctx, s)
+	for _, fn := range s.opts.beforeStop {
+		if err = fn(sctx); err != nil {
 			return err
 		}
 	}
@@ -144,10 +143,10 @@ func (s *Service) Stop() error {
 	s.mux.Lock()
 	instance := s.instance
 	s.mux.Unlock()
-	if s.options.registry != nil && instance != nil {
-		ctx, cancel := context.WithTimeout(NewContext(s.ctx, s), 10*time.Second)
+	if s.opts.registry != nil && instance != nil {
+		ctx, cancel := context.WithTimeout(ServiceContextKey.NewContext(s.ctx, s), s.opts.registryTimeout)
 		defer cancel()
-		if err = s.options.registry.Deregister(ctx, instance); err != nil {
+		if err = s.opts.registry.Deregister(ctx, instance); err != nil {
 			return err
 		}
 	}
@@ -158,38 +157,26 @@ func (s *Service) Stop() error {
 }
 
 func (s *Service) registryService() (*registry.ServiceInstance, error) {
-	endpoints := make([]string, 0, len(s.options.endpoints))
-	for _, e := range s.options.endpoints {
+	endpoints := make([]string, 0, len(s.opts.endpoints))
+	for _, e := range s.opts.endpoints {
 		endpoints = append(endpoints, e.String())
 	}
 	if len(endpoints) == 0 {
-		for _, srv := range s.options.servers {
-			e, err := srv.Endpoint()
-			if err != nil {
-				return nil, err
+		for _, srv := range s.opts.servers {
+			if r, ok := srv.(server.Endpointer); ok {
+				e, err := r.Endpoint()
+				if err != nil {
+					return nil, err
+				}
+				endpoints = append(endpoints, e.String())
 			}
-			endpoints = append(endpoints, e.String())
 		}
 	}
 	return &registry.ServiceInstance{
-		ID:        s.options.id,
-		Name:      s.options.name,
-		Version:   s.options.version,
-		Metadata:  s.options.metadata,
+		ID:        s.opts.id,
+		Name:      s.opts.name,
+		Version:   s.opts.version,
+		Metadata:  s.opts.metadata,
 		Endpoints: endpoints,
 	}, nil
-}
-
-// serviceKey is a context key used to store the service instance into its base context.
-type serviceKey struct{}
-
-func NewContext(ctx context.Context, l *Service) context.Context {
-	return context.WithValue(ctx, serviceKey{}, l)
-}
-
-func FromContext(ctx context.Context) (*Service, bool) {
-	if l, ok := ctx.Value(serviceKey{}).(*Service); ok {
-		return l, true
-	}
-	return nil, false
 }
