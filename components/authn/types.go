@@ -1,4 +1,6 @@
-package authx
+// Package authn 提供基于 JWT 的认证功能.
+// authentication 对认证的一个封装.
+package authn
 
 import (
 	"context"

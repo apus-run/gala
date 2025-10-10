@@ -1,4 +1,4 @@
-package authx
+package authn
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/apus-run/gala/components/authx/store"
+	"github.com/apus-run/gala/components/authn/store"
 )
 
 type CustomClaims struct {
@@ -62,7 +62,7 @@ func TestNewJwtAuth(t *testing.T) {
 
 	opts = append(opts, WithSigningMethod(jwt.SigningMethodHS256))
 
-	s := store.NewStore(nil, "authx")
+	s := store.NewStore(nil, "authn")
 
 	j, err := NewJwtAuth(s, opts...).Sign(context.Background())
 	if err != nil {

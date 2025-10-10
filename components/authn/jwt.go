@@ -1,4 +1,4 @@
-package authx
+package authn
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	rdb "github.com/apus-run/gala/components/authx/store"
+	rdb "github.com/apus-run/gala/components/authn/store"
 )
 
 var (
@@ -17,7 +17,7 @@ var (
 	ErrGetKey                 = errors.New("can not get key while signing token")
 )
 
-// JwtAuth implement the authx.Authenticator interface.
+// JwtAuth implement the authn.Authenticator interface.
 
 type JwtAuth struct {
 	*Options

@@ -1,4 +1,4 @@
-package authx
+package authn
 
 import (
 	"time"
@@ -8,7 +8,7 @@ import (
 
 const (
 	// defaultKey holds the default key used to sign a jwt token.
-	defaultKey = "authx::jwt(#)9527"
+	defaultKey = "authn::jwt(#)9527"
 )
 
 // Option is jwt option.

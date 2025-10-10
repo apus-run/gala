@@ -1,3 +1,5 @@
+// Package authz 提供基于 Casbin 的访问控制功能.
+// authorization 对权鉴的一个封装.
 package authz
 
 import (
