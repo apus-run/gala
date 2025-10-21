@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/apus-run/gala/server"
 	"github.com/apus-run/gala/server/internal/endpoint"
@@ -42,6 +43,11 @@ func NewServer(opts ...ServerOption) *Server {
 	}
 
 	srv.Server = grpc.NewServer(grpcOpts...)
+
+	if !options.disableReflection {
+		// reflection register
+		reflection.Register(srv.Server)
+	}
 
 	return srv
 }

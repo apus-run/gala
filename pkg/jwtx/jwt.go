@@ -1,7 +1,9 @@
 package jwtx
 
 import (
+	"crypto/rand"
 	"errors"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -64,6 +66,20 @@ func ParseToken(jwtToken string, keyFunc jwt.Keyfunc, opts ...Option) (token *jw
 	}
 
 	return token, nil
+}
+
+// GenerateJWTSecret 随机生成签名JWT的密钥
+func GenerateJWTSecret(length int) []byte {
+	key := make([]byte, length)
+	_, err := rand.Read(key)
+	if err != nil {
+		// 如果随机生成失败，使用时间戳作为备选方案
+		now := time.Now().UnixNano()
+		for i := 0; i < length; i++ {
+			key[i] = byte((now >> (i % 8)) & 0xff)
+		}
+	}
+	return key
 }
 
 // Encrypt encrypts the plain text with bcrypt.

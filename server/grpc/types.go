@@ -9,6 +9,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+type RegisterFunc func(grpc.ServiceRegistrar)
+
 // ServerOption 是一个函数类型，用于设置 ServerOptions 的各个字段。
 type ServerOption func(*ServerOptions)
 
@@ -32,6 +34,9 @@ type ServerOptions struct {
 
 	endpoint *url.URL
 	err      error
+
+	// disableReflection 指定是否禁用 gRPC 反射服务。
+	disableReflection bool
 }
 
 func NewServerOptions() *ServerOptions {
@@ -71,6 +76,12 @@ func WithTlsConfig(tlsConfig *tls.Config) ServerOption {
 	}
 }
 
+func WithDisableReflection(disableReflection bool) ServerOption {
+	return func(options *ServerOptions) {
+		options.disableReflection = disableReflection
+	}
+}
+
 // WithListener 设置服务器的监听器。
 func WithListener(listener net.Listener) ServerOption {
 	return func(options *ServerOptions) {
@@ -85,8 +96,8 @@ func WithBaseContext(baseCtx context.Context) ServerOption {
 	}
 }
 
-// WithOptions 设置 gRPC 服务器的选项。
-func WithOptions(grpcOpts ...grpc.ServerOption) ServerOption {
+// WithGrpcOptions 设置 gRPC 服务器的选项。
+func WithGrpcOptions(grpcOpts ...grpc.ServerOption) ServerOption {
 	return func(options *ServerOptions) {
 		options.grpcOpts = append(options.grpcOpts, grpcOpts...)
 	}

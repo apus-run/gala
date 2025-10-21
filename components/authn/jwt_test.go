@@ -46,7 +46,7 @@ func TestNewJwtAuth(t *testing.T) {
 				UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.83 Safari/537.36",
 				RegisteredClaims: jwt.RegisteredClaims{
 					// Issuer = iss,令牌颁发者。它表示该令牌是由谁创建的
-					Issuer: "",
+					Issuer: "gala",
 					// IssuedAt = iat,令牌颁发时的时间戳。它表示令牌是何时被创建的
 					IssuedAt: jwt.NewNumericDate(now),
 					// ExpiresAt = exp,令牌的过期时间戳。它表示令牌将在何时过期

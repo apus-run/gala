@@ -26,16 +26,16 @@ type Server struct {
 func NewServer(opts ...ServerOption) *Server {
 	options := Apply(opts...)
 
-	s := &Server{
+	srv := &Server{
 		opts: options,
 	}
 
-	s.Server = &http.Server{
-		Handler:   s,
+	srv.Server = &http.Server{
+		Handler:   srv,
 		TLSConfig: options.tlsConf,
 	}
 
-	return s
+	return srv
 }
 
 func (s *Server) Start(ctx context.Context) error {

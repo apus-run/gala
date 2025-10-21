@@ -6,15 +6,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// 定义一个Registry类型用于管理模型注册
-type Registry struct {
-	models []any
-}
-
 var (
 	globalRegistry *Registry
 	once           sync.Once
 )
+
+// 定义一个Registry类型用于管理模型注册
+type Registry struct {
+	models []any
+}
 
 // NewRegistry 创建并返回一个新的Registry实例
 func NewRegistry() *Registry {
@@ -23,24 +23,9 @@ func NewRegistry() *Registry {
 	}
 }
 
-func Register(model any) {
-	once.Do(func() {
-		globalRegistry = NewRegistry()
-	})
-	globalRegistry.Register(model)
-}
-
 // Register 添加新的模型到Registry
 func (r *Registry) Register(model any) {
 	r.models = append(r.models, model)
-}
-
-func Migrate(db *gorm.DB) error {
-	if globalRegistry == nil {
-		return nil
-	}
-
-	return globalRegistry.Migrate(db)
 }
 
 // Migrate 执行所有注册模型的迁移
@@ -51,4 +36,19 @@ func (r *Registry) Migrate(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func Register(model any) {
+	once.Do(func() {
+		globalRegistry = NewRegistry()
+	})
+	globalRegistry.Register(model)
+}
+
+func Migrate(db *gorm.DB) error {
+	if globalRegistry == nil {
+		return nil
+	}
+
+	return globalRegistry.Migrate(db)
 }
