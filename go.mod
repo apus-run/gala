@@ -2,8 +2,10 @@ module github.com/apus-run/gala
 
 go 1.25
 
+replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
+
 require (
-	github.com/apus-run/gala/pkg v0.0.0-20251010031657-2e100ccf678b
+	github.com/apus-run/gala/pkg v0.0.0-20251021010046-b9d7b05283b9
 	github.com/bytedance/sonic v1.14.0
 	github.com/gin-gonic/gin v1.10.1
 	github.com/google/uuid v1.6.0
