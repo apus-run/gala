@@ -32,7 +32,7 @@ func NewServer(opts ...ServerOption) *Server {
 		opts: options,
 	}
 
-	grpcOpts := []grpc.ServerOption{}
+	var grpcOpts []grpc.ServerOption
 
 	if options.tlsConf != nil {
 		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(options.tlsConf)))
@@ -54,7 +54,7 @@ func NewServer(opts ...ServerOption) *Server {
 
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.listenAndEndpoint(); err != nil {
-		return s.opts.err
+		return err
 	}
 	s.opts.baseCtx = ctx
 
@@ -73,6 +73,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		return nil
 	})
 }
+
 func (s *Server) Health() bool {
 	if s.opts.lis == nil {
 		return false

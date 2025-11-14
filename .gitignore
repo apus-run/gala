@@ -40,9 +40,6 @@ output/
 # MacOS files
 **/.DS_Store
 
-# log files
-log/
-
 # tmp files
 **/tmp/
 **/temp/

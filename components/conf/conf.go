@@ -2,7 +2,6 @@ package conf
 
 import (
 	"errors"
-	"log"
 	"path"
 	"path/filepath"
 	"strings"
@@ -10,14 +9,18 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
+
+	"github.com/apus-run/gala/components/conf/file"
 )
 
+var _ Conf = (*Config)(nil)
+
 type Config struct {
-	files  []Source
+	files  []file.Source
 	cached *sync.Map
 }
 
-func New(files []Source) *Config {
+func New(files []file.Source) *Config {
 	return &Config{
 		files:  files,
 		cached: &sync.Map{},
@@ -26,7 +29,7 @@ func New(files []Source) *Config {
 
 func (c *Config) Watch(fn func()) {
 	c.cached.Range(func(key, value any) bool {
-		v := value.(*viper.Viper)
+		v := value.(*V)
 		v.OnConfigChange(func(e fsnotify.Event) {
 			fn()
 		})
@@ -36,22 +39,42 @@ func (c *Config) Watch(fn func()) {
 }
 
 func (c *Config) Scan(filename string, obj any) error {
-	err := c.File(filename).Unmarshal(obj)
-	if err != nil {
-		return err
+	file := c.File(filename)
+	if file == nil {
+		return ErrConfigFileNotFound
 	}
-	return nil
+	return file.Unmarshal(obj)
 }
 
-func (c *Config) File(filename string) *viper.Viper {
+func (c *Config) UnmarshalKey(key string, obj any) error {
+	file := c.File(defaultFile)
+	if file == nil {
+		return ErrConfigFileNotFound
+	}
+	return file.UnmarshalKey(key, obj)
+}
+
+func (c *Config) File(filename string) *V {
 	if v, ok := c.cached.Load(filename); ok {
-		return v.(*viper.Viper)
+		return v.(*V)
 	}
 	return nil
 }
 
 func (c *Config) Get(filename string, key string) any {
-	return c.File(filename).Get(key)
+	file := c.File(filename)
+	if file == nil {
+		return nil
+	}
+	return file.Get(key)
+}
+
+func (c *Config) Set(filename string, key string, val any) {
+	file := c.File(filename)
+	if file == nil {
+		return
+	}
+	file.Set(key, val)
 }
 
 func (c *Config) Load() error {
@@ -72,8 +95,7 @@ func (c *Config) Load() error {
 			if err := v.ReadInConfig(); err != nil {
 				var configFileNotFoundError viper.ConfigFileNotFoundError
 				if errors.As(err, &configFileNotFoundError) {
-					log.Printf("Using conf file: %s [%s]\n", viper.ConfigFileUsed(), err)
-					return errors.New("conf file not found")
+					return ErrConfigFileNotFound
 				}
 				return err
 			}

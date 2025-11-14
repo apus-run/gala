@@ -6,22 +6,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/apus-run/gala/components/conf"
 )
 
-var _ conf.Source = (*file)(nil)
+var _ Source = (*file)(nil)
 
 type file struct {
 	path string
 }
 
 // NewSource new a file source.
-func NewSource(path string) conf.Source {
+func NewSource(path string) Source {
 	return &file{path: path}
 }
 
-func (f *file) loadFile(path string) (*conf.KV, error) {
+func (f *file) loadFile(path string) (*KV, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -36,7 +34,7 @@ func (f *file) loadFile(path string) (*conf.KV, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &conf.KV{
+	return &KV{
 		Key:    info.Name(),
 		Format: Format(info.Name()),
 		Value:  data,
@@ -44,7 +42,7 @@ func (f *file) loadFile(path string) (*conf.KV, error) {
 	}, nil
 }
 
-func (f *file) loadDir(path string) (kvs []*conf.KV, err error) {
+func (f *file) loadDir(path string) (kvs []*KV, err error) {
 	files, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -63,7 +61,7 @@ func (f *file) loadDir(path string) (kvs []*conf.KV, err error) {
 	return
 }
 
-func (f *file) Load() (kvs []*conf.KV, err error) {
+func (f *file) Load() (kvs []*KV, err error) {
 	fi, err := os.Stat(f.path)
 	if err != nil {
 		return nil, err
@@ -75,5 +73,5 @@ func (f *file) Load() (kvs []*conf.KV, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return []*conf.KV{kv}, nil
+	return []*KV{kv}, nil
 }

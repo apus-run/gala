@@ -1,7 +1,9 @@
-package file
+package file_test
 
 import (
 	"testing"
+
+	"github.com/apus-run/gala/components/conf/file"
 )
 
 func TestFormat(t *testing.T) {
@@ -35,7 +37,7 @@ func TestFormat(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
-		content := Format(v.input)
+		content := file.Format(v.input)
 		t.Logf("格式化: %v", content)
 		if got, want := content, v.expect; got != want {
 			t.Errorf("expect %v,got %v", want, got)

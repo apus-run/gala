@@ -5,26 +5,11 @@ import "github.com/spf13/viper"
 // V Viper 别名
 type V = viper.Viper
 
-// KV KeyValue is conf key value.
-type KV struct {
-	Key    string
-	Value  []byte
-	Format string
-	Path   string
-}
-
-func (k *KV) Read(p []byte) (n int, err error) {
-	return copy(p, k.Value), nil
-}
-
-type Source interface {
-	Load() ([]*KV, error)
-}
-
 type Conf interface {
-	File(filename string) *viper.Viper
+	File(filename string) *V
 	Scan(filename string, obj any) error
 	Get(filename string, key string) any
+	Set(filename string, key string, val any)
 	Load() error
 	Watch(fn func())
 }

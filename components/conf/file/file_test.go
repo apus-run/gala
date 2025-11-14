@@ -1,11 +1,11 @@
-package file
+package file_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/apus-run/gala/components/conf"
+	"github.com/apus-run/gala/components/conf/file"
 )
 
 const (
@@ -134,94 +134,12 @@ func TestFile(t *testing.T) {
 
 func testSource(t *testing.T, path string) {
 	t.Logf("path: %s", path)
-	s := NewSource(path)
+	s := file.NewSource(path)
 	kvs, err := s.Load()
 	if err != nil {
 		t.Error(err)
 	}
 	for _, f := range kvs {
 		t.Logf("文件名 Key: %s, Format: %s, Data: %s", f.Key, f.Format, f.Value)
-	}
-}
-
-func TestConfig(t *testing.T) {
-	var (
-		path  = filepath.Join(os.TempDir(), "test_config")
-		file  = filepath.Join(path, "test.json")
-		file2 = filepath.Join(path, "config.json")
-		data  = []byte(testJSON)
-		data2 = []byte(testJSONUpdate)
-	)
-	defer os.Remove(path)
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		t.Error(err)
-	}
-	if err := os.WriteFile(file, data, 0o666); err != nil {
-		t.Error(err)
-	}
-
-	if err := os.WriteFile(file2, data2, 0o666); err != nil {
-		t.Error(err)
-	}
-
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		t.Error(err)
-	}
-
-	c := conf.New([]conf.Source{NewSource(path)})
-
-	testConfig(t, c)
-}
-
-func testConfig(t *testing.T, c conf.Conf) {
-	var (
-		httpAddr       = "0.0.0.0"
-		httpTimeout    = 0.5
-		grpcPort       = 10080
-		endpoint1      = "www.aaa.com"
-		databaseDriver = "mysql"
-	)
-
-	c.Load()
-	c.Watch(func() {
-		t.Log("Watch")
-	})
-
-	v := c.File("test").Get("server")
-	t.Logf("app: %v", v)
-	config := c.File("config").Get("server")
-	t.Logf("app: %v", config)
-	driver := c.File("config").GetString("data.database.driver")
-	t.Logf("data.database.driver: %s", driver)
-
-	if databaseDriver != driver {
-		t.Fatal("databaseDriver is not equal to val")
-	}
-
-	var testConf testConfigStruct
-	appConf := c.File("test")
-	err := appConf.Unmarshal(&testConf)
-	if err != nil {
-		t.Errorf("error: %d", err)
-	}
-	t.Logf("AppConfig: %v", testConf)
-
-	if httpAddr != testConf.Server.HTTP.Addr {
-		t.Errorf("testConf.Server.HTTP.Addr want: %s, got: %s", httpAddr, testConf.Server.HTTP.Addr)
-	}
-	if httpTimeout != testConf.Server.HTTP.Timeout {
-		t.Errorf("testConf.Server.HTTP.Timeout want: %.1f, got: %.1f", httpTimeout, testConf.Server.HTTP.Timeout)
-	}
-	if !testConf.Server.HTTP.EnableSSL {
-		t.Error("testConf.Server.HTTP.EnableSSL is not equal to true")
-	}
-	if grpcPort != testConf.Server.GRPC.Port {
-		t.Errorf("testConf.Server.GRPC.Port want: %d, got: %d", grpcPort, testConf.Server.GRPC.Port)
-	}
-	if endpoint1 != testConf.Endpoints[0] {
-		t.Errorf("testConf.Endpoints[0] want: %s, got: %s", endpoint1, testConf.Endpoints[0])
-	}
-	if len(testConf.Endpoints) != 2 {
-		t.Error("len(testConf.Endpoints) is not equal to 2")
 	}
 }

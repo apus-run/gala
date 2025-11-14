@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // ServerOption 是一个函数类型，用于设置 ServerOptions 的各个字段。
@@ -27,13 +28,23 @@ type ServerOptions struct {
 
 	endpoint *url.URL
 	err      error
+
+	// 核心性能配置（精简版）
+	readTimeout    time.Duration // 读取超时
+	writeTimeout   time.Duration // 写入超时
+	idleTimeout    time.Duration // 空闲超时
+	maxHeaderBytes int           // 最大请求头大小
 }
 
 func NewServerOptions() *ServerOptions {
 	return &ServerOptions{
-		network: "tcp",
-		addr:    ":0",
-		handler: http.DefaultServeMux,
+		network:        "tcp",
+		addr:           ":0",
+		handler:        http.DefaultServeMux,
+		readTimeout:    5 * time.Second,  // 5秒读取超时
+		writeTimeout:   30 * time.Second, // 30秒写入超时
+		idleTimeout:    60 * time.Second, // 60秒空闲超时
+		maxHeaderBytes: 1 << 20,          // 1MB请求头限制
 	}
 }
 
@@ -77,5 +88,40 @@ func WithListener(listener net.Listener) ServerOption {
 func WithHandler(handler http.Handler) ServerOption {
 	return func(options *ServerOptions) {
 		options.handler = handler
+	}
+}
+
+// WithReadTimeout 设置读取超时时间。
+func WithReadTimeout(timeout time.Duration) ServerOption {
+	return func(options *ServerOptions) {
+		options.readTimeout = timeout
+	}
+}
+
+// WithWriteTimeout 设置写入超时时间。
+func WithWriteTimeout(timeout time.Duration) ServerOption {
+	return func(options *ServerOptions) {
+		options.writeTimeout = timeout
+	}
+}
+
+// WithIdleTimeout 设置空闲连接超时时间。
+func WithIdleTimeout(timeout time.Duration) ServerOption {
+	return func(options *ServerOptions) {
+		options.idleTimeout = timeout
+	}
+}
+
+// WithMaxHeaderBytes 设置最大请求头大小。
+func WithMaxHeaderBytes(maxBytes int) ServerOption {
+	return func(options *ServerOptions) {
+		options.maxHeaderBytes = maxBytes
+	}
+}
+
+// WithCompressionLevel 设置响应压缩级别。
+func WithCompressionLevel(level int) ServerOption {
+	return func(options *ServerOptions) {
+		// 保留函数签名，但不再使用
 	}
 }

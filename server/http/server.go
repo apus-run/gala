@@ -31,8 +31,12 @@ func NewServer(opts ...ServerOption) *Server {
 	}
 
 	srv.Server = &http.Server{
-		Handler:   srv,
-		TLSConfig: options.tlsConf,
+		Handler:        srv,
+		TLSConfig:      options.tlsConf,
+		ReadTimeout:    options.readTimeout,
+		WriteTimeout:   options.writeTimeout,
+		IdleTimeout:    options.idleTimeout,
+		MaxHeaderBytes: options.maxHeaderBytes,
 	}
 
 	return srv
@@ -90,7 +94,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.opts.handler.ServeHTTP(w, r)
 }
 
-// Health
+// Health check server is healthy.
 func (s *Server) Health() bool {
 	if s.opts.lis == nil {
 		return false
