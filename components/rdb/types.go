@@ -41,14 +41,14 @@ type (
 
 type Provider interface {
 	// DB 创建一个新的数据库会话
-	DB(ctx context.Context) redis.Cmdable
+	DB(ctx context.Context) Cmdable
 }
 
 type provider struct {
-	cli *redis.Client
+	cli *Client
 }
 
 // DB implements Provider.
-func (p *provider) DB(_ context.Context) redis.Cmdable {
+func (p *provider) DB(_ context.Context) Cmdable {
 	return p.cli
 }

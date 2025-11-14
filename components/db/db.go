@@ -28,6 +28,13 @@ func NewDB(dialer gorm.Dialector, opts ...gorm.Option) (Provider, error) {
 	return &provider{db: db}, nil
 }
 
+func Unwrap(db Provider) (*gorm.DB, bool) {
+	if p, ok := db.(*provider); ok && p.db != nil {
+		return p.db, true
+	}
+	return nil, false
+}
+
 // NewDBFromConfig 从配置创建一个 db 实例
 func NewDBFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
 	if !utils.Contains(mysql.UpdateClauses, "RETURNING") {

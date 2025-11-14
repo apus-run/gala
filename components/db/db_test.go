@@ -19,6 +19,18 @@ func TestNewDB(t *testing.T) {
 	}
 }
 
+func TestUnwrap(t *testing.T) {
+	prov, _ := NewDB(sqlite.Open(":memory:"))
+	db, ok := Unwrap(prov)
+	if !ok {
+		t.Fatal("Unwrap failed to recognize provider")
+	}
+
+	if db == nil {
+		t.Fatal("Unwrap returned nil gorm.DB")
+	}
+}
+
 func TestNewDBFromConfig(t *testing.T) {
 	dsn := "root:123456@tcp(localhost:13306)/test_db?charset=utf8mb4&parseTime=True&loc=Local"
 	prov, err := NewDBFromConfig(dsn)
