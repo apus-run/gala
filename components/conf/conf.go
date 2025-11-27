@@ -89,6 +89,8 @@ func (c *Config) Load() error {
 
 		for _, kv := range kvs {
 			v := viper.New()
+			v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+			v.AutomaticEnv()
 			v.SetConfigType(kv.Format)
 			v.SetConfigFile(kv.Path)
 
@@ -99,7 +101,6 @@ func (c *Config) Load() error {
 				}
 				return err
 			}
-			v.AutomaticEnv()
 
 			name := strings.TrimSuffix(path.Base(kv.Key), filepath.Ext(kv.Key))
 			c.cached.Store(name, v)

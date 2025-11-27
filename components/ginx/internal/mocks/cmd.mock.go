@@ -19,6 +19,611 @@ type MockCmdable struct {
 	recorder *MockCmdableMockRecorder
 }
 
+// ACLCat implements redis.Cmdable.
+func (m *MockCmdable) ACLCat(ctx context.Context) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// ACLCatArgs implements redis.Cmdable.
+func (m *MockCmdable) ACLCatArgs(ctx context.Context, options *redis.ACLCatArgs) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// ACLDelUser implements redis.Cmdable.
+func (m *MockCmdable) ACLDelUser(ctx context.Context, username string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// ACLList implements redis.Cmdable.
+func (m *MockCmdable) ACLList(ctx context.Context) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// ACLSetUser implements redis.Cmdable.
+func (m *MockCmdable) ACLSetUser(ctx context.Context, username string, rules ...string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// BitCount implements redis.Cmdable.
+func (m *MockCmdable) BitCount(ctx context.Context, key string, bitCount *redis.BitCount) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitField implements redis.Cmdable.
+func (m *MockCmdable) BitField(ctx context.Context, key string, values ...interface{}) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// BitFieldRO implements redis.Cmdable.
+func (m *MockCmdable) BitFieldRO(ctx context.Context, key string, values ...interface{}) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// BitOpAnd implements redis.Cmdable.
+func (m *MockCmdable) BitOpAnd(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpAndOr implements redis.Cmdable.
+func (m *MockCmdable) BitOpAndOr(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpDiff implements redis.Cmdable.
+func (m *MockCmdable) BitOpDiff(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpDiff1 implements redis.Cmdable.
+func (m *MockCmdable) BitOpDiff1(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpNot implements redis.Cmdable.
+func (m *MockCmdable) BitOpNot(ctx context.Context, destKey string, key string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpOne implements redis.Cmdable.
+func (m *MockCmdable) BitOpOne(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpOr implements redis.Cmdable.
+func (m *MockCmdable) BitOpOr(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitOpXor implements redis.Cmdable.
+func (m *MockCmdable) BitOpXor(ctx context.Context, destKey string, keys ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitPos implements redis.Cmdable.
+func (m *MockCmdable) BitPos(ctx context.Context, key string, bit int64, pos ...int64) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// BitPosSpan implements redis.Cmdable.
+func (m *MockCmdable) BitPosSpan(ctx context.Context, key string, bit int8, start int64, end int64, span string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// ClusterMyID implements redis.Cmdable.
+func (m *MockCmdable) ClusterMyID(ctx context.Context) *redis.StringCmd {
+	panic("unimplemented")
+}
+
+// FTAggregate implements redis.Cmdable.
+func (m *MockCmdable) FTAggregate(ctx context.Context, index string, query string) *redis.MapStringInterfaceCmd {
+	panic("unimplemented")
+}
+
+// FTAggregateWithArgs implements redis.Cmdable.
+func (m *MockCmdable) FTAggregateWithArgs(ctx context.Context, index string, query string, options *redis.FTAggregateOptions) *redis.AggregateCmd {
+	panic("unimplemented")
+}
+
+// FTAliasAdd implements redis.Cmdable.
+func (m *MockCmdable) FTAliasAdd(ctx context.Context, index string, alias string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTAliasDel implements redis.Cmdable.
+func (m *MockCmdable) FTAliasDel(ctx context.Context, alias string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTAliasUpdate implements redis.Cmdable.
+func (m *MockCmdable) FTAliasUpdate(ctx context.Context, index string, alias string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTAlter implements redis.Cmdable.
+func (m *MockCmdable) FTAlter(ctx context.Context, index string, skipInitialScan bool, definition []interface{}) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTConfigGet implements redis.Cmdable.
+func (m *MockCmdable) FTConfigGet(ctx context.Context, option string) *redis.MapMapStringInterfaceCmd {
+	panic("unimplemented")
+}
+
+// FTConfigSet implements redis.Cmdable.
+func (m *MockCmdable) FTConfigSet(ctx context.Context, option string, value interface{}) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTCreate implements redis.Cmdable.
+func (m *MockCmdable) FTCreate(ctx context.Context, index string, options *redis.FTCreateOptions, schema ...*redis.FieldSchema) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTCursorDel implements redis.Cmdable.
+func (m *MockCmdable) FTCursorDel(ctx context.Context, index string, cursorId int) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTCursorRead implements redis.Cmdable.
+func (m *MockCmdable) FTCursorRead(ctx context.Context, index string, cursorId int, count int) *redis.MapStringInterfaceCmd {
+	panic("unimplemented")
+}
+
+// FTDictAdd implements redis.Cmdable.
+func (m *MockCmdable) FTDictAdd(ctx context.Context, dict string, term ...interface{}) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// FTDictDel implements redis.Cmdable.
+func (m *MockCmdable) FTDictDel(ctx context.Context, dict string, term ...interface{}) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// FTDictDump implements redis.Cmdable.
+func (m *MockCmdable) FTDictDump(ctx context.Context, dict string) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// FTDropIndex implements redis.Cmdable.
+func (m *MockCmdable) FTDropIndex(ctx context.Context, index string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTDropIndexWithArgs implements redis.Cmdable.
+func (m *MockCmdable) FTDropIndexWithArgs(ctx context.Context, index string, options *redis.FTDropIndexOptions) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTExplain implements redis.Cmdable.
+func (m *MockCmdable) FTExplain(ctx context.Context, index string, query string) *redis.StringCmd {
+	panic("unimplemented")
+}
+
+// FTExplainWithArgs implements redis.Cmdable.
+func (m *MockCmdable) FTExplainWithArgs(ctx context.Context, index string, query string, options *redis.FTExplainOptions) *redis.StringCmd {
+	panic("unimplemented")
+}
+
+// FTInfo implements redis.Cmdable.
+func (m *MockCmdable) FTInfo(ctx context.Context, index string) *redis.FTInfoCmd {
+	panic("unimplemented")
+}
+
+// FTSearch implements redis.Cmdable.
+func (m *MockCmdable) FTSearch(ctx context.Context, index string, query string) *redis.FTSearchCmd {
+	panic("unimplemented")
+}
+
+// FTSearchWithArgs implements redis.Cmdable.
+func (m *MockCmdable) FTSearchWithArgs(ctx context.Context, index string, query string, options *redis.FTSearchOptions) *redis.FTSearchCmd {
+	panic("unimplemented")
+}
+
+// FTSpellCheck implements redis.Cmdable.
+func (m *MockCmdable) FTSpellCheck(ctx context.Context, index string, query string) *redis.FTSpellCheckCmd {
+	panic("unimplemented")
+}
+
+// FTSpellCheckWithArgs implements redis.Cmdable.
+func (m *MockCmdable) FTSpellCheckWithArgs(ctx context.Context, index string, query string, options *redis.FTSpellCheckOptions) *redis.FTSpellCheckCmd {
+	panic("unimplemented")
+}
+
+// FTSynDump implements redis.Cmdable.
+func (m *MockCmdable) FTSynDump(ctx context.Context, index string) *redis.FTSynDumpCmd {
+	panic("unimplemented")
+}
+
+// FTSynUpdate implements redis.Cmdable.
+func (m *MockCmdable) FTSynUpdate(ctx context.Context, index string, synGroupId interface{}, terms []interface{}) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTSynUpdateWithArgs implements redis.Cmdable.
+func (m *MockCmdable) FTSynUpdateWithArgs(ctx context.Context, index string, synGroupId interface{}, options *redis.FTSynUpdateOptions, terms []interface{}) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// FTTagVals implements redis.Cmdable.
+func (m *MockCmdable) FTTagVals(ctx context.Context, index string, field string) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// FT_List implements redis.Cmdable.
+func (m *MockCmdable) FT_List(ctx context.Context) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// GetBit implements redis.Cmdable.
+func (m *MockCmdable) GetBit(ctx context.Context, key string, offset int64) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// HExpire implements redis.Cmdable.
+func (m *MockCmdable) HExpire(ctx context.Context, key string, expiration time.Duration, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HExpireAt implements redis.Cmdable.
+func (m *MockCmdable) HExpireAt(ctx context.Context, key string, tm time.Time, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HExpireAtWithArgs implements redis.Cmdable.
+func (m *MockCmdable) HExpireAtWithArgs(ctx context.Context, key string, tm time.Time, expirationArgs redis.HExpireArgs, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HExpireTime implements redis.Cmdable.
+func (m *MockCmdable) HExpireTime(ctx context.Context, key string, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HExpireWithArgs implements redis.Cmdable.
+func (m *MockCmdable) HExpireWithArgs(ctx context.Context, key string, expiration time.Duration, expirationArgs redis.HExpireArgs, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HGetDel implements redis.Cmdable.
+func (m *MockCmdable) HGetDel(ctx context.Context, key string, fields ...string) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// HGetEX implements redis.Cmdable.
+func (m *MockCmdable) HGetEX(ctx context.Context, key string, fields ...string) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// HGetEXWithArgs implements redis.Cmdable.
+func (m *MockCmdable) HGetEXWithArgs(ctx context.Context, key string, options *redis.HGetEXOptions, fields ...string) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// HPExpire implements redis.Cmdable.
+func (m *MockCmdable) HPExpire(ctx context.Context, key string, expiration time.Duration, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HPExpireAt implements redis.Cmdable.
+func (m *MockCmdable) HPExpireAt(ctx context.Context, key string, tm time.Time, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HPExpireAtWithArgs implements redis.Cmdable.
+func (m *MockCmdable) HPExpireAtWithArgs(ctx context.Context, key string, tm time.Time, expirationArgs redis.HExpireArgs, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HPExpireTime implements redis.Cmdable.
+func (m *MockCmdable) HPExpireTime(ctx context.Context, key string, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HPExpireWithArgs implements redis.Cmdable.
+func (m *MockCmdable) HPExpireWithArgs(ctx context.Context, key string, expiration time.Duration, expirationArgs redis.HExpireArgs, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HPTTL implements redis.Cmdable.
+func (m *MockCmdable) HPTTL(ctx context.Context, key string, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HPersist implements redis.Cmdable.
+func (m *MockCmdable) HPersist(ctx context.Context, key string, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// HScanNoValues implements redis.Cmdable.
+func (m *MockCmdable) HScanNoValues(ctx context.Context, key string, cursor uint64, match string, count int64) *redis.ScanCmd {
+	panic("unimplemented")
+}
+
+// HSetEX implements redis.Cmdable.
+func (m *MockCmdable) HSetEX(ctx context.Context, key string, fieldsAndValues ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// HSetEXWithArgs implements redis.Cmdable.
+func (m *MockCmdable) HSetEXWithArgs(ctx context.Context, key string, options *redis.HSetEXOptions, fieldsAndValues ...string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// HStrLen implements redis.Cmdable.
+func (m *MockCmdable) HStrLen(ctx context.Context, key string, field string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// HTTL implements redis.Cmdable.
+func (m *MockCmdable) HTTL(ctx context.Context, key string, fields ...string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrAppend implements redis.Cmdable.
+func (m *MockCmdable) JSONArrAppend(ctx context.Context, key string, path string, values ...interface{}) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrIndex implements redis.Cmdable.
+func (m *MockCmdable) JSONArrIndex(ctx context.Context, key string, path string, value ...interface{}) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrIndexWithArgs implements redis.Cmdable.
+func (m *MockCmdable) JSONArrIndexWithArgs(ctx context.Context, key string, path string, options *redis.JSONArrIndexArgs, value ...interface{}) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrInsert implements redis.Cmdable.
+func (m *MockCmdable) JSONArrInsert(ctx context.Context, key string, path string, index int64, values ...interface{}) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrLen implements redis.Cmdable.
+func (m *MockCmdable) JSONArrLen(ctx context.Context, key string, path string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrPop implements redis.Cmdable.
+func (m *MockCmdable) JSONArrPop(ctx context.Context, key string, path string, index int) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrTrim implements redis.Cmdable.
+func (m *MockCmdable) JSONArrTrim(ctx context.Context, key string, path string) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONArrTrimWithArgs implements redis.Cmdable.
+func (m *MockCmdable) JSONArrTrimWithArgs(ctx context.Context, key string, path string, options *redis.JSONArrTrimArgs) *redis.IntSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONClear implements redis.Cmdable.
+func (m *MockCmdable) JSONClear(ctx context.Context, key string, path string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// JSONDebugMemory implements redis.Cmdable.
+func (m *MockCmdable) JSONDebugMemory(ctx context.Context, key string, path string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// JSONDel implements redis.Cmdable.
+func (m *MockCmdable) JSONDel(ctx context.Context, key string, path string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// JSONForget implements redis.Cmdable.
+func (m *MockCmdable) JSONForget(ctx context.Context, key string, path string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// JSONGet implements redis.Cmdable.
+func (m *MockCmdable) JSONGet(ctx context.Context, key string, paths ...string) *redis.JSONCmd {
+	panic("unimplemented")
+}
+
+// JSONGetWithArgs implements redis.Cmdable.
+func (m *MockCmdable) JSONGetWithArgs(ctx context.Context, key string, options *redis.JSONGetArgs, paths ...string) *redis.JSONCmd {
+	panic("unimplemented")
+}
+
+// JSONMGet implements redis.Cmdable.
+func (m *MockCmdable) JSONMGet(ctx context.Context, path string, keys ...string) *redis.JSONSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONMSet implements redis.Cmdable.
+func (m *MockCmdable) JSONMSet(ctx context.Context, params ...interface{}) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// JSONMSetArgs implements redis.Cmdable.
+func (m *MockCmdable) JSONMSetArgs(ctx context.Context, docs []redis.JSONSetArgs) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// JSONMerge implements redis.Cmdable.
+func (m *MockCmdable) JSONMerge(ctx context.Context, key string, path string, value string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// JSONNumIncrBy implements redis.Cmdable.
+func (m *MockCmdable) JSONNumIncrBy(ctx context.Context, key string, path string, value float64) *redis.JSONCmd {
+	panic("unimplemented")
+}
+
+// JSONObjKeys implements redis.Cmdable.
+func (m *MockCmdable) JSONObjKeys(ctx context.Context, key string, path string) *redis.SliceCmd {
+	panic("unimplemented")
+}
+
+// JSONObjLen implements redis.Cmdable.
+func (m *MockCmdable) JSONObjLen(ctx context.Context, key string, path string) *redis.IntPointerSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONSet implements redis.Cmdable.
+func (m *MockCmdable) JSONSet(ctx context.Context, key string, path string, value interface{}) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// JSONSetMode implements redis.Cmdable.
+func (m *MockCmdable) JSONSetMode(ctx context.Context, key string, path string, value interface{}, mode string) *redis.StatusCmd {
+	panic("unimplemented")
+}
+
+// JSONStrAppend implements redis.Cmdable.
+func (m *MockCmdable) JSONStrAppend(ctx context.Context, key string, path string, value string) *redis.IntPointerSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONStrLen implements redis.Cmdable.
+func (m *MockCmdable) JSONStrLen(ctx context.Context, key string, path string) *redis.IntPointerSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONToggle implements redis.Cmdable.
+func (m *MockCmdable) JSONToggle(ctx context.Context, key string, path string) *redis.IntPointerSliceCmd {
+	panic("unimplemented")
+}
+
+// JSONType implements redis.Cmdable.
+func (m *MockCmdable) JSONType(ctx context.Context, key string, path string) *redis.JSONSliceCmd {
+	panic("unimplemented")
+}
+
+// ObjectFreq implements redis.Cmdable.
+func (m *MockCmdable) ObjectFreq(ctx context.Context, key string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// SetBit implements redis.Cmdable.
+func (m *MockCmdable) SetBit(ctx context.Context, key string, offset int64, value int) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// VAdd implements redis.Cmdable.
+func (m *MockCmdable) VAdd(ctx context.Context, key string, element string, val redis.Vector) *redis.BoolCmd {
+	panic("unimplemented")
+}
+
+// VAddWithArgs implements redis.Cmdable.
+func (m *MockCmdable) VAddWithArgs(ctx context.Context, key string, element string, val redis.Vector, addArgs *redis.VAddArgs) *redis.BoolCmd {
+	panic("unimplemented")
+}
+
+// VCard implements redis.Cmdable.
+func (m *MockCmdable) VCard(ctx context.Context, key string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// VClearAttributes implements redis.Cmdable.
+func (m *MockCmdable) VClearAttributes(ctx context.Context, key string, element string) *redis.BoolCmd {
+	panic("unimplemented")
+}
+
+// VDim implements redis.Cmdable.
+func (m *MockCmdable) VDim(ctx context.Context, key string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// VEmb implements redis.Cmdable.
+func (m *MockCmdable) VEmb(ctx context.Context, key string, element string, raw bool) *redis.SliceCmd {
+	panic("unimplemented")
+}
+
+// VGetAttr implements redis.Cmdable.
+func (m *MockCmdable) VGetAttr(ctx context.Context, key string, element string) *redis.StringCmd {
+	panic("unimplemented")
+}
+
+// VInfo implements redis.Cmdable.
+func (m *MockCmdable) VInfo(ctx context.Context, key string) *redis.MapStringInterfaceCmd {
+	panic("unimplemented")
+}
+
+// VLinks implements redis.Cmdable.
+func (m *MockCmdable) VLinks(ctx context.Context, key string, element string) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// VLinksWithScores implements redis.Cmdable.
+func (m *MockCmdable) VLinksWithScores(ctx context.Context, key string, element string) *redis.VectorScoreSliceCmd {
+	panic("unimplemented")
+}
+
+// VRandMember implements redis.Cmdable.
+func (m *MockCmdable) VRandMember(ctx context.Context, key string) *redis.StringCmd {
+	panic("unimplemented")
+}
+
+// VRandMemberCount implements redis.Cmdable.
+func (m *MockCmdable) VRandMemberCount(ctx context.Context, key string, count int) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// VRem implements redis.Cmdable.
+func (m *MockCmdable) VRem(ctx context.Context, key string, element string) *redis.BoolCmd {
+	panic("unimplemented")
+}
+
+// VSetAttr implements redis.Cmdable.
+func (m *MockCmdable) VSetAttr(ctx context.Context, key string, element string, attr interface{}) *redis.BoolCmd {
+	panic("unimplemented")
+}
+
+// VSim implements redis.Cmdable.
+func (m *MockCmdable) VSim(ctx context.Context, key string, val redis.Vector) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// VSimWithArgs implements redis.Cmdable.
+func (m *MockCmdable) VSimWithArgs(ctx context.Context, key string, val redis.Vector, args *redis.VSimArgs) *redis.StringSliceCmd {
+	panic("unimplemented")
+}
+
+// VSimWithArgsWithScores implements redis.Cmdable.
+func (m *MockCmdable) VSimWithArgsWithScores(ctx context.Context, key string, val redis.Vector, args *redis.VSimArgs) *redis.VectorScoreSliceCmd {
+	panic("unimplemented")
+}
+
+// VSimWithScores implements redis.Cmdable.
+func (m *MockCmdable) VSimWithScores(ctx context.Context, key string, val redis.Vector) *redis.VectorScoreSliceCmd {
+	panic("unimplemented")
+}
+
+// XAckDel implements redis.Cmdable.
+func (m *MockCmdable) XAckDel(ctx context.Context, stream string, group string, mode string, ids ...string) *redis.SliceCmd {
+	panic("unimplemented")
+}
+
+// XDelEx implements redis.Cmdable.
+func (m *MockCmdable) XDelEx(ctx context.Context, stream string, mode string, ids ...string) *redis.SliceCmd {
+	panic("unimplemented")
+}
+
+// XTrimMaxLenApproxMode implements redis.Cmdable.
+func (m *MockCmdable) XTrimMaxLenApproxMode(ctx context.Context, key string, maxLen int64, limit int64, mode string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// XTrimMaxLenMode implements redis.Cmdable.
+func (m *MockCmdable) XTrimMaxLenMode(ctx context.Context, key string, maxLen int64, mode string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// XTrimMinIDApproxMode implements redis.Cmdable.
+func (m *MockCmdable) XTrimMinIDApproxMode(ctx context.Context, key string, minID string, limit int64, mode string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
+// XTrimMinIDMode implements redis.Cmdable.
+func (m *MockCmdable) XTrimMinIDMode(ctx context.Context, key string, minID string, mode string) *redis.IntCmd {
+	panic("unimplemented")
+}
+
 // MockCmdableMockRecorder is the mock recorder for MockCmdable.
 type MockCmdableMockRecorder struct {
 	mock *MockCmdable
@@ -4453,7 +5058,7 @@ func (mr *MockCmdableMockRecorder) TFCallASYNC(ctx, libName, funcName, numKeys i
 }
 
 // TFCallASYNCArgs mocks base method.
-func (m *MockCmdable) TFCallASYNCArgs(ctx context.Context, libName, funcName string, numKeys int, options *redis.TFCallOptions) *redis.Cmd {
+func (m *MockCmdable) TFCallASYNCArgs(ctx context.Context, libName, funcName string, numKeys int, options interface{}) *redis.Cmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFCallASYNCArgs", ctx, libName, funcName, numKeys, options)
 	ret0, _ := ret[0].(*redis.Cmd)
@@ -4467,7 +5072,7 @@ func (mr *MockCmdableMockRecorder) TFCallASYNCArgs(ctx, libName, funcName, numKe
 }
 
 // TFCallArgs mocks base method.
-func (m *MockCmdable) TFCallArgs(ctx context.Context, libName, funcName string, numKeys int, options *redis.TFCallOptions) *redis.Cmd {
+func (m *MockCmdable) TFCallArgs(ctx context.Context, libName, funcName string, numKeys int, options interface{}) *redis.Cmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFCallArgs", ctx, libName, funcName, numKeys, options)
 	ret0, _ := ret[0].(*redis.Cmd)
@@ -4509,7 +5114,7 @@ func (mr *MockCmdableMockRecorder) TFunctionList(ctx interface{}) *gomock.Call {
 }
 
 // TFunctionListArgs mocks base method.
-func (m *MockCmdable) TFunctionListArgs(ctx context.Context, options *redis.TFunctionListOptions) *redis.MapStringInterfaceSliceCmd {
+func (m *MockCmdable) TFunctionListArgs(ctx context.Context, options interface{}) *redis.MapStringInterfaceSliceCmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFunctionListArgs", ctx, options)
 	ret0, _ := ret[0].(*redis.MapStringInterfaceSliceCmd)
@@ -4537,7 +5142,7 @@ func (mr *MockCmdableMockRecorder) TFunctionLoad(ctx, lib interface{}) *gomock.C
 }
 
 // TFunctionLoadArgs mocks base method.
-func (m *MockCmdable) TFunctionLoadArgs(ctx context.Context, lib string, options *redis.TFunctionLoadOptions) *redis.StatusCmd {
+func (m *MockCmdable) TFunctionLoadArgs(ctx context.Context, lib string, options interface{}) *redis.StatusCmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFunctionLoadArgs", ctx, lib, options)
 	ret0, _ := ret[0].(*redis.StatusCmd)
@@ -10968,7 +11573,7 @@ func (mr *MockStatefulCmdableMockRecorder) TFCallASYNC(ctx, libName, funcName, n
 }
 
 // TFCallASYNCArgs mocks base method.
-func (m *MockStatefulCmdable) TFCallASYNCArgs(ctx context.Context, libName, funcName string, numKeys int, options *redis.TFCallOptions) *redis.Cmd {
+func (m *MockStatefulCmdable) TFCallASYNCArgs(ctx context.Context, libName, funcName string, numKeys int, options interface{}) *redis.Cmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFCallASYNCArgs", ctx, libName, funcName, numKeys, options)
 	ret0, _ := ret[0].(*redis.Cmd)
@@ -10982,7 +11587,7 @@ func (mr *MockStatefulCmdableMockRecorder) TFCallASYNCArgs(ctx, libName, funcNam
 }
 
 // TFCallArgs mocks base method.
-func (m *MockStatefulCmdable) TFCallArgs(ctx context.Context, libName, funcName string, numKeys int, options *redis.TFCallOptions) *redis.Cmd {
+func (m *MockStatefulCmdable) TFCallArgs(ctx context.Context, libName, funcName string, numKeys int, options interface{}) *redis.Cmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFCallArgs", ctx, libName, funcName, numKeys, options)
 	ret0, _ := ret[0].(*redis.Cmd)
@@ -11024,7 +11629,7 @@ func (mr *MockStatefulCmdableMockRecorder) TFunctionList(ctx interface{}) *gomoc
 }
 
 // TFunctionListArgs mocks base method.
-func (m *MockStatefulCmdable) TFunctionListArgs(ctx context.Context, options *redis.TFunctionListOptions) *redis.MapStringInterfaceSliceCmd {
+func (m *MockStatefulCmdable) TFunctionListArgs(ctx context.Context, options interface{}) *redis.MapStringInterfaceSliceCmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFunctionListArgs", ctx, options)
 	ret0, _ := ret[0].(*redis.MapStringInterfaceSliceCmd)
@@ -11052,7 +11657,7 @@ func (mr *MockStatefulCmdableMockRecorder) TFunctionLoad(ctx, lib interface{}) *
 }
 
 // TFunctionLoadArgs mocks base method.
-func (m *MockStatefulCmdable) TFunctionLoadArgs(ctx context.Context, lib string, options *redis.TFunctionLoadOptions) *redis.StatusCmd {
+func (m *MockStatefulCmdable) TFunctionLoadArgs(ctx context.Context, lib string, options interface{}) *redis.StatusCmd {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TFunctionLoadArgs", ctx, lib, options)
 	ret0, _ := ret[0].(*redis.StatusCmd)

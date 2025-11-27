@@ -185,3 +185,18 @@ func TestStore_Count(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), count)
 }
+
+func TestStore_Pluck(t *testing.T) {
+	db := setupTestDB(t)
+	dataStore := NewStore(db)
+	store := ds.NewStore[TestModel](dataStore)
+
+	ctx := context.Background()
+	db.Create(&TestModel{Name: "Item 1"})
+	db.Create(&TestModel{Name: "Item 2"})
+	values, err := store.Pluck(ctx, "name", where.L(10))
+	assert.NoError(t, err)
+	assert.Len(t, values, 2)
+	assert.Contains(t, values, "Item 1")
+	assert.Contains(t, values, "Item 2")
+}

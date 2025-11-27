@@ -77,18 +77,21 @@ func (s *Store[T]) Delete(ctx context.Context, opts *where.Options) error {
 func (s *Store[T]) Get(ctx context.Context, opts *where.Options) (*T, error) {
 	var obj T
 	if err := s.db(ctx, opts).First(&obj).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("record not found")
+		}
 		return nil, err
 	}
 	return &obj, nil
 }
 
 // List retrieves a list of objects from the database based on the provided where options.
-func (s *Store[T]) List(ctx context.Context, opts *where.Options) (count int64, ret []*T, err error) {
-	err = s.db(ctx, opts).Order("id desc").Find(&ret).Offset(-1).Limit(-1).Count(&count).Error
+func (s *Store[T]) List(ctx context.Context, opts *where.Options) (count int64, rets []*T, err error) {
+	err = s.db(ctx, opts).Order("id desc").Find(&rets).Offset(-1).Limit(-1).Count(&count).Error
 	if err != nil {
 		return 0, nil, err
 	}
-	return count, ret, nil
+	return count, rets, nil
 }
 
 // Count returns the number of objects in the database that match the provided where options.
@@ -98,4 +101,13 @@ func (s *Store[T]) Count(ctx context.Context, opts *where.Options) (count int64,
 		return 0, err
 	}
 	return count, nil
+}
+
+// Pluck retrieves a list of values for a specific column from the database based on the provided where options.
+func (s *Store[T]) Pluck(ctx context.Context, column string, opts *where.Options) (rets []any, err error) {
+	err = s.db(ctx, opts).Model(new(T)).Pluck(column, &rets).Error
+	if err != nil {
+		return nil, err
+	}
+	return rets, nil
 }

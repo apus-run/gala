@@ -3,9 +3,10 @@ module github.com/apus-run/gala/components/db
 go 1.25
 
 require (
+	github.com/apus-run/gala/pkg/lang v0.0.0-20251114123351-8359a2c70c91
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/pkg/errors v0.9.1
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/sqlite v1.6.0
@@ -16,6 +17,11 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/guregu/null v4.0.0+incompatible // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kr/text v0.2.0 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.65.0 // indirect
