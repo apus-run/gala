@@ -30,7 +30,7 @@ func TestConfigLoading(t *testing.T) {
 		require.NoError(t, err)
 
 		os.Setenv("CONFIG_PATH", testFile)
-		err = loadConfig([]file.Source{file.NewSource(testFile)})
+		err = LoadConfig([]file.Source{file.NewSource(testFile)})
 		assert.NoError(t, err)
 		assert.NotNil(t, global)
 	})
@@ -45,13 +45,13 @@ func TestConfigLoading(t *testing.T) {
 		err = os.WriteFile(testFile, []byte(`app: test`), 0644)
 		require.NoError(t, err)
 
-		err = loadConfig([]file.Source{file.NewSource(testFile)})
+		err = LoadConfig([]file.Source{file.NewSource(testFile)})
 		assert.NoError(t, err)
 		assert.NotNil(t, global)
 	})
 
 	t.Run("空的sources", func(t *testing.T) {
-		err := loadConfig([]file.Source{})
+		err := LoadConfig([]file.Source{})
 		assert.NoError(t, err)
 	})
 }
@@ -292,14 +292,14 @@ func TestInitializeConfig(t *testing.T) {
 		// 重置 global 配置
 		global.SetConfig(nil)
 
-		err = loadConfig([]file.Source{file.NewSource(testFile)})
+		err = LoadConfig([]file.Source{file.NewSource(testFile)})
 		assert.NoError(t, err)
 		assert.NotNil(t, global.GetConfig())
 	})
 
-	t.Run("测试loadConfig with 空sources", func(t *testing.T) {
+	t.Run("测试LoadConfig with 空sources", func(t *testing.T) {
 		global.SetConfig(nil)
-		err := loadConfig([]file.Source{})
+		err := LoadConfig([]file.Source{})
 		assert.NoError(t, err)
 	})
 

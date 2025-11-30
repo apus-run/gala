@@ -2,13 +2,10 @@ package conf
 
 import (
 	"errors"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/spf13/pflag"
 
 	"github.com/apus-run/gala/components/conf/file"
 )
@@ -19,7 +16,7 @@ var ErrConfigFileNotFound = errors.New("config file not found")
 var (
 	global      = &configAppliance{}
 	defaultFile = "config"
-	initialized = false
+	once        sync.Once
 )
 
 type configAppliance struct {
@@ -27,70 +24,42 @@ type configAppliance struct {
 	conf Conf
 }
 
-func init() {
-	// 可以通过环境变量禁用自动初始化
-	if os.Getenv("CONFIG_AUTO_INIT") == "false" {
-		return
-	}
-
-	if err := initializeConfig(); err != nil {
-		log.Printf("config init failed: %v", err)
-	} else {
-		initialized = true
-	}
-}
-
 // Init 手动初始化配置
 func Init() error {
-	if initialized {
-		return nil
-	}
+	var err error
+	once.Do(func() {
+		// 1. 环境变量
+		if path := os.Getenv("CONFIG_PATH"); path != "" {
+			err = LoadConfig([]file.Source{file.NewSource(path)})
+			return
+		}
 
-	if err := initializeConfig(); err != nil {
-		return err
-	}
-
-	initialized = true
-	return nil
-}
-
-func initializeConfig() error {
-	// 1. 环境变量
-	if path := os.Getenv("CONFIG_PATH"); path != "" {
-		return loadConfig([]file.Source{file.NewSource(path)})
-	}
-
-	// 2. 命令行参数
-	var cmdPath string
-	pflag.StringVarP(&cmdPath, "conf", "c", "config/config.yaml", "config path")
-	pflag.Parse()
-	if cmdPath != "" {
-		return loadConfig([]file.Source{file.NewSource(cmdPath)})
-	}
-
-	// 3. config目录
-	if pathRoot, err := os.Getwd(); err == nil {
-		configDir := filepath.Join(pathRoot, "config")
-		if entries, err := os.ReadDir(configDir); err == nil {
-			var sources []file.Source
-			for _, entry := range entries {
-				if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-					ext := strings.ToLower(filepath.Ext(entry.Name()))
-					if ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".toml" {
-						sources = append(sources, file.NewSource(filepath.Join(configDir, entry.Name())))
+		// 2. config目录
+		if pathRoot, wdErr := os.Getwd(); wdErr == nil {
+			configDir := filepath.Join(pathRoot, "config")
+			if entries, readErr := os.ReadDir(configDir); readErr == nil {
+				var sources []file.Source
+				for _, entry := range entries {
+					if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+						ext := strings.ToLower(filepath.Ext(entry.Name()))
+						if ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".toml" {
+							sources = append(sources, file.NewSource(filepath.Join(configDir, entry.Name())))
+						}
 					}
 				}
-			}
-			if len(sources) > 0 {
-				return loadConfig(sources)
+				if len(sources) > 0 {
+					err = LoadConfig(sources)
+					return
+				}
 			}
 		}
-	}
 
-	return ErrConfigFileNotFound
+		err = ErrConfigFileNotFound
+	})
+	return err
 }
 
-func loadConfig(sources []file.Source) error {
+func LoadConfig(sources []file.Source) error {
 	c := New(sources)
 	if err := c.Load(); err != nil {
 		return err
