@@ -1,4 +1,4 @@
-module github.com/apus-run/gala
+module github.com/apus-run/gala v0.5.1
 
 go 1.25
 
