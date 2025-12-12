@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// DB provider tests
 func TestNewDB(t *testing.T) {
 	prov, err := NewDB(sqlite.Open(":memory:"))
 	if err != nil {

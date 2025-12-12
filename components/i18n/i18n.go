@@ -16,7 +16,7 @@ import (
 
 // I18n is used to store the options and configurations for internationalization.
 type I18n struct {
-	ops       Options
+	opts      Options
 	bundle    *i18n.Bundle
 	localizer *i18n.Localizer
 	lang      language.Tag
@@ -25,11 +25,11 @@ type I18n struct {
 // New creates a new instance of the I18n struct with the given options.
 // It takes a variadic parameter of functional options and returns a pointer to the I18n struct.
 func New(options ...Option) *I18n {
-	ops := Apply(options...)
+	opts := Apply(options...)
 
-	bundle := i18n.NewBundle(ops.language)
-	localizer := i18n.NewLocalizer(bundle, ops.language.String())
-	switch ops.format {
+	bundle := i18n.NewBundle(opts.language)
+	localizer := i18n.NewLocalizer(bundle, opts.language.String())
+	switch opts.format {
 	case "toml":
 		bundle.RegisterUnmarshalFunc("toml", toml.Unmarshal)
 	case "json":
@@ -38,25 +38,25 @@ func New(options ...Option) *I18n {
 		bundle.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
 	}
 	rp := &I18n{
-		ops:       *ops,
+		opts:      *opts,
 		bundle:    bundle,
 		localizer: localizer,
-		lang:      ops.language,
+		lang:      opts.language,
 	}
-	for _, item := range ops.files {
+	for _, item := range opts.files {
 		rp.Add(item)
 	}
-	rp.AddFS(ops.fs)
+	rp.AddFS(opts.fs)
 	return rp
 }
 
 // Select can change language.
 func (i *I18n) Select(lang language.Tag) *I18n {
 	if lang.String() == "und" {
-		lang = i.ops.language
+		lang = i.opts.language
 	}
 	return &I18n{
-		ops:       i.ops,
+		opts:      i.opts,
 		bundle:    i.bundle,
 		localizer: i18n.NewLocalizer(i.bundle, lang.String()),
 		lang:      lang,
