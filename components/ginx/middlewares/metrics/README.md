@@ -7,7 +7,7 @@ gin metrics library, collect five metrics, `uptime`, `http_request_count_total`,
 ### Usage
 
 ```go
-	import "github.com/apus-run/sea-kit/ginx/middleware/metrics"
+	import "github.com/apus-run/gala/components/ginx/middleware/metrics"
 
 	r := gin.Default()
 
