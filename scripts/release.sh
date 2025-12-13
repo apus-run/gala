@@ -113,29 +113,55 @@ echo ""
 
 # 创建标签
 print_info "创建标签..."
-print_info "为所有模块创建统一版本标签: $VERSION"
+print_info "为根模块和子模块创建标签"
+print_info "格式: 根模块($VERSION) | 子模块({dir_prefix}/$VERSION)"
 echo ""
 
-# 检查标签是否已存在
-if git tag -l | grep -q "^${VERSION}$"; then
-    print_warning "标签已存在: $VERSION"
-    read -p "是否重新创建标签? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_info "取消发布"
-        exit 0
+# 转换模块路径为目录前缀
+convert_to_prefix() {
+    local module_path=$1
+    # 移除前面的 ./
+    module_path=${module_path#./}
+    # 如果是根模块，返回空
+    if [ -z "$module_path" ] || [ "$module_path" = "." ]; then
+        echo ""
+    else
+        # 返回目录前缀（如 components/db, pkg/errorsx）
+        echo "$module_path"
     fi
-    # 删除已存在的标签
-    git tag -d "$VERSION" > /dev/null
-    git push origin ":refs/tags/$VERSION" > /dev/null 2>&1 || true
+}
+
+TAGS_CREATED=0
+
+# 为根模块创建标签
+if git tag -l | grep -q "^${VERSION}$"; then
+    print_warning "根模块标签已存在: $VERSION"
+else
+    git tag -a "$VERSION" -m "Release $VERSION - Gala $VERSION"
+    print_success "创建根模块标签: $VERSION"
+    TAGS_CREATED=$((TAGS_CREATED + 1))
 fi
 
-# 创建 annotated tag
-git tag -a "$VERSION" -m "Release $VERSION - Gala $VERSION"
-TAGS_CREATED=1
+# 为每个子模块创建独立标签
+for module in $MODULES; do
+    if [ "$module" = "." ]; then
+        continue
+    fi
 
-print_success "创建标签: $VERSION"
-print_info "标签说明: 适用于所有 $(echo "$MODULES" | wc -l) 个模块"
+    PREFIX=$(convert_to_prefix "$module")  # 例如: components/db
+    TAG_NAME="${PREFIX}/${VERSION}"        # 例如: components/db/v0.6.2
+
+    # 检查标签是否已存在
+    if git tag -l | grep -q "^${TAG_NAME}$"; then
+        print_warning "标签已存在: $TAG_NAME"
+        continue
+    fi
+
+    # 创建 annotated tag
+    git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+    print_success "创建子模块标签: $TAG_NAME (适用于 $module)"
+    TAGS_CREATED=$((TAGS_CREATED + 1))
+done
 
 if [ $TAGS_CREATED -eq 0 ]; then
     print_warning "没有创建新标签（可能都已存在）"
@@ -161,7 +187,7 @@ echo ""
 
 # 显示使用说明
 print_info "其他项目使用方法:"
-echo "  # 子模块独立标签"
+echo "  # 子模块独立标签（推荐）"
 echo "  go get github.com/apus-run/gala/components/db@components/db/$VERSION"
 echo "  go get github.com/apus-run/gala/components/cache@components/cache/$VERSION"
 echo "  go get github.com/apus-run/gala/pkg/errorsx@pkg/errorsx/$VERSION"
@@ -172,9 +198,10 @@ echo "      github.com/apus-run/gala/components/db components/db/$VERSION"
 echo "      github.com/apus-run/gala/pkg/errorsx pkg/errorsx/$VERSION"
 echo "  )"
 echo ""
-print_warning "注意: 标签格式为 {目录前缀}/{版本号}"
-echo "  Git 标签: components/db/v0.6.3"
-echo "  Go 使用:  components/db/$VERSION (需要特殊处理)"
+print_info "说明:"
+echo "  - 根模块标签: $VERSION (适用于整个仓库)"
+echo "  - 子模块标签: {dir_prefix}/$VERSION (适用于特定模块)"
+echo "  - 两种标签共存，提供灵活的版本管理"
 echo ""
 
 # 提示用户更新文档
