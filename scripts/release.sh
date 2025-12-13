@@ -32,12 +32,36 @@ print_error() {
 # 检查参数
 if [ -z "$1" ]; then
     print_error "版本号不能为空"
-    echo "用法: $0 <版本号>"
+    echo "用法: $0 <版本号> [选项]"
     echo "示例: $0 v0.6.0"
+    echo "选项:"
+    echo "  -y, --yes     自动确认发布"
+    echo "  -h, --help    显示帮助信息"
     exit 1
 fi
 
 VERSION=$1
+AUTO_CONFIRM=false
+
+# 检查是否有第二个参数
+if [ -n "$2" ]; then
+    case "$2" in
+        -y|--yes)
+            AUTO_CONFIRM=true
+            ;;
+        -h|--help)
+            print_info "用法: $0 <版本号> [选项]"
+            echo "选项:"
+            echo "  -y, --yes     自动确认发布"
+            echo "  -h, --help    显示帮助信息"
+            exit 0
+            ;;
+        *)
+            print_error "未知选项: $2"
+            exit 1
+            ;;
+    esac
+fi
 
 # 验证版本号格式
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -75,11 +99,15 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 print_info "当前分支: $CURRENT_BRANCH"
 
 # 确认发布
-read -p "确认发布到分支: $CURRENT_BRANCH ? (y/N): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    print_info "取消发布"
-    exit 0
+if [ "$AUTO_CONFIRM" = true ]; then
+    print_info "自动确认模式: 跳过用户确认"
+else
+    read -p "确认发布到分支: $CURRENT_BRANCH ? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_info "取消发布"
+        exit 0
+    fi
 fi
 echo ""
 
