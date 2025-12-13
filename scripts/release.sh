@@ -114,7 +114,6 @@ echo ""
 # 创建标签
 print_info "创建标签..."
 print_info "为所有模块创建统一版本标签: $VERSION"
-print_warning "注意: 所有子模块共享相同的版本标签"
 echo ""
 
 # 检查标签是否已存在
@@ -162,20 +161,20 @@ echo ""
 
 # 显示使用说明
 print_info "其他项目使用方法:"
-echo "  # 明确指定版本（推荐）"
-echo "  go get github.com/apus-run/gala/components/db@$VERSION"
-echo "  go get github.com/apus-run/gala/components/cache@$VERSION"
-echo "  go get github.com/apus-run/gala/pkg/errorsx@$VERSION"
+echo "  # 子模块独立标签"
+echo "  go get github.com/apus-run/gala/components/db@components/db/$VERSION"
+echo "  go get github.com/apus-run/gala/components/cache@components/cache/$VERSION"
+echo "  go get github.com/apus-run/gala/pkg/errorsx@pkg/errorsx/$VERSION"
 echo ""
 echo "  # 或在 go.mod 中添加"
 echo "  require ("
-echo "      github.com/apus-run/gala/components/db $VERSION"
-echo "      github.com/apus-run/gala/pkg/errorsx $VERSION"
+echo "      github.com/apus-run/gala/components/db components/db/$VERSION"
+echo "      github.com/apus-run/gala/pkg/errorsx pkg/errorsx/$VERSION"
 echo "  )"
 echo ""
-print_info "说明: 所有子模块共享统一版本号"
-echo "  例如: github.com/apus-run/gala/components/db v0.6.2"
-echo "        github.com/apus-run/gala/pkg/errorsx v0.6.2"
+print_warning "注意: 标签格式为 {目录前缀}/{版本号}"
+echo "  Git 标签: components/db/v0.6.3"
+echo "  Go 使用:  components/db/$VERSION (需要特殊处理)"
 echo ""
 
 # 提示用户更新文档
