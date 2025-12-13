@@ -16,3 +16,5 @@ require (
 	golang.org/x/text v0.20.0 // indirect
 )
 
+
+replace github.com/apus-run/gala/components/log => ../log

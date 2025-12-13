@@ -44,3 +44,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	stathat.com/c/consistent v1.0.0 // indirect
 )
+
+replace github.com/apus-run/gala/components/mq => ../mq

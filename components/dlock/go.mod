@@ -42,3 +42,5 @@ require (
 	google.golang.org/grpc v1.71.1 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 )
+
+replace github.com/apus-run/gala/components/dlock => ../dlock

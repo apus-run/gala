@@ -21,3 +21,5 @@ require (
 	go.uber.org/mock v0.5.2
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/apus-run/gala/components/cache => ../cache

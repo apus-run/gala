@@ -9,3 +9,5 @@ require (
 	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/apus-run/gala/components/i18n => ../i18n

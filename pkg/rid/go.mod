@@ -18,3 +18,5 @@ require (
 	github.com/sony/sonyflake/v2 v2.2.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/apus-run/gala/pkg/rid => ../rid
