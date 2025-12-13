@@ -11,16 +11,17 @@
 ### 安装依赖
 
 ```bash
-go get github.com/apus-run/gala/components/db@components/db/v0.6.2
-go get github.com/apus-run/gala/pkg/errorsx@pkg/errorsx/v0.6.2
+# 明确指定版本（推荐）
+go get github.com/apus-run/gala/components/db@v0.6.2
+go get github.com/apus-run/gala/pkg/errorsx@v0.6.2
 ```
 
 ### go.mod
 
 ```go
 require (
-    github.com/apus-run/gala/components/db components/db/v0.6.2
-    github.com/apus-run/gala/pkg/errorsx pkg/errorsx/v0.6.2
+    github.com/apus-run/gala/components/db v0.6.2
+    github.com/apus-run/gala/pkg/errorsx v0.6.2
 )
 ```
 

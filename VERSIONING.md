@@ -9,14 +9,15 @@ Gala 是多模块仓库，包含 35+ 个独立 Go 模块。
 ### 标签格式
 
 ```
-根模块:    v0.6.2
-子模块:    {dir_prefix}/v0.6.2
+统一标签:  v0.6.2
 ```
 
-**示例**:
+**所有模块共享同一个版本标签**:
 - `v0.6.2` - 根模块（整个仓库）
 - `components/db/v0.6.2` - 数据库组件
 - `pkg/errorsx/v0.6.2` - 错误处理工具
+
+**说明**: 子模块使用统一版本号，通过模块路径区分
 
 ### 版本号规则
 
@@ -47,17 +48,17 @@ git tag -a v0.6.2 -m "Release v0.6.2"
 ### 添加依赖
 
 ```bash
-# 明确指定版本
-go get github.com/apus-run/gala/components/db@components/db/v0.6.2
-go get github.com/apus-run/gala/pkg/errorsx@pkg/errorsx/v0.6.2
+# 明确指定版本（推荐）
+go get github.com/apus-run/gala/components/db@v0.6.2
+go get github.com/apus-run/gala/pkg/errorsx@v0.6.2
 ```
 
 ### go.mod 声明
 
 ```go
 require (
-    github.com/apus-run/gala/components/db components/db/v0.6.2
-    github.com/apus-run/gala/pkg/errorsx pkg/errorsx/v0.6.2
+    github.com/apus-run/gala/components/db v0.6.2
+    github.com/apus-run/gala/pkg/errorsx v0.6.2
 )
 ```
 

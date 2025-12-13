@@ -3,9 +3,10 @@
 ## 安装依赖
 
 ```bash
-go get github.com/apus-run/gala/components/db@components/db/v0.6.2
-go get github.com/apus-run/gala/components/cache@components/cache/v0.6.2
-go get github.com/apus-run/gala/pkg/errorsx@pkg/errorsx/v0.6.2
+# 明确指定版本（推荐）
+go get github.com/apus-run/gala/components/db@v0.6.2
+go get github.com/apus-run/gala/components/cache@v0.6.2
+go get github.com/apus-run/gala/pkg/errorsx@v0.6.2
 ```
 
 ## 基本使用
@@ -94,7 +95,7 @@ replace github.com/apus-run/gala/components/db => /path/to/gala/components/db
 
 1. **明确指定版本**
    ```bash
-   go get github.com/apus-run/gala/components/db@components/db/v0.6.2
+   go get github.com/apus-run/gala/components/db@v0.6.2
    ```
 
 2. **错误处理**

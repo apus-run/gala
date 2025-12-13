@@ -12,18 +12,20 @@ GALA 一个轻量级的Golang应用搭建脚手架
 
 ### 标签格式
 
-- **根模块**: `v0.6.2`
-- **子模块**: `{dir_prefix}/v0.6.2`
+**统一版本**: `v0.6.2`
+
+所有模块共享同一个版本标签。
 
 ### 快速发布
 
 ```bash
-./scripts/release.sh v0.6.2 --yes
+./scripts/release.sh v0.6.3 --yes
 ```
 
 ### 使用依赖
 
 ```bash
-go get github.com/apus-run/gala/components/db@components/db/v0.6.2
+# 明确指定版本（推荐）
+go get github.com/apus-run/gala/components/db@v0.6.2
 ```
 
