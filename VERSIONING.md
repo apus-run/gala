@@ -36,12 +36,20 @@ Gala 是多模块仓库，包含 35+ 个独立 Go 模块。
 ### 手动发布
 
 ```bash
-# 1. 根模块标签
-git tag -a v0.6.2 -m "Release v0.6.2"
+# 1. 发布前：清理 replace 指令（用于本地开发）
+./scripts/clean-submodule-gomod.sh
 
-# 2. 子模块标签（脚本自动创建）
+# 2. 创建标签
 ./scripts/release.sh v0.6.2 --yes
+
+# 3. 发布后：恢复 replace 指令（用于本地开发）
+./scripts/restore-submodule-gomod.sh
 ```
+
+**说明**:
+- `clean-submodule-gomod.sh`: 清理子模块 go.mod 中的 replace 指令，用于发布
+- `restore-submodule-gomod.sh`: 恢复子模块 go.mod 中的 replace 指令，用于本地开发
+- 子模块的 go.mod 默认包含 replace 指令，方便本地开发
 
 ## 使用方法
 
