@@ -132,7 +132,7 @@ if git tag -l | grep -q "^${VERSION}$"; then
 fi
 
 # 创建 annotated tag
-git tag -a "$VERSION" -m "Release $VERSION - Gala v$VERSION"
+git tag -a "$VERSION" -m "Release $VERSION - Gala $VERSION"
 TAGS_CREATED=1
 
 print_success "创建标签: $VERSION"
