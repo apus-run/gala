@@ -18,7 +18,7 @@ GALA 一个轻量级的Golang应用搭建脚手架
 ### 快速发布
 
 ```bash
-./scripts/release.sh v0.6.3 --yes
+./scripts/release.sh v0.6.2 --yes
 ```
 
 ### 使用依赖

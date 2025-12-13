@@ -29,17 +29,17 @@ Gala 是多模块仓库，包含 35+ 个独立 Go 模块。
 ### 自动发布
 
 ```bash
-./scripts/release.sh v0.6.3 --yes
+./scripts/release.sh v0.6.2 --yes
 ```
 
 ### 手动发布
 
 ```bash
 # 1. 根模块标签
-git tag -a v0.6.3 -m "Release v0.6.3"
+git tag -a v0.6.2 -m "Release v0.6.2"
 
 # 2. 子模块标签（脚本自动创建）
-./scripts/release.sh v0.6.3 --yes
+./scripts/release.sh v0.6.2 --yes
 ```
 
 ## 使用方法
@@ -90,8 +90,8 @@ echo "go.work" >> .gitignore
 **快速命令**:
 ```bash
 # 发布
-./scripts/release.sh v0.6.3
+./scripts/release.sh v0.6.2
 
 # 使用
-go get github.com/apus-run/gala/components/db@components/db/v0.6.3
+go get github.com/apus-run/gala/components/db@components/db/v0.6.2
 ```

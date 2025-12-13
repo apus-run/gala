@@ -3,7 +3,7 @@
 ## 发布新版本
 
 ```bash
-./scripts/release.sh v0.6.3 --yes
+./scripts/release.sh v0.6.2 --yes
 ```
 
 ## 在其他项目中使用
