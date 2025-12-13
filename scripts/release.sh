@@ -85,26 +85,30 @@ echo ""
 
 # 创建标签
 print_info "创建标签..."
-TAGS_CREATED=0
+print_info "为所有模块创建统一版本标签: $VERSION"
+print_warning "注意: 所有子模块共享相同的版本标签"
+echo ""
 
-for module in $MODULES; do
-    if [ "$module" = "." ]; then
-        TAG_NAME="$VERSION"
-    else
-        TAG_NAME="${module}/$VERSION"
+# 检查标签是否已存在
+if git tag -l | grep -q "^${VERSION}$"; then
+    print_warning "标签已存在: $VERSION"
+    read -p "是否重新创建标签? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_info "取消发布"
+        exit 0
     fi
+    # 删除已存在的标签
+    git tag -d "$VERSION" > /dev/null
+    git push origin ":refs/tags/$VERSION" > /dev/null 2>&1 || true
+fi
 
-    # 检查标签是否已存在
-    if git tag -l | grep -q "^${TAG_NAME}$"; then
-        print_warning "标签已存在: $TAG_NAME"
-        continue
-    fi
+# 创建 annotated tag
+git tag -a "$VERSION" -m "Release $VERSION - Gala v$VERSION"
+TAGS_CREATED=1
 
-    # 创建 annotated tag
-    git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
-    print_success "创建标签: $TAG_NAME"
-    TAGS_CREATED=$((TAGS_CREATED + 1))
-done
+print_success "创建标签: $VERSION"
+print_info "标签说明: 适用于所有 35 个模块"
 
 if [ $TAGS_CREATED -eq 0 ]; then
     print_warning "没有创建新标签（可能都已存在）"
@@ -130,8 +134,16 @@ echo ""
 
 # 显示使用说明
 print_info "其他项目使用方法:"
+echo "  # 明确指定版本（推荐）"
 echo "  go get github.com/apus-run/gala/components/db@$VERSION"
+echo "  go get github.com/apus-run/gala/components/cache@$VERSION"
 echo "  go get github.com/apus-run/gala/pkg/errorsx@$VERSION"
+echo ""
+echo "  # 或在 go.mod 中添加"
+echo "  require ("
+echo "      github.com/apus-run/gala/components/db $VERSION"
+echo "      github.com/apus-run/gala/pkg/errorsx $VERSION"
+echo "  )"
 echo ""
 
 # 提示用户更新文档

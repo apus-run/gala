@@ -65,17 +65,17 @@ gala/
 
 ### 标签命名规范
 
-根模块和子模块使用不同的标签前缀：
+**所有模块使用统一的标签** - 这是多模块仓库的最佳实践：
 
 ```bash
-# 根模块标签
+# 统一标签（适用于所有 35 个模块）
 v0.5.2
-
-# 子模块标签
-components/db/v0.5.2
-components/cache/v0.5.2
-pkg/errorsx/v0.5.2
 ```
+
+**说明**:
+- 根模块和所有子模块共享同一个版本标签
+- 子模块可以独立使用，但版本号统一
+- 这样确保了模块间的兼容性
 
 ### 当前版本状态
 
@@ -115,17 +115,14 @@ git commit -m "feat: 添加新功能"
 如果需要手动发布：
 
 ```bash
-# 1. 创建根模块标签
+# 1. 创建统一版本标签（适用于所有模块）
 git tag -a v0.6.0 -m "Release v0.6.0"
 
-# 2. 创建子模块标签
-git tag -a components/db/v0.6.0 -m "Release components/db v0.6.0"
-git tag -a components/cache/v0.6.0 -m "Release components/cache v0.6.0"
-# ... 为所有模块创建标签
-
-# 3. 推送所有标签
+# 2. 推送标签到远程
 git push --tags
 ```
+
+**重要**: 只需创建一个标签，所有子模块共享此版本。
 
 ## 使用指南
 
