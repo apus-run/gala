@@ -2,7 +2,6 @@ module github.com/apus-run/gala/pkg/jsonx
 
 go 1.25
 
-replace github.com/apus-run/gala/pkg/jsonx => ../jsonx
 
 require (
 	github.com/bytedance/sonic v1.14.1

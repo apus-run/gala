@@ -2,7 +2,6 @@ module github.com/apus-run/gala/pkg/lang
 
 go 1.25
 
-replace github.com/apus-run/gala/pkg/lang => ../lang
 
 require (
 	github.com/davecgh/go-spew v1.1.1

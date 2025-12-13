@@ -2,7 +2,6 @@ module github.com/apus-run/gala/components/i18n
 
 go 1.25
 
-replace github.com/apus-run/gala/components/i18n => ../i18n
 
 require (
 	github.com/BurntSushi/toml v1.5.0

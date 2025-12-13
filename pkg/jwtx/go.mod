@@ -2,7 +2,6 @@ module github.com/apus-run/gala/pkg/jwtx
 
 go 1.25
 
-replace github.com/apus-run/gala/pkg/jwtx => ../jwtx
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.0

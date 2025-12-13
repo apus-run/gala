@@ -20,4 +20,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/apus-run/gala/components/idgen => ../idgen

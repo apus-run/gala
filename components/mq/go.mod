@@ -2,7 +2,6 @@ module github.com/apus-run/gala/components/mq
 
 go 1.25
 
-replace github.com/apus-run/gala/components/mq => ../mq
 
 require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2

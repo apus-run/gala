@@ -2,7 +2,6 @@ module github.com/apus-run/gala/components/authz
 
 go 1.25
 
-replace github.com/apus-run/gala/components/authz => ./../authz
 
 require (
 	github.com/casbin/casbin/v2 v2.120.0

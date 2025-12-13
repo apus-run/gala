@@ -2,7 +2,6 @@ module github.com/apus-run/gala/pkg/ctxcache
 
 go 1.25
 
-replace github.com/apus-run/gala/pkg/ctxcache => ../ctxcache
 
 require github.com/onsi/gomega v1.38.2
 

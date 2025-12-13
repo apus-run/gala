@@ -2,7 +2,6 @@ module github.com/apus-run/gala/components/cache
 
 go 1.25
 
-replace github.com/apus-run/gala/components/cache => ../cache
 
 require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7

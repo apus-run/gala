@@ -2,7 +2,6 @@ module github.com/apus-run/gala/pkg/id
 
 go 1.25
 
-replace github.com/apus-run/gala/pkg/id => ../id
 
 require (
 	github.com/sony/sonyflake/v2 v2.2.0

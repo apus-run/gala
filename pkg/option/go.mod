@@ -2,7 +2,6 @@ module github.com/apus-run/gala/pkg/option
 
 go 1.25
 
-replace github.com/apus-run/gala/pkg/option => ../option
 
 require github.com/stretchr/testify v1.11.1
 

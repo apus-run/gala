@@ -2,7 +2,6 @@ module github.com/apus-run/gala/components/dlock
 
 go 1.25
 
-replace github.com/apus-run/gala/components/dlock => ../dlock
 
 require go.etcd.io/etcd/client/v3 v3.6.4
 
