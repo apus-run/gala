@@ -143,7 +143,7 @@ func (e *Error) Format(state fmt.State, verb rune) {
 
 		fmt.Fprintf(state, "%s", strings.Trim(str.String(), "\r\n\t"))
 	default:
-		fmt.Fprintf(state, e.Message)
+		fmt.Fprintf(state, "%s", e.Message)
 	}
 }
 
