@@ -3,8 +3,8 @@ package errorsx
 import "net/http"
 
 // Success new Success error
-func Success(reason string) *Error {
-	return New(http.StatusOK, reason).WithMessage("OK")
+func Success(status string) *Error {
+	return New(http.StatusOK, status).WithMessage("OK")
 }
 func IsSuccess(err *Error) bool {
 	return err != nil &&
@@ -13,8 +13,8 @@ func IsSuccess(err *Error) bool {
 }
 
 // BadRequest new BadRequest error
-func BadRequest(reason string) *Error {
-	return New(http.StatusBadRequest, reason).WithMessage("Bad Request")
+func BadRequest(status string) *Error {
+	return New(http.StatusBadRequest, status).WithMessage("Bad Request")
 }
 
 // IsBadRequest determines if err is BadRequest error.
@@ -25,8 +25,8 @@ func IsBadRequest(err *Error) bool {
 }
 
 // Unauthorized new Unauthorized error
-func Unauthorized(reason string) *Error {
-	return New(http.StatusUnauthorized, reason).WithMessage("Unauthorized")
+func Unauthorized(status string) *Error {
+	return New(http.StatusUnauthorized, status).WithMessage("Unauthorized")
 }
 
 // IsUnauthorized determines if err is Unauthorized error.
@@ -38,8 +38,8 @@ func IsUnauthorized(err *Error) bool {
 
 // Forbidden new Forbidden error
 // 未授权（已认证但无权限）
-func Forbidden(reason string) *Error {
-	return New(http.StatusForbidden, reason).WithMessage("Forbidden")
+func Forbidden(status string) *Error {
+	return New(http.StatusForbidden, status).WithMessage("Forbidden")
 }
 
 // IsForbidden determines if err is Forbidden error.
@@ -50,8 +50,8 @@ func IsForbidden(err *Error) bool {
 }
 
 // NotFound new NotFound error
-func NotFound(reason string) *Error {
-	return New(http.StatusNotFound, reason).WithMessage("Not Found")
+func NotFound(status string) *Error {
+	return New(http.StatusNotFound, status).WithMessage("Not Found")
 }
 
 // IsNotFound determines if err is NotFound error.
@@ -62,8 +62,8 @@ func IsNotFound(err *Error) bool {
 }
 
 // Conflict new Conflict error
-func Conflict(reason string) *Error {
-	return New(http.StatusConflict, reason).WithMessage("Conflict")
+func Conflict(status string) *Error {
+	return New(http.StatusConflict, status).WithMessage("Conflict")
 }
 
 // IsConflict determines if err is Conflict error.
@@ -74,8 +74,8 @@ func IsConflict(err *Error) bool {
 }
 
 // InternalServer new InternalServer error
-func InternalServer(reason string) *Error {
-	return New(http.StatusInternalServerError, reason).WithMessage("Internal Server Error")
+func InternalServer(status string) *Error {
+	return New(http.StatusInternalServerError, status).WithMessage("Internal Server Error")
 }
 
 // IsInternalServer determines if err is InternalServer error.
@@ -86,8 +86,8 @@ func IsInternalServer(err *Error) bool {
 }
 
 // ServiceUnavailable new ServiceUnavailable error
-func ServiceUnavailable(reason string) *Error {
-	return New(http.StatusServiceUnavailable, reason).WithMessage("Service Unavailable")
+func ServiceUnavailable(status string) *Error {
+	return New(http.StatusServiceUnavailable, status).WithMessage("Service Unavailable")
 }
 
 // IsServiceUnavailable determines if err is ServiceUnavailable error.
@@ -98,8 +98,8 @@ func IsServiceUnavailable(err *Error) bool {
 }
 
 // GatewayTimeout new GatewayTimeout error
-func GatewayTimeout(reason string) *Error {
-	return New(http.StatusGatewayTimeout, reason).WithMessage("Gateway Timeout")
+func GatewayTimeout(status string) *Error {
+	return New(http.StatusGatewayTimeout, status).WithMessage("Gateway Timeout")
 }
 
 // IsGatewayTimeout determines if err is GatewayTimeout error.
@@ -111,8 +111,8 @@ func IsGatewayTimeout(err *Error) bool {
 
 // ClientClosed new ClientClosed error
 // 注意：499 是Nginx定义的非标准状态码（客户端主动关闭连接）
-func ClientClosed(reason string) *Error {
-	return New(499, reason).WithMessage("Client Closed")
+func ClientClosed(status string) *Error {
+	return New(499, status).WithMessage("Client Closed")
 }
 
 // IsClientClosed determines if err is ClientClosed error.
@@ -122,8 +122,8 @@ func IsClientClosed(err *Error) bool {
 		err.Message == "Client Closed"
 }
 
-func TooManyRequests(reason string) *Error {
-	return New(http.StatusTooManyRequests, reason).WithMessage("Too Many Requests")
+func TooManyRequests(status string) *Error {
+	return New(http.StatusTooManyRequests, status).WithMessage("Too Many Requests")
 }
 
 func IsTooManyRequests(err *Error) bool {
@@ -133,8 +133,8 @@ func IsTooManyRequests(err *Error) bool {
 }
 
 // TokenInvalid token 无效
-func TokenInvalid(reason string) *Error {
-	return New(http.StatusUnauthorized, reason).WithMessage("Token Invalid")
+func TokenInvalid(status string) *Error {
+	return New(http.StatusUnauthorized, status).WithMessage("Token Invalid")
 }
 
 func IsTokenInvalid(err *Error) bool {
@@ -144,8 +144,8 @@ func IsTokenInvalid(err *Error) bool {
 }
 
 // TokenExpired token 过期
-func TokenExpired(reason string) *Error {
-	return New(http.StatusUnauthorized, reason).WithMessage("Token Expired")
+func TokenExpired(status string) *Error {
+	return New(http.StatusUnauthorized, status).WithMessage("Token Expired")
 }
 
 func IsTokenExpired(err *Error) bool {
@@ -156,8 +156,8 @@ func IsTokenExpired(err *Error) bool {
 
 // TokenInvalidSignature token 签名无效
 // 通常用于处理 JWT 或其他类型的令牌验证失败的情况
-func TokenInvalidSignature(reason string) *Error {
-	return New(http.StatusUnauthorized, reason).WithMessage("Token Invalid Signature")
+func TokenInvalidSignature(status string) *Error {
+	return New(http.StatusUnauthorized, status).WithMessage("Token Invalid Signature")
 }
 
 func IsTokenInvalidSignature(err *Error) bool {
@@ -168,8 +168,8 @@ func IsTokenInvalidSignature(err *Error) bool {
 
 // Bind bind error
 // 绑定参数错误，通常用于处理请求体或查询参数的解析错误
-func BindError(reason string) *Error {
-	return New(http.StatusBadRequest, reason).WithMessage("Bind Error")
+func BindError(status string) *Error {
+	return New(http.StatusBadRequest, status).WithMessage("Bind Error")
 }
 
 func IsBindError(err *Error) bool {
@@ -180,8 +180,8 @@ func IsBindError(err *Error) bool {
 
 // InvalidArguments invalid arguments
 // 无效参数错误（函数/方法调用时的参数错误）
-func InvalidArguments(reason string) *Error {
-	return New(http.StatusBadRequest, reason).WithMessage("Invalid Arguments")
+func InvalidArguments(status string) *Error {
+	return New(http.StatusBadRequest, status).WithMessage("Invalid Arguments")
 }
 
 func IsInvalidArguments(err *Error) bool {
@@ -192,8 +192,8 @@ func IsInvalidArguments(err *Error) bool {
 
 // InvalidParams invalid params
 // 无效参数错误（外部输入参数验证失败）
-func InvalidParams(reason string) *Error {
-	return New(http.StatusBadRequest, reason).WithMessage("Invalid Params")
+func InvalidParams(status string) *Error {
+	return New(http.StatusBadRequest, status).WithMessage("Invalid Params")
 }
 
 func IsInvalidParams(err *Error) bool {
@@ -204,8 +204,8 @@ func IsInvalidParams(err *Error) bool {
 
 // Panic panic error
 // 通常用于处理程序运行时的异常情况（如空指针、数组越界）
-func PanicError(reason string) *Error {
-	return New(http.StatusInternalServerError, reason).WithMessage("Panic Error")
+func PanicError(status string) *Error {
+	return New(http.StatusInternalServerError, status).WithMessage("Panic Error")
 }
 
 func IsPanicError(err *Error) bool {
@@ -216,8 +216,8 @@ func IsPanicError(err *Error) bool {
 
 // PageNotFound page not found
 // 通常用于处理请求的页面或资源未找到的情况
-func PageNotFound(reason string) *Error {
-	return New(http.StatusNotFound, reason).WithMessage("Page Not Found")
+func PageNotFound(status string) *Error {
+	return New(http.StatusNotFound, status).WithMessage("Page Not Found")
 }
 
 func IsPageNotFound(err *Error) bool {
@@ -228,8 +228,8 @@ func IsPageNotFound(err *Error) bool {
 
 // DBReadError db read error
 // 包含 SELECT/FETCH 等查询操作失败
-func DBReadError(reason string) *Error {
-	return New(http.StatusInternalServerError, reason).WithMessage("DB Read Error")
+func DBReadError(status string) *Error {
+	return New(http.StatusInternalServerError, status).WithMessage("DB Read Error")
 }
 
 func IsDBReadError(err *Error) bool {
@@ -240,8 +240,8 @@ func IsDBReadError(err *Error) bool {
 
 // DBWriteError db write error
 // 包含 INSERT/UPDATE/DELETE 等写入操作失败
-func DBWriteError(reason string) *Error {
-	return New(http.StatusInternalServerError, reason).WithMessage("DB Write Error")
+func DBWriteError(status string) *Error {
+	return New(http.StatusInternalServerError, status).WithMessage("DB Write Error")
 }
 
 func IsDBWriteError(err *Error) bool {
@@ -252,8 +252,8 @@ func IsDBWriteError(err *Error) bool {
 
 // DBTransactionError db transaction error
 // 数据库事务操作（BEGIN/COMMIT/ROLLBACK）失败
-func DBTransactionError(reason string) *Error {
-	return New(http.StatusInternalServerError, reason).WithMessage("DB Transaction Error")
+func DBTransactionError(status string) *Error {
+	return New(http.StatusInternalServerError, status).WithMessage("DB Transaction Error")
 }
 
 func IsDBTransactionError(err *Error) bool {
@@ -263,8 +263,8 @@ func IsDBTransactionError(err *Error) bool {
 }
 
 // PermissionDenied 表示请求没有权限
-func PermissionDenied(reason string) *Error {
-	return New(http.StatusForbidden, reason).WithMessage("Permission Denied")
+func PermissionDenied(status string) *Error {
+	return New(http.StatusForbidden, status).WithMessage("Permission Denied")
 }
 
 // IsPermissionDenied 判断是否是权限不足的错误
@@ -275,8 +275,8 @@ func IsPermissionDenied(err *Error) bool {
 }
 
 // OperationFailed 表示操作失败
-func OperationFailed(reason string) *Error {
-	return New(http.StatusInternalServerError, reason).WithMessage("Operation Failed")
+func OperationFailed(status string) *Error {
+	return New(http.StatusInternalServerError, status).WithMessage("Operation Failed")
 }
 
 // IsOperationFailed 判断是否是操作失败的错误
@@ -288,8 +288,8 @@ func IsOperationFailed(err *Error) bool {
 
 // Unauthenticated 表示请求未经过身份验证
 // 典型场景：API 需要认证但未提供有效凭证
-func Unauthenticated(reason string) *Error {
-	return New(http.StatusUnauthorized, reason).WithMessage("Unauthenticated")
+func Unauthenticated(status string) *Error {
+	return New(http.StatusUnauthorized, status).WithMessage("Unauthenticated")
 }
 
 // IsUnauthenticated 判断是否是未认证错误
