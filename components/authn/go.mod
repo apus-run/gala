@@ -2,11 +2,10 @@ module github.com/apus-run/gala/components/authn
 
 go 1.25
 
-
 require (
-	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/redis/go-redis/v9 v9.12.1
-	golang.org/x/crypto v0.41.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/redis/go-redis/v9 v9.14.1
+	golang.org/x/crypto v0.46.0
 )
 
 require (
