@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -63,6 +64,23 @@ func TestAdaptiveTimeoutRetryStrategy_Next(t *testing.T) {
 			assert.Equal(t, tt.wantOk, ok)
 		})
 	}
+}
+
+func TestAdaptiveTimeoutRetryStrategy_NextWithRetries(t *testing.T) {
+	t.Parallel()
+
+	baseStrategy := &MockStrategy{}
+	s := NewAdaptiveTimeoutRetryStrategy(baseStrategy, 1, 3)
+
+	s.Report(errors.New("first failure"))
+	delay, ok := s.NextWithRetries(1)
+	assert.Equal(t, time.Second, delay)
+	assert.True(t, ok)
+
+	s.Report(errors.New("second failure"))
+	delay, ok = s.NextWithRetries(2)
+	assert.Zero(t, delay)
+	assert.False(t, ok)
 }
 
 func ExampleAdaptiveTimeoutRetryStrategy_Next() {

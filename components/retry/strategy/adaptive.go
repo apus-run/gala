@@ -57,25 +57,35 @@ func (s *AdaptiveTimeoutRetryStrategy) Report(err error) Strategy {
 }
 
 func (s *AdaptiveTimeoutRetryStrategy) markSuccess() {
-	count := atomic.AddUint64(&s.reqCount, 1)
+	count := atomic.AddUint64(&s.reqCount, 1) - 1
 	count = count % s.bitCnt
 	// 对2^x进行取模或者整除运算时可以用位运算代替除法和取模
 	// count / 64 可以转换成 count >> 6。 位运算会更高效。
 	idx := count >> 6
 	// count % 64 可以转换成 count & 63
 	bitPos := count & 63
-	old := atomic.LoadUint64(&s.ringBuffer[idx])
-	atomic.StoreUint64(&s.ringBuffer[idx], old&^(uint64(1)<<bitPos))
+	mask := uint64(1) << bitPos
+	for {
+		old := atomic.LoadUint64(&s.ringBuffer[idx])
+		if atomic.CompareAndSwapUint64(&s.ringBuffer[idx], old, old&^mask) {
+			return
+		}
+	}
 }
 
 func (s *AdaptiveTimeoutRetryStrategy) markFail() {
-	count := atomic.AddUint64(&s.reqCount, 1)
+	count := atomic.AddUint64(&s.reqCount, 1) - 1
 	count = count % s.bitCnt
 	idx := count >> 6
 	bitPos := count & 63
-	old := atomic.LoadUint64(&s.ringBuffer[idx])
 	// (uint64(1)<<bitPos) 将目标位设置为1
-	atomic.StoreUint64(&s.ringBuffer[idx], old|(uint64(1)<<bitPos))
+	mask := uint64(1) << bitPos
+	for {
+		old := atomic.LoadUint64(&s.ringBuffer[idx])
+		if atomic.CompareAndSwapUint64(&s.ringBuffer[idx], old, old|mask) {
+			return
+		}
+	}
 }
 
 func (s *AdaptiveTimeoutRetryStrategy) getFailed() int {

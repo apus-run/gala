@@ -32,8 +32,14 @@ func NewRetry(cfg Config) (strategy.Strategy, error) {
 	// 根据 config 中的字段来检测
 	switch cfg.Type {
 	case "fixed":
+		if cfg.FixedInterval == nil {
+			return nil, fmt.Errorf("fixed 重试配置不能为空")
+		}
 		return strategy.NewFixedIntervalRetryStrategy(cfg.FixedInterval.Interval, cfg.FixedInterval.MaxRetries), nil
 	case "exponential":
+		if cfg.ExponentialBackoff == nil {
+			return nil, fmt.Errorf("exponential 重试配置不能为空")
+		}
 		return strategy.NewExponentialBackoffRetryStrategy(cfg.ExponentialBackoff.InitialInterval, cfg.ExponentialBackoff.MaxInterval, cfg.ExponentialBackoff.MaxRetries), nil
 	default:
 		return nil, fmt.Errorf("未知重试类型: %s", cfg.Type)
@@ -49,32 +55,54 @@ func Retry(ctx context.Context,
 	s strategy.Strategy,
 	bizFunc func() error,
 ) error {
-	var ticker *time.Ticker
+	var (
+		timer   *time.Timer
+		retries int32
+	)
 	defer func() {
-		if ticker != nil {
-			ticker.Stop()
+		if timer != nil {
+			timer.Stop()
 		}
 	}()
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		err := bizFunc()
+		if nextStrategy := s.Report(err); nextStrategy != nil {
+			s = nextStrategy
+		}
 		// 直接退出
 		if err == nil {
 			return nil
 		}
-		duration, ok := s.Next()
+
+		retries++
+		duration, ok := s.NextWithRetries(retries)
 		if !ok {
 			return fmt.Errorf("ekit: 重试耗尽, 原因: %w", err)
 		}
-		if ticker == nil {
-			ticker = time.NewTicker(duration)
+
+		if timer == nil {
+			timer = time.NewTimer(duration)
 		} else {
-			ticker.Reset(duration)
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(duration)
 		}
+
 		select {
 		case <-ctx.Done():
 			// 超时或者被取消了，直接返回
 			return ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
