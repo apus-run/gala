@@ -313,6 +313,54 @@ func handleGetUser(w http.ResponseWriter, r *http.Request) {
 | `cause` | `error` | 原始错误（私有字段） | - |
 | `stack` | `[]string` | 调用堆栈（私有字段） | - |
 
+## Gin ErrorBuilder 中间件
+
+```go
+type Builder struct{}
+
+func NewBuilder() *Builder {
+	return &Builder{}
+}
+
+func (b *Builder) Build() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+
+		// 下游已经写回响应时，避免重复写入。
+		if c.Writer.Written() {
+			return
+		}
+
+		if len(c.Errors) == 0 {
+			return
+		}
+
+		appErr := errorsx.FromError(c.Errors.Last().Err)
+		if appErr == nil {
+			return
+		}
+
+		if appErr.Code < 100 || appErr.Code > 599 {
+			appErr.Code = http.StatusInternalServerError
+		}
+
+		log.Printf("[GIN][ERROR] %+v", appErr)
+
+		resp := gin.H{
+			"code":    appErr.Code,
+			"status":  appErr.Status,
+			"message": appErr.Message,
+		}
+		if appErr.Details != nil {
+			resp["details"] = appErr.Details
+		}
+
+		c.AbortWithStatusJSON(appErr.Code, resp)
+	}
+}
+
+```
+
 ## 🔗 相关资源
 
 - [Google AIP-193 错误处理标准](https://google.aip.dev/193)
