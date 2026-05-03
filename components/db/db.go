@@ -85,10 +85,8 @@ func checkInUse(sqlDB *sql.DB, duration time.Duration) {
 func (p *provider) DB(ctx context.Context, opts ...Option) *gorm.DB {
 	session := p.db
 
-	opt := &option{}
-	for _, fn := range opts {
-		fn(opt)
-	}
+	opt := Apply(opts...)
+
 	if opt.tx != nil {
 		session = opt.tx
 	}

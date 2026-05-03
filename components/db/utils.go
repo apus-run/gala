@@ -141,7 +141,7 @@ func RetryOnNotFound(fn func(opt ...Option) error, originalOpts []Option) error 
 			return err
 		}
 
-		opt := &option{}
+		opt := &Options{}
 		for _, fn := range originalOpts {
 			fn(opt)
 		}

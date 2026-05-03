@@ -85,13 +85,13 @@ func TestProvider_Transaction_Error(t *testing.T) {
 
 func TestContainWithMasterOpt(t *testing.T) {
 	opt := []Option{
-		func(o *option) { o.withMaster = true },
+		func(o *Options) { o.withMaster = true },
 	}
 	if !ContainWithMasterOpt(opt) {
 		t.Fatal("ContainWithMasterOpt should return true")
 	}
 	opt = []Option{
-		func(o *option) { o.withMaster = false },
+		func(o *Options) { o.withMaster = false },
 	}
 	if ContainWithMasterOpt(opt) {
 		t.Fatal("ContainWithMasterOpt should return false")
