@@ -75,6 +75,9 @@ func MustConnect(driverName, dataSourceName string) *DB {
 // Connect to a database and verify with a ping.
 func Connect(driverName, dataSourceName string) (*DB, error) {
 	sqlxdb, err := sqlx.Connect(driverName, dataSourceName)
+	if err != nil {
+		return nil, err
+	}
 	sqlxdb = sqlxdb.Unsafe()
 	return &DB{sqlxdb}, err
 }
@@ -141,13 +144,15 @@ func (db *DB) Transaction(ctx context.Context, fn func(ctx context.Context, tx *
 
 	defer func() {
 		if v := recover(); v != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			panic(v)
 		}
 	}()
 
 	if err = fn(ctx, tx); err != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("tx error: %w; rollback error: %v", err, rbErr)
+		}
 		return err
 	}
 
@@ -205,6 +210,7 @@ func insert(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 			continue
 		}
 		v := reflect.ValueOf(args[i])
+		// 主键为零值时剔除，交由数据库自增；非零值时保留
 		if !v.IsValid() || v.IsZero() {
 			args = append(args[:i], args[i+1:]...)
 			names = append(names[:i], names[i+1:]...)
@@ -223,8 +229,8 @@ func update(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 	}
 
 	var setClauses []string
-	var setArgs []interface{}
-	var idArg interface{}
+	var setArgs []any
+	var idArg any
 
 	for i, name := range names {
 		if name == m.KeyName() {
@@ -241,7 +247,7 @@ func update(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 	return db.ExecContext(ctx, query, setArgs...)
 }
 
-func bindModeler(arg interface{}, m *reflectx.Mapper) ([]string, []interface{}, error) {
+func bindModeler(arg any, m *reflectx.Mapper) ([]string, []any, error) {
 	t := reflect.TypeOf(arg)
 	names := []string{}
 	for k := range m.TypeMap(t).Names {
@@ -256,10 +262,10 @@ func bindModeler(arg interface{}, m *reflectx.Mapper) ([]string, []interface{}, 
 	return names, args, nil
 }
 
-func bindArgs(names []string, arg interface{}, m *reflectx.Mapper) ([]interface{}, error) {
-	arglist := make([]interface{}, 0, len(names))
+func bindArgs(names []string, arg any, m *reflectx.Mapper) ([]any, error) {
+	arglist := make([]any, 0, len(names))
 
-	// grab the indirected value of arg
+	// 解引用指针，获取实际值
 	v := reflect.ValueOf(arg)
 	for v = reflect.ValueOf(arg); v.Kind() == reflect.Ptr; {
 		v = v.Elem()
@@ -267,7 +273,8 @@ func bindArgs(names []string, arg interface{}, m *reflectx.Mapper) ([]interface{
 
 	err := m.TraversalsByNameFunc(v.Type(), names, func(i int, t []int) error {
 		if len(t) == 0 {
-			return fmt.Errorf("could not find name %s in %#v", names[i], arg)
+			// fix: 使用 %T 替代 %#v，避免大型结构体导致错误信息过于冗长
+			return fmt.Errorf("could not find field %q in type %T", names[i], arg)
 		}
 
 		val := reflectx.FieldByIndexesReadOnly(v, t)

@@ -25,7 +25,7 @@ type Provider interface {
 type Modeler interface {
 	// TableName return table name.
 	TableName() string
-	// TableName return primary key name.
+	// TableName return primary key column name.
 	KeyName() string
 }
 
@@ -34,7 +34,7 @@ type mapExecer interface {
 	DriverName() string
 	GetMapper() *reflectx.Mapper
 	Rebind(string) string
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // DB extends the original sqlx.DB
