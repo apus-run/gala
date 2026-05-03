@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
+	"log/slog"
+	"sync"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -12,7 +14,11 @@ import (
 	"gorm.io/plugin/dbresolver"
 )
 
-var _ Provider = (*provider)(nil)
+var (
+	_ Provider = (*provider)(nil)
+
+	once sync.Once
+)
 
 // provider 包装 gorm.db 并强制提供 ctx 以串联 trace
 type provider struct {
@@ -35,11 +41,13 @@ func Unwrap(db Provider) (*gorm.DB, bool) {
 	return nil, false
 }
 
-// NewDBFromConfig 从配置创建一个 db 实例
-func NewDBFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
-	if !utils.Contains(mysql.UpdateClauses, "RETURNING") {
-		mysql.UpdateClauses = append(mysql.UpdateClauses, "RETURNING")
-	}
+// NewMySQLFromConfig 从 MySQL DSN 创建一个 db 实例
+func NewMySQLFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
+	once.Do(func() {
+		if !utils.Contains(mysql.UpdateClauses, "RETURNING") {
+			mysql.UpdateClauses = append(mysql.UpdateClauses, "RETURNING")
+		}
+	})
 	opts = append(opts, &gorm.Config{
 		TranslateError: true,
 	})
@@ -52,31 +60,35 @@ func NewDBFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
 	return &provider{db: db}, nil
 }
 
-func Close(db *gorm.DB) error {
-	if db == nil {
+func (p *provider) Close() error {
+	if p.db == nil {
 		return nil
 	}
 
-	sqlDB, err := db.DB()
+	sqlDB, err := p.db.DB()
 	if err != nil {
 		return err
 	}
 
-	checkInUse(sqlDB, time.Second*5)
+	waitInUse(sqlDB, 5*time.Second)
 
 	return sqlDB.Close()
 }
 
-func checkInUse(sqlDB *sql.DB, duration time.Duration) {
+func waitInUse(sqlDB *sql.DB, duration time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
-		case <-time.After(time.Millisecond * 250):
-			if v := sqlDB.Stats().InUse; v == 0 {
+		case <-ticker.C:
+			if sqlDB.Stats().InUse == 0 {
 				return
 			}
 		case <-ctx.Done():
+			slog.Warn("close db: connections still in use after timeout",
+				"in_use", sqlDB.Stats().InUse)
 			return
 		}
 	}
@@ -99,7 +111,7 @@ func (p *provider) DB(ctx context.Context, opts ...Option) *gorm.DB {
 	if opt.withDeleted {
 		session = session.Unscoped()
 	}
-	if opt.forUpdate {
+	if opt.selectForUpdate {
 		session = session.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 	return session.WithContext(ctx)

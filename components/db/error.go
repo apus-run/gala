@@ -1,6 +1,8 @@
 package db
 
 import (
+	"errors"
+
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -9,20 +11,18 @@ const (
 	errMySQLForeignKeyConstraintFails uint16 = 1452
 )
 
-// IsMySQLDuplicatedRecordErr checks if the error is a MySQL duplicate record error.
 func IsMySQLDuplicatedRecordErr(err error) bool {
-	mErr, ok := err.(*mysql.MySQLError)
-	if !ok {
-		return false
+	var mErr *mysql.MySQLError
+	if errors.As(err, &mErr) {
+		return mErr.Number == errMySQLDuplicatedRecord
 	}
-	return mErr.Number == errMySQLDuplicatedRecord
+	return false
 }
 
-// IsMySQLForeignKeyConstraintFailsError checks if the error is a MySQL foreign key constraint fails error.
 func IsMySQLForeignKeyConstraintFailsError(err error) bool {
-	mErr, ok := err.(*mysql.MySQLError)
-	if !ok {
-		return false
+	var mErr *mysql.MySQLError
+	if errors.As(err, &mErr) {
+		return mErr.Number == errMySQLForeignKeyConstraintFails
 	}
-	return mErr.Number == errMySQLForeignKeyConstraintFails
+	return false
 }

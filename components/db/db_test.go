@@ -32,14 +32,14 @@ func TestUnwrap(t *testing.T) {
 	}
 }
 
-func TestNewDBFromConfig(t *testing.T) {
+func TestNewMySQLFromConfig(t *testing.T) {
 	dsn := "root:123456@tcp(localhost:13306)/test_db?charset=utf8mb4&parseTime=True&loc=Local"
-	prov, err := NewDBFromConfig(dsn)
+	prov, err := NewMySQLFromConfig(dsn)
 	if err != nil {
-		t.Fatalf("NewDBFromConfig failed: %v", err)
+		t.Fatalf("NewMySQLFromConfig failed: %v", err)
 	}
 	if prov == nil {
-		t.Fatal("NewDBFromConfig returned nil provider")
+		t.Fatal("NewMySQLFromConfig returned nil provider")
 	}
 }
 

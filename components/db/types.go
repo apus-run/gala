@@ -14,14 +14,16 @@ type Provider interface {
 	DB(ctx context.Context, opts ...Option) *gorm.DB
 	// TX 执行一个事务
 	TX(ctx context.Context, fn func(tx *gorm.DB) error, opts ...Option) error
+	// Close 关闭数据库连接
+	Close() error
 }
 
 type Options struct {
-	tx          *gorm.DB // 数据库事务
-	debug       bool     // 调试模式
-	withMaster  bool     // 强制读主库
-	withDeleted bool     // 返回软删的数据
-	forUpdate   bool     // 使用 SELECT ... FOR UPDATE 锁定读取的行
+	tx              *gorm.DB
+	debug           bool
+	withMaster      bool
+	withDeleted     bool
+	selectForUpdate bool
 }
 
 type Option func(*Options)
@@ -66,7 +68,7 @@ func WithDeleted() Option {
 // 注意：只有在事务中使用才有效
 func WithSelectForUpdate() Option {
 	return func(o *Options) {
-		o.forUpdate = true
+		o.selectForUpdate = true
 	}
 }
 
