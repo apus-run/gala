@@ -27,7 +27,7 @@ func (b *Builder) Build() gin.HandlerFunc {
 			return
 		}
 
-		appErr := errorsx.FromError(c.Errors.Last().Err)
+		appErr := errorsx.FromError(c.Errors.Last().Err).Clone()
 		if appErr == nil {
 			return
 		}

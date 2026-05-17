@@ -173,13 +173,34 @@ func (e *Error) As(target any) bool {
 }
 
 func (e *Error) Clone() *Error {
-	return &Error{
-		Code:    e.Code,
-		Status:  e.Status,
-		Message: e.Message,
-		Details: e.Details,
-		cause:   e.cause,
-		stack:   e.stack,
+	if e == nil {
+		return nil
+	}
+
+	copied := *e
+	copied.Details = cloneDetails(e.Details)
+	copied.stack = append([]string(nil), e.stack...)
+	return &copied
+}
+
+func cloneDetails(details any) any {
+	switch d := details.(type) {
+	case map[string]string:
+		cloned := make(map[string]string, len(d))
+		for k, v := range d {
+			cloned[k] = v
+		}
+		return cloned
+	case map[string]any:
+		cloned := make(map[string]any, len(d))
+		for k, v := range d {
+			cloned[k] = v
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), d...)
+	default:
+		return details
 	}
 }
 

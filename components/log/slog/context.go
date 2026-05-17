@@ -7,10 +7,22 @@ import (
 type contextLogKey struct{}
 
 func NewContext(ctx context.Context, l *SlogLogger) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if l == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, contextLogKey{}, l)
 }
 
 func WithContext(ctx context.Context, l *SlogLogger) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if l == nil {
+		return ctx
+	}
 	if _, ok := ctx.Value(contextLogKey{}).(*SlogLogger); ok {
 		return ctx
 	}
@@ -18,7 +30,12 @@ func WithContext(ctx context.Context, l *SlogLogger) context.Context {
 }
 
 func FromContext(ctx context.Context) *SlogLogger {
-	if l, ok := ctx.Value(contextLogKey{}).(*SlogLogger); ok {
+	if ctx != nil {
+		if l, ok := ctx.Value(contextLogKey{}).(*SlogLogger); ok {
+			return l
+		}
+	}
+	if l, ok := L().(*SlogLogger); ok {
 		return l
 	}
 	return nil

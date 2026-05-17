@@ -65,6 +65,9 @@ func WithFormat(format Format) Option {
 
 // WithWriter 日志输出
 func WithWriter(writer io.Writer) Option {
+	if writer == nil {
+		writer = os.Stdout
+	}
 	return func(o *Options) {
 		o.Writer = writer
 	}

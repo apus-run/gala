@@ -11,7 +11,7 @@ var global = &loggerAppliance{}
 // loggerAppliance is the proxy of `Logger` to
 // make logger change will affect all sub-logger.
 type loggerAppliance struct {
-	lock sync.Mutex
+	lock sync.RWMutex
 	Logger
 }
 
@@ -22,9 +22,18 @@ func init() {
 }
 
 func (a *loggerAppliance) SetLogger(in Logger) {
+	if in == nil {
+		in = NewLogger()
+	}
 	a.lock.Lock()
 	defer a.lock.Unlock()
 	a.Logger = in
+}
+
+func (a *loggerAppliance) GetLogger() Logger {
+	a.lock.RLock()
+	defer a.lock.RUnlock()
+	return a.Logger
 }
 
 // SetLogger should be called before any other log call.
@@ -35,17 +44,17 @@ func SetLogger(logger Logger) {
 
 // GetLogger returns global logger appliance as logger in current process.
 func GetLogger() Logger {
-	return global.Logger
+	return global.GetLogger()
 }
 
 // L 是 GetLogger 简写
 func L() Logger {
-	return global.Logger
+	return GetLogger()
 }
 
 // Default 是 GetLogger
 func Default() Logger {
-	return global.Logger
+	return GetLogger()
 }
 
 func Info(msg string, args ...Attr) {
