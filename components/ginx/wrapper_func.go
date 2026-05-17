@@ -33,8 +33,13 @@ func W(fn func(ctx *Context) (Result, error)) gin.HandlerFunc {
 func B[Req any](fn func(ctx *Context, req Req) (Result, error)) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var req Req
-		if err := ctx.Bind(&req); err != nil {
+		if err := ctx.ShouldBind(&req); err != nil {
 			slog.Debug("绑定参数失败", slog.Any("err", err))
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, Result{
+				Code: http.StatusBadRequest,
+				Msg:  err.Error(),
+				Data: gin.H{},
+			})
 			return
 		}
 		res, err := fn(&Context{Context: ctx}, req)
@@ -75,14 +80,24 @@ func WC(fn func(*gin.Context, func() jwt.Claims) (Result, error)) gin.HandlerFun
 			return
 		}
 
+		// TODO 可以在这里放一些可观测性的中间件
+
 		res, err := fn(ctx, claims)
+		if errors.Is(err, ErrNoResponse) {
+			slog.Debug("不需要响应", slog.Any("err", err))
+			return
+		}
+		if errors.Is(err, ErrUnauthorized) {
+			slog.Debug("未授权", slog.Any("err", err))
+			ctx.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
 		if err != nil {
 			slog.Error("执行业务逻辑失败",
 				slog.Any("err", err))
+			ctx.JSON(http.StatusInternalServerError, res)
+			return
 		}
-
-		// TODO 可以在这里放一些可观测性的中间件
-
 		ctx.JSON(http.StatusOK, res)
 	}
 }
@@ -90,8 +105,13 @@ func WC(fn func(*gin.Context, func() jwt.Claims) (Result, error)) gin.HandlerFun
 func BC[Req any](fn func(*gin.Context, Req, func() jwt.Claims) (Result, error)) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var req Req
-		if err := ctx.Bind(&req); err != nil {
+		if err := ctx.ShouldBind(&req); err != nil {
 			slog.Error("解析请求失败", slog.Any("err", err))
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, Result{
+				Code: http.StatusBadRequest,
+				Msg:  err.Error(),
+				Data: gin.H{},
+			})
 			return
 		}
 
@@ -112,12 +132,23 @@ func BC[Req any](fn func(*gin.Context, Req, func() jwt.Claims) (Result, error)) 
 			return
 		}
 
-		res, err := fn(ctx, req, claims)
 		// TODO 可以在这里放一些可观测性的中间件
+
+		res, err := fn(ctx, req, claims)
+		if errors.Is(err, ErrNoResponse) {
+			slog.Debug("不需要响应", slog.Any("err", err))
+			return
+		}
+		if errors.Is(err, ErrUnauthorized) {
+			slog.Debug("未授权", slog.Any("err", err))
+			ctx.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
 		if err != nil {
 			slog.Error("执行业务逻辑失败", slog.Any("err", err))
+			ctx.JSON(http.StatusInternalServerError, res)
+			return
 		}
-
 		ctx.JSON(http.StatusOK, res)
 	}
 }

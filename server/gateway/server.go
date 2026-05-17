@@ -121,10 +121,9 @@ func (s *Server) Endpoint() (*url.URL, error) {
 
 // Health
 func (s *Server) Health() bool {
-	if s.opts.lis == nil {
+	if s.opts.lis == nil || s.opts.lis.Addr() == nil {
 		return false
 	}
-
 	conn, err := s.opts.lis.Accept()
 	if err != nil {
 		return false

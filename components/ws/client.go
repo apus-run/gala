@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -36,6 +37,9 @@ func (o *clientOptions) apply(opts ...ClientOption) {
 // WithDialer sets the dialer for the client.
 func WithDialer(dialer *websocket.Dialer) ClientOption {
 	return func(o *clientOptions) {
+		if dialer == nil {
+			return
+		}
 		o.dialer = dialer
 	}
 }
@@ -59,7 +63,9 @@ type Client struct {
 	dialer        *websocket.Dialer
 	requestHeader http.Header
 	url           string
-	conn          *websocket.Conn
+
+	mu   sync.RWMutex
+	conn *websocket.Conn
 
 	pingInterval time.Duration
 	ctx          context.Context
@@ -97,17 +103,21 @@ func NewClient(url string, opts ...ClientOption) (*Client, error) {
 
 // GetConnection returns the connection of the client.
 func (c *Client) GetConnection() *websocket.Conn {
-	if c.conn == nil {
-		defer func() {
-			if e := recover(); e != nil {
-				panic(e)
-			}
-		}()
+	conn := c.getConnection()
+	if conn == nil {
 		err := c.connect()
 		if err != nil {
 			panic(err)
 		}
+		conn = c.getConnection()
 	}
+
+	return conn
+}
+
+func (c *Client) getConnection() *websocket.Conn {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.conn
 }
@@ -118,7 +128,15 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
+
+	c.mu.Lock()
+	oldConn := c.conn
 	c.conn = conn
+	c.mu.Unlock()
+
+	if oldConn != nil {
+		_ = oldConn.Close()
+	}
 	return nil
 }
 
@@ -168,7 +186,11 @@ func (c *Client) ping() {
 		for {
 			select {
 			case <-ticker.C:
-				if err := c.conn.WriteControl(websocket.PingMessage, pingData, time.Now().Add(5*time.Second)); err != nil {
+				conn := c.getConnection()
+				if conn == nil {
+					return
+				}
+				if err := conn.WriteControl(websocket.PingMessage, pingData, time.Now().Add(5*time.Second)); err != nil {
 
 					return
 				}
@@ -192,8 +214,9 @@ func (c *Client) CloseConnection() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.conn != nil {
-		return c.conn.Close()
+	conn := c.getConnection()
+	if conn != nil {
+		return conn.Close()
 	}
 
 	return nil

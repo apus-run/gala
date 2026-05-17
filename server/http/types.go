@@ -87,6 +87,9 @@ func WithListener(listener net.Listener) ServerOption {
 // WithHandler 设置 HTTP 服务器的处理器。
 func WithHandler(handler http.Handler) ServerOption {
 	return func(options *ServerOptions) {
+		if handler == nil {
+			return
+		}
 		options.handler = handler
 	}
 }

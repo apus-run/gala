@@ -85,6 +85,9 @@ func WithAddress(addr string) ServerOption {
 
 func WithShutdownFunc(shutdownFunc func()) ServerOption {
 	return func(o *ServerOptions) {
+		if shutdownFunc == nil {
+			shutdownFunc = func() {}
+		}
 		o.shutdownFunc = shutdownFunc
 	}
 }

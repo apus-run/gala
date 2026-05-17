@@ -9,4 +9,6 @@ require (
 	github.com/xo/dburl v0.24.2
 )
 
+require github.com/go-sql-driver/mysql v1.10.0 // indirect
+
 require github.com/mattn/go-sqlite3 v1.14.22 // test-only

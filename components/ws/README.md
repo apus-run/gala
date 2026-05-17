@@ -101,7 +101,7 @@ func main() {
 
 #### 2. Custom setting
 
-**Server side custom setting**, options such as `ws.Upgrader`, `ws.WithNoClientPingTimeout`, `ws.WithServerLogger`, `ws.WithResponseHeader` can be set.
+**Server side custom setting**, options such as `ws.WithUpgrader`, `ws.WithNoClientPingTimeout`, `ws.WithResponseHeader` can be set.
 
 ```go
 package main
@@ -112,17 +112,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/apus-run/gala/components/ws"
 )
 
 func main() {
 	r := gin.Default()
-	ug := &websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
+	ug := ws.NewWSUpgrader(
+		ws.WithCheckOrigin(func(r *http.Request) bool {
 			return true
-		},
-	}
+		}),
+	)
 	r.GET("/ws", func(c *gin.Context) {
 		s := ws.NewServer(c.Writer, c.Request, loopReceiveMessage,
 			ws.WithUpgrader(ug),
@@ -173,7 +172,7 @@ func loopReceiveMessage(ctx context.Context, conn *ws.Conn) {
 
 <br>
 
-**Client side custom setting**, options such as `ws.Dialer`, `ws.WithPing`, `ws.WithClientLogger`, `ws.WithRequestHeader` can be set.
+**Client side custom setting**, options such as `ws.WithDialer`, `ws.WithPing`, `ws.WithRequestHeader` can be set.
 
 ```go
 package main

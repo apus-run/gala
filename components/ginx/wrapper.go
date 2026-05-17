@@ -43,11 +43,17 @@ type ginKey struct{}
 
 // NewGinContext returns a new Context that carries gin.Context value.
 func NewGinContext(ctx context.Context, c *gin.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return context.WithValue(ctx, ginKey{}, c)
 }
 
 // FromGinContext returns the gin.Context value stored in ctx, if any.
 func FromGinContext(ctx context.Context) (c *gin.Context, ok bool) {
+	if ctx == nil {
+		return nil, false
+	}
 	c, ok = ctx.Value(ginKey{}).(*gin.Context)
 	return
 }
@@ -188,5 +194,9 @@ func (ctx *Context) GetRequestId() string {
 		return ""
 	}
 
-	return requestId.(string)
+	id, ok := requestId.(string)
+	if !ok {
+		return ""
+	}
+	return id
 }

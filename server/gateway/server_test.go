@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"testing"
 
@@ -58,52 +57,64 @@ func (s *service) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloRep
 	return &pb.HelloReply{Message: fmt.Sprintf("Hello %+v", in.Name)}, nil
 }
 
-func runServer() {
+func runServer(t *testing.T) string {
+	t.Helper()
+
 	ctx := context.Background()
+	srv := grpcServer.NewServer(grpcServer.WithAddress("127.0.0.1:0"))
+	pb.RegisterGreeterServer(srv, &service{})
+	grpcEndpoint, err := srv.Endpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
-		srv := grpcServer.NewServer(grpcServer.WithAddress(":8080"))
-		pb.RegisterGreeterServer(srv, &service{})
 		if err := srv.Start(ctx); err != nil {
 			panic(err)
 		}
 	}()
+	t.Cleanup(func() { _ = srv.Stop(ctx) })
 
+	conn, err := grpc.NewClient(grpcEndpoint.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("Failed to dial core: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	paralusJSON := NewParalusJSON()
+	gw, err := NewServer(
+		ctx,
+		WithAddress("127.0.0.1:0"),
+		WithConn(conn),
+		WithServeMuxOpts(runtime.WithMarshalerOption(jsonContentType, paralusJSON)),
+		WithRegisterServiceHandlers(pb.RegisterGreeterHandler),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayEndpoint, err := gw.Endpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
-		// Create a client connection to the gRPC core we just started
-		// This is where the gRPC-Gateway proxies the requests
-		conn, err := grpc.NewClient(":8080", grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			log.Fatalln("Failed to dial core:", err)
-		}
-
-		paralusJSON := NewParalusJSON()
-		gw, err := NewServer(
-			ctx,
-			WithAddress(":9999"),
-			WithConn(conn),
-			WithServeMuxOpts(runtime.WithMarshalerOption(jsonContentType, paralusJSON)),
-			WithRegisterServiceHandlers(pb.RegisterGreeterHandler),
-		)
-		if err != nil {
-			panic(err)
-		}
-
 		if err := gw.Start(ctx); err != nil {
 			panic(err)
 		}
-
 	}()
+	t.Cleanup(func() { _ = gw.Stop(ctx) })
+
+	return gatewayEndpoint.String()
 }
 
 func TestGateway(t *testing.T) {
-	go runServer()
+	baseURL := runServer(t)
 
 	client := http.Client{}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:9999/hello/%s", "world"))
+	resp, err := client.Get(fmt.Sprintf("%s/hello/%s", baseURL, "world"))
 	if err != nil {
 		t.Error(err)
 		return
 	}
+	defer resp.Body.Close()
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -118,4 +129,9 @@ func TestGateway(t *testing.T) {
 		return
 	}
 	t.Logf("value: %v", obj.String())
+}
+
+func TestWithShutdownFuncNilIsNoop(t *testing.T) {
+	opts := Apply(WithShutdownFunc(nil))
+	opts.shutdownFunc()
 }

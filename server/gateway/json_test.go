@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/apus-run/gala/server/internal/testdata/helloworld"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func TestParalusJSONMarshaller(t *testing.T) {
@@ -54,4 +55,16 @@ func TestParalusJSONMarshaller(t *testing.T) {
 	}
 
 	t.Log(bb2.String())
+}
+
+func TestParalusJSONMarshallerUsesProtoJSON(t *testing.T) {
+	m := NewParalusJSON()
+
+	got, err := m.Marshal(wrapperspb.Int64(42))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `"42"` {
+		t.Fatalf("Marshal() = %s, want protojson int64 wrapper encoding", got)
+	}
 }

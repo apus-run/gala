@@ -39,6 +39,9 @@ func WithResponseHeader(header http.Header) ServerOption {
 // WithUpgrader sets the WebSocket upgrader for the server.
 func WithUpgrader(upgrader *WSUpgrader) ServerOption {
 	return func(o *serverOptions) {
+		if upgrader == nil {
+			return
+		}
 		o.upgrader = upgrader
 	}
 }
@@ -83,6 +86,9 @@ type Server struct {
 func NewServer(w http.ResponseWriter, r *http.Request, loopFunc LoopFunc, opts ...ServerOption) *Server {
 	o := defaultServerOptions()
 	o.apply(opts...)
+	if loopFunc == nil {
+		loopFunc = func(context.Context, *Conn) {}
+	}
 
 	return &Server{
 		w:        w,

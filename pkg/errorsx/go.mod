@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/pkg/errorsx
 
-go 1.25
+go 1.25.0
 
 require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251020155222-88f65dc88635
@@ -8,7 +8,8 @@ require (
 )
 
 require (
-	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
 

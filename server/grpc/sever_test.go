@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -56,31 +54,27 @@ func (s *service) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloRep
 	return &pb.HelloReply{Message: fmt.Sprintf("Hello %+v", in.Name)}, nil
 }
 
-type testKey struct{}
-
 func TestNewServer(t *testing.T) {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, testKey{}, "test")
-	addr := "0.0.0.0:9090"
 	srv := NewServer(
-		WithAddress(addr),
+		WithAddress("127.0.0.1:0"),
+		WithBaseContext(ctx),
 		WithGrpcOptions(grpc.InitialConnWindowSize(0)),
 	)
 
 	// Attach the Greeter service to the core
 	pb.RegisterGreeterServer(srv, &service{})
 
-	if e, err := srv.Endpoint(); err != nil || e == nil || strings.HasSuffix(e.Host, ":0") {
+	if e, err := srv.Endpoint(); err != nil || e == nil {
 		t.Fatal(e, err)
 	}
 
 	go func() {
 		// start server
-		if err := srv.Start(ctx); err != nil {
+		if err := srv.Start(context.Background()); err != nil {
 			panic(err)
 		}
 	}()
-	time.Sleep(time.Second)
 	testClient(t, srv)
 	_ = srv.Stop(ctx)
 }

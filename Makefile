@@ -12,7 +12,12 @@ fmt:
 # 清理项目依赖
 .PHONY: tidy
 tidy:
-	@go mod tidy -v
+	@find . -name go.mod -not -path './.git/*' -print | sort | while read -r mod; do \
+		dir=$$(dirname "$$mod"); \
+		echo "==> $$dir"; \
+		(cd "$$dir" && go mod tidy) || exit 1; \
+	done
+	@go work sync
 
 .PHONY: check
 check:
