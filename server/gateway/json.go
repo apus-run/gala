@@ -28,18 +28,18 @@ func NewParalusJSON() runtime.Marshaler {
 }
 
 // ContentType returns the Content-Type which this marshaler is responsible for.
-func (m *paralusJSON) ContentType(_ interface{}) string {
+func (m *paralusJSON) ContentType(_ any) string {
 	return jsonContentType
 }
 
 // Marshal marshals "v" into byte sequence.
-func (m *paralusJSON) Marshal(v interface{}) ([]byte, error) {
+func (m *paralusJSON) Marshal(v any) ([]byte, error) {
 	return m.jsonpb.Marshal(v)
 }
 
 // Unmarshal unmarshals "data" into "v".
 // "v" must be a pointer value.
-func (m *paralusJSON) Unmarshal(data []byte, v interface{}) error {
+func (m *paralusJSON) Unmarshal(data []byte, v any) error {
 	return m.jsonpb.Unmarshal(data, v)
 }
 

@@ -19,7 +19,7 @@ type CustomClaims struct {
 
 func TestGenerateToken(t *testing.T) {
 	testKey := "testKey"
-	tProvider := func(*jwt.Token) (interface{}, error) {
+	tProvider := func(*jwt.Token) (any, error) {
 		return []byte(testKey), nil
 	}
 	testCases := []struct {
@@ -119,7 +119,7 @@ func TestGenerateToken(t *testing.T) {
 
 func TestParseToken(t *testing.T) {
 	testKey := "testKey"
-	tProvider := func(*jwt.Token) (interface{}, error) {
+	tProvider := func(*jwt.Token) (any, error) {
 		return []byte(testKey), nil
 	}
 	claims := &CustomClaims{}

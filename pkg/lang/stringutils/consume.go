@@ -7,10 +7,11 @@ import "strings"
 // had the given prefix.
 func ConsumePrefix(s *string, prefix string) bool {
 	orig := *s
-	if !strings.HasPrefix(orig, prefix) {
+	rest, ok := strings.CutPrefix(orig, prefix)
+	if !ok {
 		return false
 	}
-	*s = orig[len(prefix):]
+	*s = rest
 	return true
 }
 
@@ -19,9 +20,10 @@ func ConsumePrefix(s *string, prefix string) bool {
 // had the given suffix.
 func ConsumeSuffix(s *string, suffix string) bool {
 	orig := *s
-	if !strings.HasSuffix(orig, suffix) {
+	rest, ok := strings.CutSuffix(orig, suffix)
+	if !ok {
 		return false
 	}
-	*s = orig[:len(orig)-len(suffix)]
+	*s = rest
 	return true
 }

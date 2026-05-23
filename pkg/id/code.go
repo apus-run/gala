@@ -16,14 +16,14 @@ func NewCode(id uint64, options ...func(*CodeOptions)) string {
 	charLenUI := uint64(charLen)
 
 	// diffusion
-	for i := 0; i < ops.l; i++ {
+	for i := range ops.l {
 		slIdx[i] = byte(id % charLenUI)                          // get each number
 		slIdx[i] = (slIdx[i] + byte(i)*slIdx[0]) % byte(charLen) // let units digit affect other digit
 		id /= charLenUI                                          // right shift
 	}
 
 	// confusion(https://en.wikipedia.org/wiki/Permutation_box)
-	for i := 0; i < ops.l; i++ {
+	for i := range ops.l {
 		idx := (byte(i) * byte(ops.n2)) % byte(ops.l)
 		code = append(code, ops.chars[slIdx[idx]])
 	}

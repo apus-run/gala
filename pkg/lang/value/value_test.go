@@ -11,6 +11,6 @@ func TestZero(t *testing.T) {
 	assert.Zero(t, Zero[int]())
 	assert.Zero(t, Zero[*int]())
 	assert.Zero(t, Zero[string]())
-	assert.Zero(t, Zero[interface{}]())
-	assert.Zero(t, Zero[*interface{}]())
+	assert.Zero(t, Zero[any]())
+	assert.Zero(t, Zero[*any]())
 }

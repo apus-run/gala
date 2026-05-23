@@ -8,7 +8,7 @@ func TestObjectReflectDiff(t *testing.T) {
 	type struct1 struct{ A []int }
 
 	testCases := map[string]struct {
-		a, b interface{}
+		a, b any
 		out  string
 	}{
 		"map": {
@@ -64,7 +64,7 @@ object.A:
   b: []int{}`,
 		},
 		"display type differences": {
-			a: []interface{}{int64(1)}, b: []interface{}{uint64(1)}, out: `
+			a: []any{int64(1)}, b: []any{uint64(1)}, out: `
 object[0]:
   a: 1 (int64)
   b: 0x1 (uint64)`,
@@ -91,8 +91,8 @@ func TestStringDiff(t *testing.T) {
 
 func TestLimit(t *testing.T) {
 	testcases := []struct {
-		a       interface{}
-		b       interface{}
+		a       any
+		b       any
 		expectA string
 		expectB string
 	}{

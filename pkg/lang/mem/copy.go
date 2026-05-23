@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 )
 
-func DeepCopy(src, dst interface{}) error {
+func DeepCopy(src, dst any) error {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(src); err != nil {
 		return err

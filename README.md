@@ -5,19 +5,19 @@
 ## 发布
 
 ```bash
-./scripts/release.sh v0.6.7 --yes
+./scripts/release.sh v0.7.0 --yes
 ```
 
 ## 使用
 
 ```bash
-go get github.com/apus-run/gala/components/db@v0.6.7
+go get github.com/apus-run/gala/components/db@v0.7.0
 ```
 
 ## 标签
 
-- **根模块**: `v0.6.7`
-- **子模块**: `components/db/v0.6.7`
+- **根模块**: `v0.7.0`
+- **子模块**: `components/db/v0.7.0`
 
 ---
 

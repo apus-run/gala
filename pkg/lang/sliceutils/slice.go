@@ -220,12 +220,7 @@ func Partition[S ~[]T, T any](s S, f func(T) bool) (S, S) {
 //   - Use [Index] if you also want to know index of the found value
 //   - Use [Any] or [Find] if type of v is non-comparable
 func Contains[T comparable](s []T, v T) bool {
-	for _, vv := range s {
-		if v == vv {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }
 
 // Select returns a slice containing the elements at the given indices of the input slice.

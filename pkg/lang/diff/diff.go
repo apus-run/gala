@@ -37,7 +37,7 @@ func StringDiff(a, b string) string {
 // ObjectDiff writes the two objects out as JSON and prints out the identical part of
 // the objects followed by the remaining part of 'a' and finally the remaining part of 'b'.
 // For debugging tests.
-func ObjectDiff(a, b interface{}) string {
+func ObjectDiff(a, b any) string {
 	ab, err := json.Marshal(a)
 	if err != nil {
 		panic(fmt.Sprintf("a: %v", err))
@@ -54,7 +54,7 @@ func ObjectDiff(a, b interface{}) string {
 // (go's %#v formatters OTOH stop at a certain point). This is needed when you
 // can't figure out why reflect.DeepEqual is returning false and nothing is
 // showing you differences. This will.
-func ObjectGoPrintDiff(a, b interface{}) string {
+func ObjectGoPrintDiff(a, b any) string {
 	s := spew.ConfigState{DisableMethods: true}
 	return StringDiff(
 		s.Sprintf("%#v", a),
@@ -63,7 +63,7 @@ func ObjectGoPrintDiff(a, b interface{}) string {
 }
 
 // ObjectReflectDiff returns a diff computed through reflection, without serializing to JSON.
-func ObjectReflectDiff(a, b interface{}) string {
+func ObjectReflectDiff(a, b any) string {
 	vA, vB := reflect.ValueOf(a), reflect.ValueOf(b)
 	if vA.Type() != vB.Type() {
 		return fmt.Sprintf("type A %T and type B %T do not match", a, b)
@@ -88,7 +88,7 @@ func ObjectReflectDiff(a, b interface{}) string {
 // 1. stringifies aObj and bObj
 // 2. elides identical prefixes if either is too long
 // 3. elides remaining content from the end if either is too long
-func limit(aObj, bObj interface{}, max int) (string, string) {
+func limit(aObj, bObj any, max int) (string, string) {
 	elidedPrefix := ""
 	elidedASuffix := ""
 	elidedBSuffix := ""
@@ -139,7 +139,7 @@ func public(s string) bool {
 
 type diff struct {
 	path *field.Path
-	a, b interface{}
+	a, b any
 }
 
 type orderedDiffs []diff
@@ -158,7 +158,7 @@ func objectReflectDiff(path *field.Path, a, b reflect.Value) []diff {
 	switch a.Type().Kind() {
 	case reflect.Struct:
 		var changes []diff
-		for i := 0; i < a.Type().NumField(); i++ {
+		for i := range a.Type().NumField() {
 			if !public(a.Type().Field(i).Name) {
 				if reflect.DeepEqual(a.Interface(), b.Interface()) {
 					continue
@@ -200,7 +200,7 @@ func objectReflectDiff(path *field.Path, a, b reflect.Value) []diff {
 			return nil
 		}
 		var diffs []diff
-		for i := 0; i < l; i++ {
+		for i := range l {
 			if !reflect.DeepEqual(a.Index(i), b.Index(i)) {
 				diffs = append(diffs, objectReflectDiff(path.Index(i), a.Index(i), b.Index(i))...)
 			}
@@ -216,7 +216,7 @@ func objectReflectDiff(path *field.Path, a, b reflect.Value) []diff {
 		if reflect.DeepEqual(a.Interface(), b.Interface()) {
 			return nil
 		}
-		aKeys := make(map[interface{}]interface{})
+		aKeys := make(map[any]any)
 		for _, key := range a.MapKeys() {
 			aKeys[key.Interface()] = a.MapIndex(key).Interface()
 		}
@@ -253,7 +253,7 @@ func objectReflectDiff(path *field.Path, a, b reflect.Value) []diff {
 
 // ObjectGoPrintSideBySide prints a and b as textual dumps side by side,
 // enabling easy visual scanning for mismatches.
-func ObjectGoPrintSideBySide(a, b interface{}) string {
+func ObjectGoPrintSideBySide(a, b any) string {
 	s := spew.ConfigState{
 		Indent: " ",
 		// Extra deep spew.
@@ -283,7 +283,7 @@ func ObjectGoPrintSideBySide(a, b interface{}) string {
 	if len(linesB) > max {
 		max = len(linesB)
 	}
-	for i := 0; i < max; i++ {
+	for i := range max {
 		var a, b string
 		if i < len(linesA) {
 			a = linesA[i]

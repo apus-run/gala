@@ -144,7 +144,7 @@ func Test_pool_execute(t *testing.T) {
 		p, err := NewPool(size)
 		assert.NoError(t, err)
 
-		for i := 0; i < size; i++ {
+		for range size {
 			p.Add(func() error {
 				time.Sleep(time.Duration(rand.Intn(5)) * time.Second)
 				return nil
@@ -162,7 +162,7 @@ func Test_pool_execute(t *testing.T) {
 		p, err := NewPool(size)
 		assert.NoError(t, err)
 
-		for i := 0; i < size>>1; i++ {
+		for range size >> 1 {
 			p.Add(func() error {
 				time.Sleep(time.Duration(rand.Intn(5)) * time.Second)
 				return nil
@@ -180,7 +180,7 @@ func Test_pool_execute(t *testing.T) {
 		p, err := NewPool(size)
 		assert.NoError(t, err)
 
-		for i := 0; i < size<<1; i++ {
+		for range size << 1 {
 			p.Add(func() error {
 				time.Sleep(time.Duration(rand.Intn(5)) * time.Second)
 				return nil
@@ -198,12 +198,10 @@ func Test_pool_execute(t *testing.T) {
 		p, err := NewPool(size)
 		assert.NoError(t, err)
 
-		for i := 0; i < size; i++ {
-			idx := i
-
+		for i := range size {
 			p.Add(func() error {
 				time.Sleep(time.Duration(rand.Intn(5)) * time.Second)
-				if idx == 2 {
+				if i == 2 {
 					return errors.New("test err")
 				}
 				return nil

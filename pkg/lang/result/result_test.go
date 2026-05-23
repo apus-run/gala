@@ -125,8 +125,8 @@ func TestRtyp(t *testing.T) {
 	assert.Equal(t, "int8", OK(int8(11)).typ())
 	assert.Equal(t, "any", OK(any(11)).typ())
 	assert.Equal(t, "any", OK[any](11).typ())
-	assert.Equal(t, "any", OK[interface{}](11).typ())
-	assert.Equal(t, "any", OK((interface{})(11)).typ())
+	assert.Equal(t, "any", OK[any](11).typ())
+	assert.Equal(t, "any", OK((any)(11)).typ())
 }
 
 func TestOString(t *testing.T) {

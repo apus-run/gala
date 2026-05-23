@@ -39,7 +39,7 @@ func testRandomStringWithAlphabet(t *testing.T, randomFunc func(n int, alphabet 
 		generated := make([]string, 0, 1000)
 		length := 10
 
-		for j := 0; j < 1000; j++ {
+		for j := range 1000 {
 			result := randomFunc(length, s.alphabet)
 
 			if len(result) != length {
@@ -67,7 +67,7 @@ func testRandomString(t *testing.T, randomFunc func(n int) string) {
 	reg := regexp.MustCompile(`[a-zA-Z0-9]+`)
 	length := 10
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		result := randomFunc(length)
 
 		if len(result) != length {

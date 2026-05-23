@@ -28,7 +28,7 @@ func StrToInt64D(v string, defaultValue int64) int64 {
 }
 
 // DebugJsonToStr
-func DebugJsonToStr(v interface{}) string {
+func DebugJsonToStr(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return ""

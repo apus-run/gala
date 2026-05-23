@@ -75,7 +75,7 @@ func GenerateJWTSecret(length int) []byte {
 	if err != nil {
 		// 如果随机生成失败，使用时间戳作为备选方案
 		now := time.Now().UnixNano()
-		for i := 0; i < length; i++ {
+		for i := range length {
 			key[i] = byte((now >> (i % 8)) & 0xff)
 		}
 	}

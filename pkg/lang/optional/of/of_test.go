@@ -510,8 +510,8 @@ func TestOty(t *testing.T) {
 	assert.Equal(t, "int8", of.OK(int8(11)).Type())
 	assert.Equal(t, "any", of.OK(any(11)).Type())
 	assert.Equal(t, "any", of.OK[any](11).Type())
-	assert.Equal(t, "any", of.OK[interface{}](11).Type())
-	assert.Equal(t, "any", of.OK((interface{})(11)).Type())
+	assert.Equal(t, "any", of.OK[any](11).Type())
+	assert.Equal(t, "any", of.OK((any)(11)).Type())
 }
 
 func TestOString(t *testing.T) {

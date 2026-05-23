@@ -3,6 +3,7 @@ package rid
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -34,7 +35,7 @@ func ReadMachineID() []byte {
 	} else {
 		// 如果无法收集机器 ID，则回退到生成随机数
 		if _, randErr := rand.Reader.Read(id); randErr != nil {
-			panic(fmt.Errorf("id: cannot get hostname nor generate a random number: %w; %w", err, randErr))
+			panic(errors.Join(fmt.Errorf("id: cannot get hostname nor generate a random number"), err, randErr))
 		}
 	}
 	return id

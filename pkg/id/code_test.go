@@ -40,7 +40,7 @@ func TestNewCode(t *testing.T) {
 }
 
 func BenchmarkNewCode(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		NewCode(1)
 	}
 }
@@ -53,7 +53,7 @@ func BenchmarkNewCodeTimeConsuming(b *testing.B) {
 
 	b.StartTimer() // 重新开始时间
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		NewCode(1)
 	}
 }

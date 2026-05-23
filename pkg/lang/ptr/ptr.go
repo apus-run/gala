@@ -194,7 +194,7 @@ func Map[F, T any](p *F, f func(F) T) *T {
 //
 // This function is only valid for structs and pointers to structs.  Any other
 // type will cause a panic.  Passing a typed nil pointer will return true.
-func AllPtrFieldsNil(obj interface{}) bool {
+func AllPtrFieldsNil(obj any) bool {
 	v := reflect.ValueOf(obj)
 	if !v.IsValid() {
 		panic(fmt.Sprintf("reflect.ValueOf() produced a non-valid Value for %#v", obj))
@@ -205,7 +205,7 @@ func AllPtrFieldsNil(obj interface{}) bool {
 		}
 		v = v.Elem()
 	}
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		if v.Field(i).Kind() == reflect.Ptr && !v.Field(i).IsNil() {
 			return false
 		}

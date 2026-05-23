@@ -412,13 +412,13 @@ func BenchmarkLoad(b *testing.B) {
 	sm.Store("key1", 123)
 
 	b.Run("Map", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = m.Load("key1")
 		}
 	})
 
 	b.Run("sync.Map", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sm.Load("key1")
 		}
 	})

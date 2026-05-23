@@ -74,7 +74,7 @@ func TestDeepCopy(t *testing.T) {
 	fmt.Printf("&a.B.Str = %p, &cp_a.B.Str = %p, eq = %t\n", &a.B.Str, &cp_a.B.Str, &a.B.Str == &cp_a.B.Str)
 }
 
-func Jsonfy(i interface{}) string {
+func Jsonfy(i any) string {
 	js, _ := json.MarshalIndent(i, "", "  ")
 	return string(js)
 }

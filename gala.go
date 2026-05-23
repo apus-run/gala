@@ -79,7 +79,6 @@ func (s *Service) Run() error {
 
 	octx := ServiceContextKey.NewContext(s.opts.context, s)
 	for _, srv := range s.opts.servers {
-		server := srv
 		eg.Go(func() error {
 			<-ctx.Done() // wait for stop signal
 			stopCtx := octx
@@ -88,12 +87,12 @@ func (s *Service) Run() error {
 				stopCtx, cancel = context.WithTimeout(stopCtx, s.opts.stopTimeout)
 				defer cancel()
 			}
-			return server.Stop(stopCtx)
+			return srv.Stop(stopCtx)
 		})
 		wg.Add(1)
 		eg.Go(func() error {
 			wg.Done() // here is to ensure core start has begun running before register, so defer is not needed
-			return server.Start(octx)
+			return srv.Start(octx)
 		})
 	}
 	wg.Wait()

@@ -8,7 +8,7 @@ import (
 )
 
 func TestJson(t *testing.T) {
-	v := map[string]interface{}{
+	v := map[string]any{
 		"name": "evaluator",
 		"age":  123,
 	}
@@ -16,14 +16,14 @@ func TestJson(t *testing.T) {
 	b, err := Marshal(v)
 	assert.Nil(t, err)
 
-	tar := map[string]interface{}{}
+	tar := map[string]any{}
 	err = Unmarshal(b, &tar)
 	assert.Nil(t, err)
 	assert.Equal(t, "evaluator", tar["name"])
 
 	r := bytes.NewReader(b)
 
-	tar2 := map[string]interface{}{}
+	tar2 := map[string]any{}
 	err = Decode(r, &tar2)
 	assert.Nil(t, err)
 	assert.Equal(t, "evaluator", tar2["name"])
@@ -33,13 +33,13 @@ func TestJson(t *testing.T) {
 }
 
 func TestJsonify(t *testing.T) {
-	v := map[string]interface{}{
+	v := map[string]any{
 		"name": "evaluator",
 		"age":  123,
 	}
 	res := Jsonify(v)
 
-	tar := map[string]interface{}{}
+	tar := map[string]any{}
 	err := Unmarshal([]byte(res), &tar)
 	assert.Nil(t, err)
 	assert.Equal(t, "evaluator", tar["name"])

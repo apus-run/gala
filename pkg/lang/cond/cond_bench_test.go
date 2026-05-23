@@ -9,7 +9,7 @@ func BenchmarkIf(b *testing.B) {
 
 	b.Run("Baseline", func(b *testing.B) {
 		var v int
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			if cond {
 				v = 1
 			} else {
@@ -23,7 +23,7 @@ func BenchmarkIf(b *testing.B) {
 
 	b.Run("If", func(b *testing.B) {
 		var v int
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			v = If(cond, 1, 2)
 		}
 		if v != 1 {
@@ -33,7 +33,7 @@ func BenchmarkIf(b *testing.B) {
 
 	b.Run("IfLazy", func(b *testing.B) {
 		var v int
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			v = IfLazy(cond, func() int { return 1 }, func() int { return 2 })
 		}
 		if v != 1 {

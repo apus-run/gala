@@ -46,7 +46,7 @@ func TestToPtr(t *testing.T) {
 
 func TestAllPtrFieldsNil(t *testing.T) {
 	testCases := []struct {
-		obj      interface{}
+		obj      any
 		expected bool
 	}{
 		{struct{}{}, true},
@@ -112,7 +112,7 @@ func TestFrom(t *testing.T) {
 	assert.Equal(t, 543, From(ToPtr(543)))
 	assert.Equal(t, "Alice", From(ToPtr("Alice")))
 	assert.Zero(t, From[int](nil))
-	assert.Nil(t, From[interface{}](nil))
+	assert.Nil(t, From[any](nil))
 	assert.Nil(t, From(ToPtr[fmt.Stringer](nil)))
 }
 

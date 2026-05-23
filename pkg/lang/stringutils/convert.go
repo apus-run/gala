@@ -60,7 +60,7 @@ func ToString(arg any, timeFormat ...string) string {
 			// handle slices
 			var buf strings.Builder
 			buf.WriteString("[") //nolint: revive,errcheck // no need to check error
-			for i := 0; i < rv.Len(); i++ {
+			for i := range rv.Len() {
 				if i > 0 {
 					buf.WriteString(" ") //nolint: revive,errcheck // no need to check error
 				}
