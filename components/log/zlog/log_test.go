@@ -4,25 +4,31 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-func getLogWriter() io.Writer {
+func getLogWriter(t *testing.T) io.Writer {
+	t.Helper()
+
 	lumberJackLogger := &lumberjack.Logger{
-		Filename:   "logs.log",
+		Filename:   filepath.Join(t.TempDir(), "logs.log"),
 		MaxSize:    500, // megabytes
 		MaxBackups: 3,
 		MaxAge:     28, // days
 		Compress:   true,
 	}
+	t.Cleanup(func() {
+		_ = lumberJackLogger.Close()
+	})
 	return lumberJackLogger
 }
 
 func TestLog(t *testing.T) {
-	wr := getLogWriter()
+	wr := getLogWriter(t)
 	logger := NewLogger(WithFormat(FormatJSON), WithWriters(os.Stdout, wr))
 	defer logger.Close()
 

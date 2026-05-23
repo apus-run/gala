@@ -3,6 +3,7 @@ package slog
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,19 +19,22 @@ func (Password) LogValue() slog.Value {
 
 func TestLog(t *testing.T) {
 	lumberJackLogger := &lumberjack.Logger{
-		Filename:   "logs.log",
+		Filename:   filepath.Join(t.TempDir(), "logs.log"),
 		MaxSize:    500, // megabytes
 		MaxBackups: 3,
 		MaxAge:     28, // days
 		Compress:   true,
 	}
+	t.Cleanup(func() {
+		_ = lumberJackLogger.Close()
+	})
 
 	logger := NewLogger(WithFormat(FormatJSON), WithWriter(lumberJackLogger))
 	logger.Debug("This is a debug message", Any("key", "value"))
 	logger.Info("This is a info message")
 	logger.Warn("This is a warn message")
 	logger.Error("This is a error message")
-	logger.Fatalf("ssssss%v", "22222")
+	logger.LogAttrs(context.Background(), LevelFatal, "ssssss22222")
 
 	logger.Info("WebServer服务信息",
 		Group("http",
