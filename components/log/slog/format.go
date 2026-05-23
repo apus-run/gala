@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// sprint is a function that takes a variadic parameter of type interface{} and returns a string.
+// sprint is a function that takes variadic any values and returns a string.
 // The function works as follows:
 // - If no arguments are provided, it returns an empty string.
 // - If a single argument is provided:
@@ -29,7 +29,7 @@ func sprint(a ...any) string {
 	}
 }
 
-// sprintf is a function that takes a string template and a variadic parameter of type interface{} and returns a string.
+// sprintf is a function that takes a string template plus variadic any values and returns a string.
 // The function works as follows:
 // - If no arguments are provided, it returns the template string as is.
 // - If the template string is not empty, it formats the string using fmt.Sprintf with the provided arguments and returns the result.

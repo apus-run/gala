@@ -80,7 +80,7 @@ func Benchmark_Memory(b *testing.B) {
 	ctx := context.Background()
 	keyLength := 1000
 	keys := make([]string, keyLength)
-	for i := 0; i < keyLength; i++ {
+	for i := range keyLength {
 		keys[i] = uuid.New().String()
 	}
 	value := "joe"
@@ -90,7 +90,7 @@ func Benchmark_Memory(b *testing.B) {
 		d := memory.New[string, string]()
 		b.ReportAllocs()
 		b.ResetTimer()
-		for n := 0; n < b.N; n++ {
+		for b.Loop() {
 			for _, key := range keys {
 				_ = d.Set(ctx, key, value, ttl)
 

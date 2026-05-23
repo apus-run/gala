@@ -1,6 +1,7 @@
 package mongo
 
 import (
+	"errors"
 	"io"
 	"strings"
 	"time"
@@ -101,10 +102,10 @@ func GetSort(keys []string) bson.D {
 	sort := bson.D{}
 
 	for _, k := range keys {
-		if strings.HasPrefix(k, "-") {
-			sort = append(sort, bson.E{Key: k[1:], Value: -1})
-		} else if strings.HasPrefix(k, "+") {
-			sort = append(sort, bson.E{Key: k[1:], Value: 1})
+		if field, ok := strings.CutPrefix(k, "-"); ok {
+			sort = append(sort, bson.E{Key: field, Value: -1})
+		} else if field, ok := strings.CutPrefix(k, "+"); ok {
+			sort = append(sort, bson.E{Key: field, Value: 1})
 		} else {
 			sort = append(sort, bson.E{Key: k, Value: 1})
 		}
@@ -141,7 +142,7 @@ func PrepIndex(keys ...string) mongo.IndexModel {
 }
 
 // Bind request json body from io.Reader to bson record
-func Bind(r io.Reader, v interface{}) error {
+func Bind(r io.Reader, v any) error {
 	body, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -158,10 +159,7 @@ func GetFindAndModifyReturn(returnNew bool) options.ReturnDocument {
 
 // IsErrNoDocuments check if err is no documents
 func IsErrNoDocuments(err error) bool {
-	if err == mongo.ErrNoDocuments {
-		return true
-	}
-	return false
+	return errors.Is(err, mongo.ErrNoDocuments)
 }
 
 // IsDup check if err is mongo E11000 (duplicate err)。

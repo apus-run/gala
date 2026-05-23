@@ -80,7 +80,7 @@ func TestWriter_WithCollection(t *testing.T) {
 		teardown()
 	}()
 	wr := NewBufferedWriter(mg, "test", coll.Name(), 3).WithCollection("coll1")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		require.NoError(t, wr.Write(bson.M{"key1": 1, "key2": 2}))
 	}
 	require.NoError(t, wr.Flush())
@@ -99,16 +99,14 @@ func TestWriter_Parallel(t *testing.T) {
 	wr := NewBufferedWriter(mg, "test", coll.Name(), 75)
 
 	writeMany := func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			require.NoError(t, wr.Write(bson.M{"key1": 1, "key2": 2}))
 		}
 		require.NoError(t, wr.Flush())
-		wg.Done()
 	}
 
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go writeMany()
+	for range 16 {
+		wg.Go(writeMany)
 	}
 
 	wg.Wait()
@@ -163,18 +161,16 @@ func TestWriter_ParallelWithAutoFlush(t *testing.T) {
 	wr := NewBufferedWriter(mg, "test", coll.Name(), 75).WithAutoFlush(time.Millisecond)
 
 	writeMany := func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			require.NoError(t, wr.Write(bson.M{"key1": 1, "key2": 2}))
 			time.Sleep(time.Millisecond * 3)
 		}
 		err := wr.Flush()
 		require.NoError(t, err)
-		wg.Done()
 	}
 
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go writeMany()
+	for range 16 {
+		wg.Go(writeMany)
 	}
 
 	wg.Wait()

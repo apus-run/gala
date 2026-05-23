@@ -68,7 +68,7 @@ func (b *Builder) BuildDebugInterceptor() func(processFn) processFn {
 	}
 }
 
-func mustJsonMarshal(val interface{}) string {
+func mustJsonMarshal(val any) string {
 	res, _ := json.Marshal(val)
 	return string(res)
 }

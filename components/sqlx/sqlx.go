@@ -205,8 +205,9 @@ func insert(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 		return nil, err
 	}
 
-	for i := 0; i < len(names); i++ {
-		if names[i] != m.KeyName() {
+	keyName := m.KeyName()
+	for i := range len(names) {
+		if names[i] != keyName {
 			continue
 		}
 		v := reflect.ValueOf(args[i])
@@ -217,6 +218,7 @@ func insert(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 		}
 		break
 	}
+
 	query := "INSERT INTO " + m.TableName() + "(" + strings.Join(names, ",") + ") VALUES (" + strings.Repeat(",?", len(names))[1:] + ")"
 	query = db.Rebind(query)
 	return db.ExecContext(ctx, query, args...)
@@ -231,9 +233,10 @@ func update(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 	var setClauses []string
 	var setArgs []any
 	var idArg any
+	keyName := m.KeyName()
 
 	for i, name := range names {
-		if name == m.KeyName() {
+		if name == keyName {
 			idArg = args[i]
 			continue
 		}
@@ -241,7 +244,7 @@ func update(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 		setArgs = append(setArgs, args[i])
 	}
 
-	query := "UPDATE " + m.TableName() + " SET " + strings.Join(setClauses, ",") + " WHERE " + m.KeyName() + " = ?"
+	query := "UPDATE " + m.TableName() + " SET " + strings.Join(setClauses, ",") + " WHERE " + keyName + " = ?"
 	setArgs = append(setArgs, idArg)
 	query = db.Rebind(query)
 	return db.ExecContext(ctx, query, setArgs...)
@@ -267,7 +270,10 @@ func bindArgs(names []string, arg any, m *reflectx.Mapper) ([]any, error) {
 
 	// 解引用指针，获取实际值
 	v := reflect.ValueOf(arg)
-	for v = reflect.ValueOf(arg); v.Kind() == reflect.Ptr; {
+	for v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil, fmt.Errorf("nil modeler %T", arg)
+		}
 		v = v.Elem()
 	}
 

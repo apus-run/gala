@@ -119,7 +119,7 @@ func MaybeAddLikeToWhere(b *WhereBuilder, fieldLike string, column string, opt .
 	}
 	b.where.Exprs = append(b.where.Exprs, &clause.Expr{
 		SQL:  fmt.Sprintf("%s LIKE ? ESCAPE '\\\\'", column),
-		Vars: []interface{}{"%" + escapeLikeWildcard(fieldLike) + "%"},
+		Vars: []any{"%" + escapeLikeWildcard(fieldLike) + "%"},
 	})
 }
 
@@ -155,7 +155,7 @@ func RetryOnNotFound(fn func(opt ...Option) error, originalOpts []Option) error 
 }
 
 // RecordExists checks if a record exists in the database.
-func RecordExists(db *gorm.DB, where interface{}, tableName ...string) (exists bool, err error) {
+func RecordExists(db *gorm.DB, where any, tableName ...string) (exists bool, err error) {
 	if len(tableName) > 0 {
 		db = db.Table(tableName[0])
 	} else {

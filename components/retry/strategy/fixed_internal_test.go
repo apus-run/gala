@@ -126,12 +126,12 @@ func testNext4InfiniteRetry(t *testing.T, maxRetries int32) {
 
 	wantIntervals := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
 	length := n - len(wantIntervals)
-	for i := 0; i < length; i++ {
+	for range length {
 		wantIntervals = append(wantIntervals, 4*time.Second)
 	}
 
 	intervals := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		res, _ := s.Next()
 		intervals = append(intervals, res)
 	}

@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -155,7 +156,7 @@ func (q *GormQuery[T]) First(ctx context.Context) (*T, error) {
 	var result T
 	err := q.db.WithContext(ctx).First(&result).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, err
@@ -167,7 +168,7 @@ func (q *GormQuery[T]) First(ctx context.Context) (*T, error) {
 func (q *GormQuery[T]) FirstOrFail(ctx context.Context) (*T, error) {
 	result, err := q.First(ctx)
 	if err != nil {
-		if err == ErrRecordNotFound {
+		if errors.Is(err, ErrRecordNotFound) {
 			return nil, fmt.Errorf("no records found")
 		}
 		return nil, err

@@ -53,9 +53,9 @@ func getJwtFromHeader(ctx *ginx.Context) (string, error) {
 	if len(tokenString) == 0 {
 		return "", errors.New("token 为空")
 	}
-	strs := strings.SplitN(tokenString, " ", 2)
-	if len(strs) != 2 || strs[0] != "Bearer" {
+	prefix, token, ok := strings.Cut(tokenString, " ")
+	if !ok || prefix != "Bearer" {
 		return "", errors.New("token 不符合规则, Bearer 开头")
 	}
-	return strs[1], nil
+	return token, nil
 }

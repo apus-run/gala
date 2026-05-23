@@ -42,14 +42,14 @@ func (d *Database) Client() *Client {
 		registry: d.registry,
 	}
 }
-func (d *Database) RunCommand(ctx context.Context, runCommand interface{}, opts ...*options.RunCmdOptions) *SingleResult {
+func (d *Database) RunCommand(ctx context.Context, runCommand any, opts ...*options.RunCmdOptions) *SingleResult {
 	option := options.RunCmd()
 	if len(opts) > 0 && opts != nil {
 		option = opts[0]
 	}
 	return d.database.RunCommand(ctx, runCommand, option)
 }
-func (d *Database) RunCommandCursor(ctx context.Context, cmd interface{}) *Cursor {
+func (d *Database) RunCommandCursor(ctx context.Context, cmd any) *Cursor {
 	cur, err := d.database.RunCommandCursor(ctx, cmd)
 	return &Cursor{
 		ctx:    ctx,
@@ -58,7 +58,7 @@ func (d *Database) RunCommandCursor(ctx context.Context, cmd interface{}) *Curso
 	}
 }
 
-func (d *Database) ListCollections(ctx context.Context, filter interface{}, opts ...*options.ListCollectionsOptions) (
+func (d *Database) ListCollections(ctx context.Context, filter any, opts ...*options.ListCollectionsOptions) (
 	cur *mongo.Cursor, err error) {
 	err = d.processor(func(cmd *cmd) error {
 		cur, err = d.database.ListCollections(ctx, filter, opts...)

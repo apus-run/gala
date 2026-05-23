@@ -171,12 +171,12 @@ func TestSetAndWait(t *testing.T) {
 	assert.Equal(t, "value2", v)
 
 	// Test many Set then SetAndWait then many Set
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		_, err := m.Set(ctx, fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
 		assert.NoError(t, err)
 	}
 	_, err = m.SetAndWait(ctx, "key", "value")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		_, err := m.Set(ctx, fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
 		assert.NoError(t, err)
 	}

@@ -30,7 +30,7 @@ func TestCursor(t *testing.T) {
 	id2 := primitive.NewObjectID()
 	id3 := primitive.NewObjectID()
 	id4 := primitive.NewObjectID()
-	docs := []interface{}{
+	docs := []any{
 		bson.M{"_id": id1, "name": "Alice", "age": 18},
 		bson.M{"_id": id2, "name": "Alice", "age": 19},
 		bson.M{"_id": id3, "name": "Lucas", "age": 20},

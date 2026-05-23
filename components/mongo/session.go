@@ -84,8 +84,8 @@ func (ws *session) AdvanceOperationTime(pt *primitive.Timestamp) error {
 	})
 }
 
-func (ws *session) WithTransaction(ctx context.Context, fn func(sessCtx SessionContext) (interface{}, error),
-	opts ...*options.TransactionOptions) (out interface{}, err error) {
+func (ws *session) WithTransaction(ctx context.Context, fn func(sessCtx SessionContext) (any, error),
+	opts ...*options.TransactionOptions) (out any, err error) {
 	err = ws.processor(func(c *cmd) error {
 		logCmd(ws.logMode, c, "WithTransaction", nil)
 		out, err = ws.Session.WithTransaction(ctx, fn, opts...)

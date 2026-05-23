@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -215,7 +216,7 @@ func (q *MongoQuery[T]) First(ctx context.Context) (*T, error) {
 	var result T
 	err := q.collection.FindOne(ctx, q.filter, opts).Decode(&result)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, err
@@ -228,7 +229,7 @@ func (q *MongoQuery[T]) First(ctx context.Context) (*T, error) {
 func (q *MongoQuery[T]) FirstOrFail(ctx context.Context) (*T, error) {
 	result, err := q.First(ctx)
 	if err != nil {
-		if err == ErrRecordNotFound {
+		if errors.Is(err, ErrRecordNotFound) {
 			return nil, fmt.Errorf("no records found matching query")
 		}
 		return nil, err

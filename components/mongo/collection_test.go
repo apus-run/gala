@@ -152,7 +152,7 @@ func TestCollection_InsertMany(t *testing.T) {
 	ast.Equal(2, len(res.InsertedIDs))
 
 	docs4 := []UserInfo{}
-	res, err = cli.InsertMany(context.Background(), []interface{}{docs4})
+	res, err = cli.InsertMany(context.Background(), []any{docs4})
 	ast.Error(err)
 	ast.Empty(res)
 }
@@ -165,23 +165,23 @@ func TestSliceInsert(t *testing.T) {
 		Weight uint32             `bson:"weight"`
 	}
 	newDocs := []UserInfo{{Name: "Alice", Age: 10}, {Name: "Lucas", Age: 11}}
-	di := interface{}(newDocs)
+	di := any(newDocs)
 	dis := interfaceToSliceInterface(di)
 	ast := require.New(t)
 	ast.Len(dis, 2)
 
-	newDocs_1 := []interface{}{UserInfo{Name: "Alice", Age: 10}, UserInfo{Name: "Lucas", Age: 11}}
-	di = interface{}(newDocs_1)
+	newDocs_1 := []any{UserInfo{Name: "Alice", Age: 10}, UserInfo{Name: "Lucas", Age: 11}}
+	di = any(newDocs_1)
 	dis = interfaceToSliceInterface(di)
 	ast.Len(dis, 2)
 
 	newDocs_2 := UserInfo{Name: "Alice", Age: 10}
-	di = interface{}(newDocs_2)
+	di = any(newDocs_2)
 	dis = interfaceToSliceInterface(di)
 	ast.Nil(dis)
 
 	newDocs_3 := []UserInfo{}
-	di = interface{}(newDocs_3)
+	di = any(newDocs_3)
 	dis = interfaceToSliceInterface(di)
 	ast = require.New(t)
 	ast.Nil(dis)
@@ -195,7 +195,7 @@ func TestCollection_Update(t *testing.T) {
 
 	id1 := primitive.NewObjectID()
 	id2 := primitive.NewObjectID()
-	docs := []interface{}{
+	docs := []any{
 		bson.D{{Key: "_id", Value: id1}, {Key: "name", Value: "Alice"}},
 		bson.D{{Key: "_id", Value: id2}, {Key: "name", Value: "Lucas"}},
 	}
@@ -264,7 +264,7 @@ func TestCollection_UpdateId(t *testing.T) {
 
 	id1 := primitive.NewObjectID()
 	id2 := primitive.NewObjectID()
-	docs := []interface{}{
+	docs := []any{
 		bson.D{{Key: "_id", Value: id1}, {Key: "name", Value: "Alice"}},
 		bson.D{{Key: "_id", Value: id2}, {Key: "name", Value: "Lucas"}},
 	}
@@ -325,7 +325,7 @@ func TestCollection_UpdateAll(t *testing.T) {
 	id1 := primitive.NewObjectID()
 	id2 := primitive.NewObjectID()
 	id3 := primitive.NewObjectID()
-	docs := []interface{}{
+	docs := []any{
 		bson.D{{Key: "_id", Value: id1}, {Key: "name", Value: "Alice"}, {Key: "age", Value: 18}},
 		bson.D{{Key: "_id", Value: id2}, {Key: "name", Value: "Alice"}, {Key: "age", Value: 19}},
 		bson.D{{Key: "_id", Value: id3}, {Key: "name", Value: "Lucas"}, {Key: "age", Value: 20}},
@@ -403,7 +403,7 @@ func TestCollection_Remove(t *testing.T) {
 	id3 := primitive.NewObjectID().Hex()
 	id4 := primitive.NewObjectID().Hex()
 	id5 := primitive.NewObjectID()
-	docs := []interface{}{
+	docs := []any{
 		bson.D{{Key: "_id", Value: id1}, {Key: "name", Value: "Alice"}, {Key: "age", Value: 18}},
 		bson.D{{Key: "_id", Value: id2}, {Key: "name", Value: "Alice"}, {Key: "age", Value: 19}},
 		bson.D{{Key: "_id", Value: id3}, {Key: "name", Value: "Lucas"}, {Key: "age", Value: 20}},
@@ -468,7 +468,7 @@ func TestCollection_RemoveAll(t *testing.T) {
 	id2 := primitive.NewObjectID()
 	id3 := primitive.NewObjectID()
 	id4 := primitive.NewObjectID()
-	docs := []interface{}{
+	docs := []any{
 		bson.D{{Key: "_id", Value: id1}, {Key: "name", Value: "Alice"}, {Key: "age", Value: 18}},
 		bson.D{{Key: "_id", Value: id2}, {Key: "name", Value: "Alice"}, {Key: "age", Value: 19}},
 		bson.D{{Key: "_id", Value: id3}, {Key: "name", Value: "Lucas"}, {Key: "age", Value: 20}},

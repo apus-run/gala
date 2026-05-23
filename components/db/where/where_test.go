@@ -55,21 +55,21 @@ func TestOptions_P(t *testing.T) {
 func TestOptions_Q(t *testing.T) {
 	tests := []struct {
 		name     string
-		query    interface{}
-		args     []interface{}
+		query    any
+		args     []any
 		expected []Query
 	}{
 		{
 			name:     "Single query with args",
 			query:    "name = ?",
-			args:     []interface{}{"John"},
-			expected: []Query{{Query: "name = ?", Args: []interface{}{"John"}}},
+			args:     []any{"John"},
+			expected: []Query{{Query: "name = ?", Args: []any{"John"}}},
 		},
 		{
 			name:     "Multiple queries",
 			query:    "age > ?",
-			args:     []interface{}{30},
-			expected: []Query{{Query: "age > ?", Args: []interface{}{30}}},
+			args:     []any{30},
+			expected: []Query{{Query: "age > ?", Args: []any{30}}},
 		},
 	}
 

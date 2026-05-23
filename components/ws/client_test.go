@@ -39,24 +39,21 @@ func TestClientConnectConcurrentAccess(t *testing.T) {
 	})
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 20 {
 			_ = client.GetConnection()
 		}
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 20 {
 			if err := client.connect(); err != nil {
 				t.Errorf("connect() error = %v", err)
 				return
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 }

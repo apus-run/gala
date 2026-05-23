@@ -23,7 +23,7 @@ type Client struct {
 }
 
 func defaultProcessor(processFn processFn) error {
-	return processFn(&cmd{req: make([]interface{}, 0, 1)})
+	return processFn(&cmd{req: make([]any, 0, 1)})
 }
 
 // NewClient creates MongoDB client
@@ -62,7 +62,7 @@ func (c *Client) SetLogMode(logMode bool) {
 
 func (c *Client) WrapProcessor(wrapFn func(processFn) processFn) {
 	c.processor = func(fn processFn) error {
-		return wrapFn(fn)(&cmd{req: make([]interface{}, 0, 1)})
+		return wrapFn(fn)(&cmd{req: make([]any, 0, 1)})
 	}
 }
 

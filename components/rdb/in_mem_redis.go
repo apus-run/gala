@@ -9,7 +9,7 @@ import (
 )
 
 type tester interface {
-	Errorf(format string, args ...interface{})
+	Errorf(format string, args ...any)
 	Cleanup(func())
 }
 

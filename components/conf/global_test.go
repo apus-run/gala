@@ -142,7 +142,7 @@ func TestUnmarshalKey(t *testing.T) {
 			Host   string
 			Port   int
 		}
-		v.Set("db", map[string]interface{}{
+		v.Set("db", map[string]any{
 			"driver": "postgres",
 			"host":   "localhost",
 			"port":   5432,

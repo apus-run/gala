@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"log"
 	"testing"
 
@@ -112,7 +113,7 @@ func TestNewClientOpen(t *testing.T) {
 	filter := D(KV("id", 123))
 	var art Article
 	err = cli.FindOne(ctx, filter).Decode(&art)
-	if err == mongo.ErrNoDocuments {
+	if errors.Is(err, mongo.ErrNoDocuments) {
 		t.Logf("没有找到 id: %v", 123)
 	}
 	t.Logf("查询结果: %#v", art)

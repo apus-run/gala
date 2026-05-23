@@ -15,7 +15,7 @@ type Cursor struct {
 
 // Next gets the next document for this cursor. It returns true if there were no errors and the cursor has not been
 // exhausted.
-func (c *Cursor) Next(result interface{}) bool {
+func (c *Cursor) Next(result any) bool {
 	if c.err != nil {
 		return false
 	}
@@ -32,7 +32,7 @@ func (c *Cursor) Next(result interface{}) bool {
 
 // All iterates the cursor and decodes each document into results. The results parameter must be a pointer to a slice.
 // recommend to use All() in struct Query or Aggregate
-func (c *Cursor) All(results interface{}) error {
+func (c *Cursor) All(results any) error {
 	if c.err != nil {
 		return c.err
 	}

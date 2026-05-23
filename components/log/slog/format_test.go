@@ -8,42 +8,42 @@ import (
 func Test_sprint(t *testing.T) {
 	tests := []struct {
 		name string
-		args []interface{}
+		args []any
 		want string
 	}{
 		{
 			name: "NoArgs",
-			args: []interface{}{},
+			args: []any{},
 			want: "",
 		},
 		{
 			name: "WithOneArgString",
-			args: []interface{}{"arg1"},
+			args: []any{"arg1"},
 			want: "arg1",
 		},
 		{
 			name: "WithOneArgNotString",
-			args: []interface{}{123},
+			args: []any{123},
 			want: "123",
 		},
 		{
 			name: "WithMultipleArgsString",
-			args: []interface{}{"arg1", "arg2"},
+			args: []any{"arg1", "arg2"},
 			want: "arg1arg2",
 		},
 		{
 			name: "WithMultipleArgsNotString",
-			args: []interface{}{123, 456},
+			args: []any{123, 456},
 			want: "123 456",
 		},
 		{
 			name: "WithErrorArgs",
-			args: []interface{}{fmt.Errorf("error message")},
+			args: []any{fmt.Errorf("error message")},
 			want: "error message",
 		},
 		{
 			name: "WithStringerArgs",
-			args: []interface{}{stringer{str: "stringer"}},
+			args: []any{stringer{str: "stringer"}},
 			want: "stringer",
 		},
 	}
@@ -59,7 +59,7 @@ func Test_sprint(t *testing.T) {
 func Test_sprintf(t *testing.T) {
 	type args struct {
 		template string
-		args     []interface{}
+		args     []any
 	}
 	tests := []struct {
 		name string
@@ -68,37 +68,37 @@ func Test_sprintf(t *testing.T) {
 	}{
 		{
 			name: "NoArgs",
-			args: args{template: "template", args: []interface{}{}},
+			args: args{template: "template", args: []any{}},
 			want: "template",
 		},
 		{
 			name: "WithTemplateAndOneArg",
-			args: args{template: "template %s", args: []interface{}{"arg1"}},
+			args: args{template: "template %s", args: []any{"arg1"}},
 			want: "template arg1",
 		},
 		{
 			name: "WithTemplateAndMultipleArgs",
-			args: args{template: "template %s %s", args: []interface{}{"arg1", "arg2"}},
+			args: args{template: "template %s %s", args: []any{"arg1", "arg2"}},
 			want: "template arg1 arg2",
 		},
 		{
 			name: "WithOneArgNotString",
-			args: args{template: "", args: []interface{}{123}},
+			args: args{template: "", args: []any{123}},
 			want: "123",
 		},
 		{
 			name: "WithMultipleArgsNotString",
-			args: args{template: "", args: []interface{}{123, 456}},
+			args: args{template: "", args: []any{123, 456}},
 			want: "123 456",
 		},
 		{
 			name: "WithErrorArgs",
-			args: args{template: "", args: []interface{}{fmt.Errorf("error message")}},
+			args: args{template: "", args: []any{fmt.Errorf("error message")}},
 			want: "error message",
 		},
 		{
 			name: "WithStringerArgs",
-			args: args{template: "", args: []interface{}{stringer{str: "stringer"}}},
+			args: args{template: "", args: []any{stringer{str: "stringer"}}},
 			want: "stringer",
 		},
 	}

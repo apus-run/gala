@@ -67,7 +67,7 @@ func BenchmarkZapLoggerW(b *testing.B) {
 
 	// 重复调用 W 函数，测量性能
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = logger.W(ctx)
 	}
 }

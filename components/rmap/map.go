@@ -543,7 +543,7 @@ func (sm *Map) Close() {
 
 	// Clean up all waiters
 	sm.wlock.Lock()
-	sm.waiters.Range(func(key, value interface{}) bool {
+	sm.waiters.Range(func(key, value any) bool {
 		waiters := value.([]*setWaiter)
 		for _, w := range waiters {
 			w.cancel()

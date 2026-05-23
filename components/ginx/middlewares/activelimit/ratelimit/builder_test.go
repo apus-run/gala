@@ -57,7 +57,7 @@ func TestNewRateLimit(t *testing.T) {
 	t.Run("创建速率限制器", func(t *testing.T) {
 		rl := NewRateLimit(time.Second, 100)
 		assert.NotNil(t, rl)
-		
+
 		// 通过Build和使用来验证基本功能
 		middleware := rl.Build()
 		assert.NotNil(t, middleware)
@@ -65,7 +65,7 @@ func TestNewRateLimit(t *testing.T) {
 
 	t.Run("默认使用IP作为限流键", func(t *testing.T) {
 		rl := NewRateLimit(time.Second, 100)
-		
+
 		// 通过实际请求来验证
 		router := gin.New()
 		router.Use(rl.Build())
@@ -77,7 +77,7 @@ func TestNewRateLimit(t *testing.T) {
 		req.RemoteAddr = "192.168.1.1:8080"
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
-		
+
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }
@@ -109,14 +109,14 @@ func TestRateLimit_SetKeyFunc(t *testing.T) {
 // TestRateLimit_Build 测试 Build 方法
 func TestRateLimit_Build(t *testing.T) {
 	tests := []struct {
-		name          string
-		window        time.Duration
-		requests      int
-		keyFunc       func(*gin.Context) string
-		store         Cache
-		testRequests  int
-		expectBlocks  int
-		description   string
+		name         string
+		window       time.Duration
+		requests     int
+		keyFunc      func(*gin.Context) string
+		store        Cache
+		testRequests int
+		expectBlocks int
+		description  string
 	}{
 		{
 			name:     "基础速率限制-基于IP",
@@ -194,7 +194,7 @@ func TestRateLimit_Build(t *testing.T) {
 			blockedCount := 0
 
 			// 发送测试请求
-			for i := 0; i < tt.testRequests; i++ {
+			for range tt.testRequests {
 				req := httptest.NewRequest("GET", "/test", nil)
 
 				// 如果需要，设置自定义header
@@ -217,7 +217,7 @@ func TestRateLimit_Build(t *testing.T) {
 					assert.NotEmpty(t, w.Header().Get("X-RateLimit-Reset"), "X-RateLimit-Reset header应该设置")
 
 					// 验证响应体
-					var response map[string]interface{}
+					var response map[string]any
 					assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 					assert.Equal(t, "请求过于频繁，请稍后再试", response["message"])
 					assert.Contains(t, response, "message")
@@ -291,7 +291,7 @@ func TestRateLimit_Headers(t *testing.T) {
 	})
 
 	// 发送请求直到被限流
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -363,11 +363,9 @@ func TestRateLimit_Concurrent(t *testing.T) {
 	concurrency := 20
 	requestsPerGoroutine := 2
 
-	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < requestsPerGoroutine; j++ {
+	for range concurrency {
+		wg.Go(func() {
+			for range requestsPerGoroutine {
 				req := httptest.NewRequest("GET", "/test", nil)
 				w := httptest.NewRecorder()
 				router.ServeHTTP(w, req)
@@ -378,7 +376,7 @@ func TestRateLimit_Concurrent(t *testing.T) {
 					atomic.AddInt32(&blockedCount, 1)
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -388,4 +386,3 @@ func TestRateLimit_Concurrent(t *testing.T) {
 	// 但应该至少有一些请求被限流
 	assert.Equal(t, int32(totalRequests), atomic.LoadInt32(&successCount)+atomic.LoadInt32(&blockedCount), "所有请求应该有响应")
 }
-

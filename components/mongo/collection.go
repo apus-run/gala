@@ -17,8 +17,8 @@ type processFn func(*cmd) error
 
 type cmd struct {
 	name     string
-	req      []interface{}
-	res      interface{}
+	req      []any
+	res      any
 	dbName   string
 	collName string
 }
@@ -233,7 +233,7 @@ func (c *Collection) UpdateOne(ctx context.Context, query, update any, opts ...*
 	return
 }
 
-func (c *Collection) UpdateByID(ctx context.Context, id interface{}, update interface{}, opts ...*options.UpdateOptions) (res *mongo.UpdateResult, err error) {
+func (c *Collection) UpdateByID(ctx context.Context, id any, update any, opts ...*options.UpdateOptions) (res *mongo.UpdateResult, err error) {
 	_ = c.processor(func(cmd *cmd) error {
 		res, err = c.collection.UpdateByID(ctx, id, update, opts...)
 		logCmd(c.logMode, c.cmd(cmd), "UpdateByID", res, id, update)
@@ -242,7 +242,7 @@ func (c *Collection) UpdateByID(ctx context.Context, id interface{}, update inte
 	return
 }
 
-func (c *Collection) UpdateId(ctx context.Context, id interface{}, update interface{}, opts ...*options.UpdateOptions) (ur *UpdateResult, err error) {
+func (c *Collection) UpdateId(ctx context.Context, id any, update any, opts ...*options.UpdateOptions) (ur *UpdateResult, err error) {
 	err = c.processor(func(cmd *cmd) error {
 		ur, err = c.collection.UpdateOne(ctx, bson.M{"_id": id}, update, opts...)
 		logCmd(c.logMode, c.cmd(cmd), "UpdateId", ur, id, update, opts)
@@ -251,7 +251,7 @@ func (c *Collection) UpdateId(ctx context.Context, id interface{}, update interf
 	return
 }
 
-func (c *Collection) DeleteMany(ctx context.Context, filter interface{}, opts ...*options.DeleteOptions) (
+func (c *Collection) DeleteMany(ctx context.Context, filter any, opts ...*options.DeleteOptions) (
 	res *DeleteResult, err error) {
 
 	err = c.processor(func(cmd *cmd) error {
@@ -262,7 +262,7 @@ func (c *Collection) DeleteMany(ctx context.Context, filter interface{}, opts ..
 	return
 }
 
-func (c *Collection) DeleteOne(ctx context.Context, filter interface{}, opts ...*options.DeleteOptions) (dr *DeleteResult, err error) {
+func (c *Collection) DeleteOne(ctx context.Context, filter any, opts ...*options.DeleteOptions) (dr *DeleteResult, err error) {
 	err = c.processor(func(cmd *cmd) error {
 		dr, err = c.collection.DeleteOne(ctx, filter, opts...)
 		logCmd(c.logMode, c.cmd(cmd), "DeleteOne", dr, filter)
@@ -271,7 +271,7 @@ func (c *Collection) DeleteOne(ctx context.Context, filter interface{}, opts ...
 	return
 }
 
-func (c *Collection) Remove(ctx context.Context, q interface{}) (err error) {
+func (c *Collection) Remove(ctx context.Context, q any) (err error) {
 	var res *DeleteResult
 	err = c.processor(func(cmd *cmd) error {
 		res, err = c.collection.DeleteMany(ctx, q)
@@ -281,7 +281,7 @@ func (c *Collection) Remove(ctx context.Context, q interface{}) (err error) {
 	return
 }
 
-func (c *Collection) RemoveId(ctx context.Context, id interface{}) error {
+func (c *Collection) RemoveId(ctx context.Context, id any) error {
 	res, err := c.collection.DeleteOne(ctx, bson.D{{Key: "_id", Value: id}})
 	if res != nil && res.DeletedCount == 0 {
 		err = mongo.ErrNoDocuments
@@ -292,7 +292,7 @@ func (c *Collection) RemoveId(ctx context.Context, id interface{}) error {
 	return err
 }
 
-func (c *Collection) RemoveAll(ctx context.Context, q interface{}) (*ChangeInfo, error) {
+func (c *Collection) RemoveAll(ctx context.Context, q any) (*ChangeInfo, error) {
 	var err error
 	var res *DeleteResult
 	err = c.processor(func(cmd *cmd) error {
@@ -304,7 +304,7 @@ func (c *Collection) RemoveAll(ctx context.Context, q interface{}) (*ChangeInfo,
 	return &ChangeInfo{Removed: int(res.DeletedCount)}, err
 }
 
-func (c *Collection) Distinct(ctx context.Context, fieldName string, filter interface{}, opts ...*options.DistinctOptions) (res []interface{}, err error) {
+func (c *Collection) Distinct(ctx context.Context, fieldName string, filter any, opts ...*options.DistinctOptions) (res []any, err error) {
 	err = c.processor(func(cmd *cmd) error {
 		res, err = c.collection.Distinct(ctx, fieldName, filter, opts...)
 		logCmd(c.logMode, c.cmd(cmd), "Distinct", res, fieldName, filter)
@@ -322,7 +322,7 @@ func (c *Collection) EstimatedDocumentCount(ctx context.Context, opts ...*option
 	return
 }
 
-func (c *Collection) Watch(ctx context.Context, pipeline interface{}, opts ...*options.ChangeStreamOptions) (res *mongo.ChangeStream, err error) {
+func (c *Collection) Watch(ctx context.Context, pipeline any, opts ...*options.ChangeStreamOptions) (res *mongo.ChangeStream, err error) {
 	_ = c.processor(func(cmd *cmd) error {
 		res, err = c.collection.Watch(ctx, pipeline, opts...)
 		logCmd(c.logMode, c.cmd(cmd), "Watch", res, pipeline)
@@ -414,7 +414,7 @@ func generateDroppedIndex(index []string) string {
 }
 
 // interfaceToSliceInterface convert interface to slice interface
-func interfaceToSliceInterface(docs interface{}) []interface{} {
+func interfaceToSliceInterface(docs any) []any {
 	if reflect.Slice != reflect.TypeOf(docs).Kind() {
 		return nil
 	}
@@ -422,8 +422,8 @@ func interfaceToSliceInterface(docs interface{}) []interface{} {
 	if s.Len() == 0 {
 		return nil
 	}
-	var sDocs []interface{}
-	for i := 0; i < s.Len(); i++ {
+	var sDocs []any
+	for i := range s.Len() {
 		sDocs = append(sDocs, s.Index(i).Interface())
 	}
 	return sDocs

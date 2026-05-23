@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -37,7 +38,7 @@ func (r *GormRepository[T]) FindByID(ctx context.Context, id any) (*T, error) {
 	var result T
 	err := r.getDB().WithContext(ctx).First(&result, id).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, err
@@ -49,7 +50,7 @@ func (r *GormRepository[T]) FindByID(ctx context.Context, id any) (*T, error) {
 func (r *GormRepository[T]) FindOrFail(ctx context.Context, id any) (*T, error) {
 	result, err := r.FindByID(ctx, id)
 	if err != nil {
-		if err == ErrRecordNotFound {
+		if errors.Is(err, ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s with id %v not found", r.tableName, id)
 		}
 		return nil, err
@@ -62,7 +63,7 @@ func (r *GormRepository[T]) First(ctx context.Context) (*T, error) {
 	var result T
 	err := r.getDB().WithContext(ctx).First(&result).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, err
@@ -74,7 +75,7 @@ func (r *GormRepository[T]) First(ctx context.Context) (*T, error) {
 func (r *GormRepository[T]) FirstOrFail(ctx context.Context) (*T, error) {
 	result, err := r.First(ctx)
 	if err != nil {
-		if err == ErrRecordNotFound {
+		if errors.Is(err, ErrRecordNotFound) {
 			return nil, fmt.Errorf("no %s found", r.tableName)
 		}
 		return nil, err

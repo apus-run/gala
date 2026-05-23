@@ -90,7 +90,7 @@ func (s *AdaptiveTimeoutRetryStrategy) markFail() {
 
 func (s *AdaptiveTimeoutRetryStrategy) getFailed() int {
 	var failCount int
-	for i := 0; i < len(s.ringBuffer); i++ {
+	for i := range len(s.ringBuffer) {
 		v := atomic.LoadUint64(&s.ringBuffer[i])
 		failCount += bits.OnesCount64(v)
 	}

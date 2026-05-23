@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -31,8 +32,8 @@ func (r *MongoRepository[T]) CreateBatch(ctx context.Context, data []T) error {
 		return nil
 	}
 
-	// Convert []T to []interface{}
-	documents := make([]interface{}, len(data))
+	// Convert []T to []any.
+	documents := make([]any, len(data))
 	for i, v := range data {
 		documents[i] = v
 	}
@@ -87,7 +88,7 @@ func (r *MongoRepository[T]) FindByID(ctx context.Context, id any) (*T, error) {
 
 	err = r.collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&result)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, err
@@ -100,7 +101,7 @@ func (r *MongoRepository[T]) FindByID(ctx context.Context, id any) (*T, error) {
 func (r *MongoRepository[T]) FindOrFail(ctx context.Context, id any) (*T, error) {
 	result, err := r.FindByID(ctx, id)
 	if err != nil {
-		if err == ErrRecordNotFound {
+		if errors.Is(err, ErrRecordNotFound) {
 			return nil, fmt.Errorf("record with ID %v not found", id)
 		}
 		return nil, err
@@ -114,7 +115,7 @@ func (r *MongoRepository[T]) First(ctx context.Context) (*T, error) {
 	opts := options.FindOne().SetSort(bson.D{{Key: "_id", Value: 1}})
 	err := r.collection.FindOne(ctx, bson.D{}, opts).Decode(&result)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, err

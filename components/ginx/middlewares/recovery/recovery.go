@@ -23,12 +23,12 @@ func (b *Builder) Build() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				// log.Println("error: ", err)
-				// log.Println("exec panic error", safemap[string]interface{}{
+				// log.Println("exec panic error", safemap[string]any{
 				// 	"trace_error": string(debug.Stack()),
 				// })
 
 				ctx := c.Request.Context()
-				log.Println("exec panic error", map[string]interface{}{
+				log.Println("exec panic error", map[string]any{
 					"module":      "web",
 					"trace_error": string(debug.Stack()),
 				})
@@ -40,7 +40,7 @@ func (b *Builder) Build() gin.HandlerFunc {
 				}
 
 				// services error
-				c.AbortWithStatusJSON(http.StatusInternalServerError, map[string]interface{}{
+				c.AbortWithStatusJSON(http.StatusInternalServerError, map[string]any{
 					"code":    http.StatusInternalServerError,
 					"message": "server inner error",
 				})
@@ -52,7 +52,7 @@ func (b *Builder) Build() gin.HandlerFunc {
 	}
 }
 
-func isBrokenPipe(ctx context.Context, err interface{}) bool {
+func isBrokenPipe(ctx context.Context, err any) bool {
 	// Check for a broken connection, as it is not really a
 	// condition that warrants a panic stack trace.
 	var brokenPipe bool
@@ -60,7 +60,7 @@ func isBrokenPipe(ctx context.Context, err interface{}) bool {
 		if se, exist := ne.Err.(*os.SyscallError); exist {
 			errMsg := strings.ToLower(se.Error())
 			// logger error
-			log.Println(ctx, "os syscall error", map[string]interface{}{
+			log.Println(ctx, "os syscall error", map[string]any{
 				"trace_error": errMsg,
 			})
 

@@ -12,7 +12,7 @@ import (
 
 // BufferedWriter defines interface for writes and flush
 type BufferedWriter interface {
-	Write(rec interface{}) error
+	Write(rec any) error
 	Flush() error
 	Close() error
 }
@@ -29,7 +29,7 @@ type BufferedWriterMongo struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	buffer        []interface{}
+	buffer        []any
 	lock          sync.Mutex
 	lastWriteTime time.Time
 	once          sync.Once
@@ -44,7 +44,7 @@ func NewBufferedWriter(client *mongo.Client, db, collection string, size int) *B
 		bufferSize: size,
 		db:         db,
 		collection: collection,
-		buffer:     make([]interface{}, 0, size+1),
+		buffer:     make([]any, 0, size+1),
 		client:     client,
 	}
 }
@@ -88,7 +88,7 @@ func (bw *BufferedWriterMongo) WithAutoFlush(duration time.Duration) *BufferedWr
 }
 
 // Write to buffer and, as filled, to mongo. If flushDuration defined check for automatic flush
-func (bw *BufferedWriterMongo) Write(rec interface{}) error {
+func (bw *BufferedWriterMongo) Write(rec any) error {
 	return bw.synced(func() error {
 		bw.lastWriteTime = time.Now()
 		bw.buffer = append(bw.buffer, rec)

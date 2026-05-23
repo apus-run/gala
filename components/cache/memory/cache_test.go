@@ -183,7 +183,7 @@ func Benchmark_Memory(b *testing.B) {
 	ctx := context.Background()
 	keyLength := 1000
 	keys := make([]string, keyLength)
-	for i := 0; i < keyLength; i++ {
+	for i := range keyLength {
 		keys[i] = uuid.New().String()
 	}
 	value := "joe"
@@ -193,7 +193,7 @@ func Benchmark_Memory(b *testing.B) {
 		d := memory.New()
 		b.ReportAllocs()
 		b.ResetTimer()
-		for n := 0; n < b.N; n++ {
+		for b.Loop() {
 			for _, key := range keys {
 				_ = d.Set(ctx, key, value, ttl)
 
@@ -544,7 +544,7 @@ func Benchmark_Memory_Set(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = testStore.Set(ctx, "john", "doe", 0) //nolint: errcheck // error not needed for benchmark
 	}
 }
@@ -572,7 +572,7 @@ func Benchmark_Memory_Set_Asserted(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err := testStore.Set(ctx, "john", "doe", 0)
 		require.NoError(b, err)
 	}
@@ -606,7 +606,7 @@ func Benchmark_Memory_Get(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = testStore.Get(ctx, "john") //nolint: errcheck // error not needed for benchmark
 	}
 }
@@ -640,7 +640,7 @@ func Benchmark_Memory_Get_Asserted(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := testStore.Get(ctx, "john")
 		require.NoError(b, err)
 	}
@@ -674,7 +674,7 @@ func Benchmark_Memory_SetAndDelete(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = testStore.Set(ctx, "john", "doe", 0) //nolint: errcheck // error not needed for benchmark
 		_ = testStore.Delete(ctx, "john")        //nolint: errcheck // error not needed for benchmark
 	}
@@ -704,7 +704,7 @@ func Benchmark_Memory_SetAndDelete_Asserted(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err := testStore.Set(ctx, "john", "doe", 0)
 		require.NoError(b, err)
 
