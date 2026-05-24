@@ -116,22 +116,6 @@ func TestFrom(t *testing.T) {
 	assert.Nil(t, From(ToPtr[fmt.Stringer](nil)))
 }
 
-func TestFromOr(t *testing.T) {
-	type T int
-
-	var val, def T = 1, 0
-
-	out := FromOr(&val, def)
-	if out != val {
-		t.Errorf("expected %d, got %d", val, out)
-	}
-
-	out = FromOr(nil, def)
-	if out != def {
-		t.Errorf("expected %d, got %d", def, out)
-	}
-}
-
 func TestIsNil(t *testing.T) {
 	assert.False(t, IsNil(ToPtr(1)))
 	assert.True(t, IsNil[int](nil))

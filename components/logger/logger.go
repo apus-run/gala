@@ -15,6 +15,10 @@ func Default() *slog.Logger {
 	return slog.Default()
 }
 
+func L() *slog.Logger {
+	return slog.Default()
+}
+
 func With(args ...any) *slog.Logger {
 	return Default().With(args...)
 }
