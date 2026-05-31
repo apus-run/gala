@@ -22,9 +22,9 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 		name             string
 		maxCount         int64
 		key              string
-		mock             func(ctrl *gomock.Controller, key string) redis.Cmdable
+		mock             func(ctrl *gomock.Controller, key string) counter
 		getReq           func() *http.Request
-		createMiddleware func(redisClient redis.Cmdable) gin.HandlerFunc
+		createMiddleware func(redisClient counter) gin.HandlerFunc
 		before           func(server *gin.Engine, key string)
 
 		interval time.Duration
@@ -39,7 +39,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 	}{
 		{
 			name: "开启限流,RedisLimit正常操作",
-			mock: func(ctrl *gomock.Controller, key string) redis.Cmdable {
+			mock: func(ctrl *gomock.Controller, key string) counter {
 				redisClient := redismocks.NewMockCmdable(ctrl)
 				res1 := redis.NewIntCmd(context.Background())
 				res1.SetErr(nil)
@@ -52,7 +52,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 				redisClient.EXPECT().Decr(gomock.Any(), key).Return(res2)
 				return redisClient
 			},
-			createMiddleware: func(redisClient redis.Cmdable) gin.HandlerFunc {
+			createMiddleware: func(redisClient counter) gin.HandlerFunc {
 				return NewRedisActiveLimit(redisClient, 1, "test").Build()
 			},
 			getReq: func() *http.Request {
@@ -71,7 +71,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 		},
 		{
 			name: "开启限流,RedisLimit正常操作,但是减一操作异常",
-			mock: func(ctrl *gomock.Controller, key string) redis.Cmdable {
+			mock: func(ctrl *gomock.Controller, key string) counter {
 				redisClient := redismocks.NewMockCmdable(ctrl)
 				res1 := redis.NewIntCmd(context.Background())
 				res1.SetErr(nil)
@@ -84,7 +84,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 				redisClient.EXPECT().Decr(gomock.Any(), key).Return(res2)
 				return redisClient
 			},
-			createMiddleware: func(redisClient redis.Cmdable) gin.HandlerFunc {
+			createMiddleware: func(redisClient counter) gin.HandlerFunc {
 				return NewRedisActiveLimit(redisClient, 1, "test").Build()
 			},
 			getReq: func() *http.Request {
@@ -103,7 +103,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 		},
 		{
 			name: "开启限流,RedisLimit,有一个人长时间没退出,导致限流",
-			mock: func(ctrl *gomock.Controller, key string) redis.Cmdable {
+			mock: func(ctrl *gomock.Controller, key string) counter {
 				// 第一个进来的
 				redisClient := redismocks.NewMockCmdable(ctrl)
 				res1 := redis.NewIntCmd(context.Background())
@@ -131,7 +131,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 				return redisClient
 			},
 
-			createMiddleware: func(redisClient redis.Cmdable) gin.HandlerFunc {
+			createMiddleware: func(redisClient counter) gin.HandlerFunc {
 				return NewRedisActiveLimit(redisClient, 1, "test").Build()
 			},
 			getReq: func() *http.Request {
@@ -157,7 +157,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 		},
 		{
 			name: "开启限流,RedisLimit,有一个人长时间没退出,等待前面退出后,正常请求....",
-			mock: func(ctrl *gomock.Controller, key string) redis.Cmdable {
+			mock: func(ctrl *gomock.Controller, key string) counter {
 				// 第一个进来的
 				redisClient := redismocks.NewMockCmdable(ctrl)
 				res1 := redis.NewIntCmd(context.Background())
@@ -172,7 +172,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 
 				return redisClient
 			},
-			createMiddleware: func(redisClient redis.Cmdable) gin.HandlerFunc {
+			createMiddleware: func(redisClient counter) gin.HandlerFunc {
 				return NewRedisActiveLimit(redisClient, 1, "test").Build()
 			},
 			getReq: func() *http.Request {
@@ -194,7 +194,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 		},
 		{
 			name: "系统异常",
-			mock: func(ctrl *gomock.Controller, key string) redis.Cmdable {
+			mock: func(ctrl *gomock.Controller, key string) counter {
 				// 第一个进来的
 				redisClient := redismocks.NewMockCmdable(ctrl)
 				res1 := redis.NewIntCmd(context.Background())
@@ -205,7 +205,7 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 				return redisClient
 			},
 
-			createMiddleware: func(redisClient redis.Cmdable) gin.HandlerFunc {
+			createMiddleware: func(redisClient counter) gin.HandlerFunc {
 				return NewRedisActiveLimit(redisClient, 1, "test").Build()
 			},
 			getReq: func() *http.Request {
@@ -240,12 +240,19 @@ func TestRedisActiveLimit_Build(t *testing.T) {
 				ctx.Status(http.StatusOK)
 			})
 			resp := httptest.NewRecorder()
+			beforeDone := make(chan struct{})
 			go func() {
+				defer close(beforeDone)
 				tc.before(server, tc.key)
 			}()
 			time.Sleep(tc.interval)
 			server.ServeHTTP(resp, tc.getReq())
 			assert.Equal(t, tc.wantCode, resp.Code)
+			select {
+			case <-beforeDone:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for background request")
+			}
 		})
 	}
 }

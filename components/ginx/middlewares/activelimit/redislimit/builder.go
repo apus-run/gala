@@ -1,6 +1,7 @@
 package redislimit
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -9,18 +10,23 @@ import (
 	"go.uber.org/atomic"
 )
 
+type counter interface {
+	Incr(ctx context.Context, key string) *redis.IntCmd
+	Decr(ctx context.Context, key string) *redis.IntCmd
+}
+
 type RedisActiveLimit struct {
 	// 最大限制个数
 	maxActive *atomic.Int64
 
 	// 用来记录连接数的key
 	key   string
-	cmd   redis.Cmdable
+	cmd   counter
 	logFn func(msg any, args ...any)
 }
 
 // NewRedisActiveLimit 全局限流
-func NewRedisActiveLimit(cmd redis.Cmdable, maxActive int64, key string) *RedisActiveLimit {
+func NewRedisActiveLimit(cmd counter, maxActive int64, key string) *RedisActiveLimit {
 	return &RedisActiveLimit{
 		maxActive: atomic.NewInt64(maxActive),
 		key:       key,
