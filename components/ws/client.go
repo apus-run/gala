@@ -124,12 +124,17 @@ func (c *Client) getConnection() *websocket.Conn {
 
 // connect the websocket server.
 func (c *Client) connect() error {
-	conn, _, err := c.dialer.Dial(c.url, c.requestHeader)
+	conn, _, err := c.dialer.DialContext(c.ctx, c.url, c.requestHeader)
 	if err != nil {
 		return err
 	}
 
 	c.mu.Lock()
+	if err := c.ctx.Err(); err != nil {
+		c.mu.Unlock()
+		_ = conn.Close()
+		return err
+	}
 	oldConn := c.conn
 	c.conn = conn
 	c.mu.Unlock()

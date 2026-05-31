@@ -8,7 +8,6 @@ Original author: [tx7do](https://github.com/tx7do)
 
 - **Flexible Event Data**: Events can carry any type of data
 - **Type-Safe Handlers**: Subscribe handlers to specific event types
-- **Async Support**: Both synchronous and asynchronous event publishing
 - **Middleware Support**: Chain middlewares for logging, recovery, timeout, retry, etc.
 - **Multiple Event Buses**: Manage multiple isolated event buses
 - **Once Handlers**: Subscribe handlers that execute only once
@@ -51,8 +50,6 @@ if err := bus.Publish(ctx, event); err != nil {
     slog.Error("Failed to publish event", "error", err)
 }
 
-// Or publish asynchronously
-bus.PublishAsync(ctx, event)
 ```
 
 ### Subscribing to Events
@@ -227,7 +224,7 @@ bus.Publish(ctx, event)
 
 1. **Use Typed Events**: Define structs for event data for better type safety
 2. **Error Handling**: Always handle errors in event handlers
-3. **Async for Non-Critical**: Use async publishing for non-critical events
+3. **Explicit Async Boundaries**: If a caller needs asynchronous delivery, create and manage the goroutine, timeout, and error handling at the call site
 4. **Middleware Order**: Place recovery middleware first in the chain
 5. **Close Resources**: Always close event buses when done
 6. **Event Naming**: Use dot notation for hierarchical event types (e.g., "email.received")

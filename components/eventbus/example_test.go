@@ -126,32 +126,6 @@ func Example_manager() {
 	fmt.Printf("Manager stats: %v\n", stats)
 }
 
-// Example_asyncHandlers demonstrates async event handling
-func Example_asyncHandlers() {
-	bus := eventbus.NewEventBus(slog.Default())
-	defer bus.Close()
-
-	// Subscribe async handler
-	bus.SubscribeAsync("notification.send", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
-		// This will run in a separate goroutine
-		time.Sleep(100 * time.Millisecond)
-		fmt.Println("Notification sent asynchronously")
-		return nil
-	}))
-
-	// Publish event (returns immediately)
-	ctx := context.Background()
-	event := eventbus.NewEvent("notification.send", map[string]interface{}{
-		"message": "Hello!",
-	})
-
-	bus.Publish(ctx, event)
-	fmt.Println("Event published, continuing...")
-
-	// Wait a bit for async handler to complete
-	time.Sleep(200 * time.Millisecond)
-}
-
 // Example_filterHandler demonstrates filtering events
 func Example_filterHandler() {
 	bus := eventbus.NewEventBus(slog.Default())

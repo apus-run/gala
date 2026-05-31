@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"reflect"
 	"sync"
-	"time"
 )
 
 var _ PubSub = (*EventBus)(nil)
@@ -48,15 +47,6 @@ func (eb *EventBus) Subscribe(eventType EventType, handler Handler) error {
 
 	eb.handlers[eventType] = append(eb.handlers[eventType], handler)
 	return nil
-}
-
-// SubscribeAsync registers an async handler for a specific event type
-func (eb *EventBus) SubscribeAsync(eventType EventType, handler Handler) error {
-	if err := validateSubscription(eventType, handler); err != nil {
-		return err
-	}
-	asyncHandler := newAsyncHandler(handler, eb.logger)
-	return eb.Subscribe(eventType, asyncHandler)
 }
 
 // SubscribeOnce registers a handler that will be called only once
@@ -138,26 +128,6 @@ func (eb *EventBus) Publish(ctx context.Context, event *Event) error {
 	}
 
 	return errors.Join(errs...)
-}
-
-// PublishAsync publishes an event asynchronously
-// Uses a fresh background context so the goroutine isn't affected by caller context cancellation
-func (eb *EventBus) PublishAsync(ctx context.Context, event *Event) error {
-	if ctx == nil {
-		return fmt.Errorf("publish context is nil")
-	}
-	if event == nil {
-		return fmt.Errorf("event is nil")
-	}
-
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if err := eb.Publish(bgCtx, event); err != nil {
-			eb.logger.Error("Async publish error", "type", event.Type, "error", err)
-		}
-	}()
-	return nil
 }
 
 // Close closes the event bus and cleans up resources
@@ -247,13 +217,6 @@ func isNilHandler(handler Handler) bool {
 }
 
 func sameHandler(left, right Handler) bool {
-	if asyncHandler, ok := left.(*AsyncHandler); ok {
-		left = asyncHandler.handler
-	}
-	if asyncHandler, ok := right.(*AsyncHandler); ok {
-		right = asyncHandler.handler
-	}
-
 	if isNilHandler(left) || isNilHandler(right) {
 		return isNilHandler(left) && isNilHandler(right)
 	}

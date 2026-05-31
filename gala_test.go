@@ -3,6 +3,8 @@ package gala
 import (
 	"context"
 	"errors"
+	"io"
+	nethttp "net/http"
 	"net/url"
 	"reflect"
 	"sync"
@@ -13,7 +15,7 @@ import (
 
 	"github.com/apus-run/gala/registry"
 	"github.com/apus-run/gala/server/grpc"
-	"github.com/apus-run/gala/server/http"
+	galahttp "github.com/apus-run/gala/server/http"
 )
 
 var _ registry.Registry = (*mockRegistry)(nil)
@@ -40,16 +42,20 @@ func (mr *mockRegistry) Register(ctx context.Context, ins *registry.ServiceInsta
 }
 
 func (mr *mockRegistry) Deregister(ctx context.Context, ins *registry.ServiceInstance) error {
+	mr.mux.Lock()
+	defer mr.mux.Unlock()
+
 	if mr.service[ins.ID] == nil {
 		return errors.New("deregister service not found")
 	}
-	mr.mux.Lock()
-	defer mr.mux.Unlock()
 	delete(mr.service, ins.ID)
 	return nil
 }
 
 func (mr *mockRegistry) ListServices(ctx context.Context, name string) ([]registry.ServiceInstance, error) {
+	mr.mux.Lock()
+	defer mr.mux.Unlock()
+
 	res := make([]registry.ServiceInstance, 0, len(mr.service))
 	for _, v := range mr.service {
 		if v.Name == name {
@@ -74,7 +80,7 @@ func (mr *mockRegistry) Subscribe(serviceName string) <-chan registry.Event {
 }
 
 func TestApp(t *testing.T) {
-	hs := http.NewServer()
+	hs := galahttp.NewServer()
 	gs := grpc.NewServer()
 	app := New(
 		WithName("van"),
@@ -96,7 +102,7 @@ func TestApp(t *testing.T) {
 			t.Log("AfterStop...")
 			return nil
 		}),
-		WithRegistry(&mockRegistry{service: make(map[string]*registry.ServiceInstance)}),
+		WithRegistry(newMockRegistry()),
 	)
 	time.AfterFunc(5*time.Second, func() {
 		_ = app.Stop()
@@ -109,7 +115,7 @@ func TestApp(t *testing.T) {
 func TestApp_ID(t *testing.T) {
 	v := "123"
 	o := New(WithID(v))
-	if !reflect.DeepEqual(v, o.ID) {
+	if !reflect.DeepEqual(v, o.ID()) {
 		t.Fatalf("o.ID():%s is not equal to v:%s", o.ID(), v)
 	}
 }
@@ -330,17 +336,58 @@ func Test_App_Service(t *testing.T) {
 		panic("panic error")
 	})
 
-	srv := http.NewServer(
-		http.WithAddress(":9000"),
-		http.WithHandler(e),
+	srv := galahttp.NewServer(
+		galahttp.WithAddress(":0"),
+		galahttp.WithHandler(e),
 	)
+	endpoint, err := srv.Endpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := New(
 		WithName("gin-http"),
 		WithServers(srv),
 	)
 
-	if err := service.Run(); err != nil {
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- service.Run()
+	}()
+	t.Cleanup(func() {
+		_ = service.Stop()
+	})
+
+	client := &nethttp.Client{Timeout: time.Second}
+	var resp *nethttp.Response
+	for deadline := time.Now().Add(time.Second); ; {
+		resp, err = client.Get(endpoint.String() + "/hello")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if got, want := string(body), "hello world"; got != want {
+		t.Fatalf("GET /hello body = %q, want %q", got, want)
+	}
 
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("service did not stop")
+	}
 }

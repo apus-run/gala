@@ -31,10 +31,7 @@ type Option func(u *websocket.Upgrader)
 
 func DefaultUpgrader() *websocket.Upgrader {
 	return &websocket.Upgrader{
-		// 默认支持跨域
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
+		HandshakeTimeout: 10 * time.Second,
 	}
 }
 

@@ -3,6 +3,7 @@ package sqlx
 import (
 	"context"
 	"database/sql"
+	"io"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -17,7 +18,7 @@ type Provider interface {
 	TX(ctx context.Context, fn func(ctx context.Context, tx *Tx) error) error
 
 	// Close 关闭数据库连接
-	Close() error
+	io.Closer
 }
 
 // Modeler provides information of table.

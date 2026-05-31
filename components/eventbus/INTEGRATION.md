@@ -90,8 +90,9 @@ func (h *EmailProcessorTaskHandler) publishEmailReceivedEvent(ctx context.Contex
         TenantID:  h.getTenantID(email.TenantID),
     }).WithSource("email-processor")
 
-    // Publish asynchronously to not block email processing
-    h.eventBus.PublishAsync(ctx, event)
+    if err := h.eventBus.Publish(ctx, event); err != nil {
+        slog.Error("Failed to publish email received event", "error", err)
+    }
 }
 
 func (h *EmailProcessorTaskHandler) publishEmailFailedEvent(ctx context.Context, emailID, accountID, mailbox string, err error) {
@@ -106,7 +107,9 @@ func (h *EmailProcessorTaskHandler) publishEmailFailedEvent(ctx context.Context,
         "error":      err.Error(),
     }).WithSource("email-processor").WithPriority(5)
 
-    h.eventBus.PublishAsync(ctx, event)
+    if err := h.eventBus.Publish(ctx, event); err != nil {
+        slog.Error("Failed to publish email failed event", "error", err)
+    }
 }
 
 func (h *EmailProcessorTaskHandler) getFirstAddress(addrs []email.EmailAddress) string {
@@ -176,8 +179,7 @@ func RegisterEmailEventHandlers(bus eventbus.PubSub, logger *slog.Logger) {
     }))
 
     // Update email statistics
-    bus.SubscribeAsync(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
-        // Update metrics asynchronously
+    bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
         logger.Debug("Updating email statistics")
         return nil
     }))
@@ -273,7 +275,7 @@ IMAP Client → Email Processor → EventBus
 2. **Scalability**: Easy to add new handlers without modifying email processor
 3. **Testability**: Can test each handler independently
 4. **Flexibility**: Enable/disable handlers at runtime
-5. **Async Processing**: Non-critical tasks (logging, stats) run asynchronously
+5. **Explicit Async Processing**: Callers can move non-critical work to a managed worker pool when needed
 
 ## Testing
 
