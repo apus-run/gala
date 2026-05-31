@@ -6,13 +6,15 @@ import (
 	"time"
 )
 
+type EventType string
+
 // Event represents a generic event that can carry any type of data
 type Event struct {
 	// ID is a unique identifier for the event
 	ID string `json:"id"`
 
 	// Type identifies the kind of event (e.g., "email.received", "user.created")
-	Type string `json:"type"`
+	Type EventType `json:"type"`
 
 	// Source identifies where the event originated from
 	Source string `json:"source"`
@@ -31,7 +33,7 @@ type Event struct {
 }
 
 // NewEvent creates a new event with the given type and data
-func NewEvent(eventType string, data any) *Event {
+func NewEvent(eventType EventType, data any) *Event {
 	return &Event{
 		ID:        generateEventID(),
 		Type:      eventType,

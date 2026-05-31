@@ -1,15 +1,34 @@
 package eventbus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(data)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
+}
 
 func TestPublishContinuesAfterHandlerError(t *testing.T) {
 	bus := newTestEventBus()
@@ -169,6 +188,61 @@ func TestSubscribeAsyncRejectsNilHandler(t *testing.T) {
 	}
 }
 
+func TestUnsubscribeAsync(t *testing.T) {
+	bus := newTestEventBus()
+	called := make(chan struct{}, 1)
+	handler := EventHandlerFunc(func(context.Context, *Event) error {
+		called <- struct{}{}
+		return nil
+	})
+
+	if err := bus.SubscribeAsync("test", handler); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Unsubscribe("test", handler); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Publish(context.Background(), NewEvent("test", nil)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+		t.Fatal("unsubscribed async handler was called")
+	case <-time.After(10 * time.Millisecond):
+	}
+}
+
+func TestSubscribeAsyncLogsHandlerError(t *testing.T) {
+	var logs synchronizedBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	bus := NewEventBus(logger)
+	done := make(chan struct{})
+
+	if err := bus.SubscribeAsync("test", EventHandlerFunc(func(context.Context, *Event) error {
+		defer close(done)
+		return errors.New("async failure")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Publish(context.Background(), NewEvent("test", nil)); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async handler")
+	}
+
+	for range 100 {
+		if strings.Contains(logs.String(), "Async handler error") {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("async handler error was not logged: %s", logs.String())
+}
+
 func TestManagerDoesNotCreateBusAfterClose(t *testing.T) {
 	manager := NewManager(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := manager.Close(); err != nil {
@@ -184,7 +258,20 @@ func TestManagerDoesNotCreateBusAfterClose(t *testing.T) {
 	}
 }
 
-func newTestEventBus() EventBus {
+func TestManagerStatsUseGlobalBusKey(t *testing.T) {
+	manager := NewManager(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer manager.Close()
+
+	stats := manager.GetStats()
+	if _, ok := stats["global_bus"]; !ok {
+		t.Fatal("GetStats() is missing global_bus")
+	}
+	if _, ok := stats["eb_bus"]; ok {
+		t.Fatal("GetStats() contains unexpected eb_bus")
+	}
+}
+
+func newTestEventBus() PubSub {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return NewEventBus(logger)
 }

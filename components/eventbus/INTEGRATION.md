@@ -30,10 +30,10 @@ Modify the email processor to publish events:
 type EmailProcessorTaskHandler struct {
     *BaseTaskHandler
     emailRepo *email.Repository
-    eventBus  eventbus.EventBus  // Add this field
+    eventBus  eventbus.PubSub  // Add this field
 }
 
-func NewEmailProcessorTaskHandler(emailRepo email.Repository, eventBus eventbus.EventBus) task.TaskHandler {
+func NewEmailProcessorTaskHandler(emailRepo email.Repository, eventBus eventbus.PubSub) task.TaskHandler {
     // ... existing code ...
     return &EmailProcessorTaskHandler{
         BaseTaskHandler: NewBaseTaskHandlerWithMetadata(...),
@@ -139,7 +139,7 @@ import (
 )
 
 // RegisterEmailEventHandlers registers all email-related event handlers
-func RegisterEmailEventHandlers(bus eventbus.EventBus, logger *slog.Logger) {
+func RegisterEmailEventHandlers(bus eventbus.PubSub, logger *slog.Logger) {
     // Log all received emails
     bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
         var data eventbus.EmailReceivedEvent

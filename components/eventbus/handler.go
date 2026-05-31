@@ -2,6 +2,7 @@ package eventbus
 
 import (
 	"context"
+	"log/slog"
 )
 
 // EventHandler is a function that handles an event
@@ -23,17 +24,27 @@ type Handler interface {
 // AsyncHandler wraps a handler to execute asynchronously
 type AsyncHandler struct {
 	handler Handler
+	logger  *slog.Logger
 }
 
 // NewAsyncHandler creates a new async handler
 func NewAsyncHandler(handler Handler) *AsyncHandler {
-	return &AsyncHandler{handler: handler}
+	return newAsyncHandler(handler, slog.Default())
+}
+
+func newAsyncHandler(handler Handler, logger *slog.Logger) *AsyncHandler {
+	return &AsyncHandler{
+		handler: handler,
+		logger:  logger,
+	}
 }
 
 // Handle executes the handler asynchronously
 func (h *AsyncHandler) Handle(ctx context.Context, event *Event) error {
 	go func() {
-		_ = h.handler.Handle(ctx, event)
+		if err := h.handler.Handle(ctx, event); err != nil {
+			h.logger.Error("Async handler error", "error", err)
+		}
 	}()
 	return nil
 }

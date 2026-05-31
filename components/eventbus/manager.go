@@ -10,8 +10,8 @@ import (
 // Manager manages multiple event buses and provides a global interface
 type Manager struct {
 	mu        sync.RWMutex
-	buses     map[string]EventBus
-	global    EventBus
+	buses     map[string]PubSub
+	global    PubSub
 	logger    *slog.Logger
 	busLogger *slog.Logger
 	closed    bool
@@ -23,7 +23,7 @@ func NewManager(logger *slog.Logger) *Manager {
 		logger = slog.Default()
 	}
 	return &Manager{
-		buses:     make(map[string]EventBus),
+		buses:     make(map[string]PubSub),
 		global:    NewEventBus(logger),
 		logger:    logger.With("module", "eventbus/manager"),
 		busLogger: logger,
@@ -31,7 +31,7 @@ func NewManager(logger *slog.Logger) *Manager {
 }
 
 // GetBus returns an event bus by name, creates it if it doesn't exist
-func (m *Manager) GetBus(name string) EventBus {
+func (m *Manager) GetBus(name string) PubSub {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -51,7 +51,7 @@ func (m *Manager) GetBus(name string) EventBus {
 }
 
 // Global returns the global event bus
-func (m *Manager) Global() EventBus {
+func (m *Manager) Global() PubSub {
 	return m.global
 }
 
@@ -67,13 +67,13 @@ func (m *Manager) PublishGlobal(ctx context.Context, event *Event) error {
 }
 
 // Subscribe subscribes to events on a specific bus
-func (m *Manager) Subscribe(busName, eventType string, handler Handler) error {
+func (m *Manager) Subscribe(busName string, eventType EventType, handler Handler) error {
 	bus := m.GetBus(busName)
 	return bus.Subscribe(eventType, handler)
 }
 
 // SubscribeGlobal subscribes to events on the global bus
-func (m *Manager) SubscribeGlobal(eventType string, handler Handler) error {
+func (m *Manager) SubscribeGlobal(eventType EventType, handler Handler) error {
 	return m.global.Subscribe(eventType, handler)
 }
 
@@ -96,7 +96,7 @@ func (m *Manager) Close() error {
 		m.logger.Error("Error closing global bus", "error", err)
 	}
 
-	m.buses = make(map[string]EventBus)
+	m.buses = make(map[string]PubSub)
 	m.closed = true
 	m.logger.Info("Event bus manager closed")
 
@@ -113,17 +113,17 @@ func (m *Manager) GetStats() map[string]interface{} {
 
 	busStats := make(map[string]interface{})
 	for name, bus := range m.buses {
-		if defaultBus, ok := bus.(*DefaultEventBus); ok {
+		if eventBus, ok := bus.(*EventBus); ok {
 			busStats[name] = map[string]interface{}{
-				"event_types": defaultBus.GetEventTypes(),
+				"event_types": eventBus.GetEventTypes(),
 			}
 		}
 	}
 	stats["buses"] = busStats
 
-	if defaultBus, ok := m.global.(*DefaultEventBus); ok {
+	if eventBus, ok := m.global.(*EventBus); ok {
 		stats["global_bus"] = map[string]interface{}{
-			"event_types": defaultBus.GetEventTypes(),
+			"event_types": eventBus.GetEventTypes(),
 		}
 	}
 

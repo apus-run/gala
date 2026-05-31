@@ -138,7 +138,7 @@ func (e *PanicError) Error() string {
 // TimeoutError represents a timeout during event handling
 type TimeoutError struct {
 	EventID   string
-	EventType string
+	EventType EventType
 	Timeout   time.Duration
 }
 

@@ -10,53 +10,31 @@ import (
 	"time"
 )
 
-// EventBus manages event subscriptions and publishing
-type EventBus interface {
-	// Subscribe registers a handler for a specific event type
-	Subscribe(eventType string, handler Handler) error
+var _ PubSub = (*EventBus)(nil)
 
-	// SubscribeAsync registers an async handler for a specific event type
-	SubscribeAsync(eventType string, handler Handler) error
-
-	// SubscribeOnce registers a handler that will be called only once
-	SubscribeOnce(eventType string, handler Handler) error
-
-	// Unsubscribe removes a handler for a specific event type
-	Unsubscribe(eventType string, handler Handler) error
-
-	// Publish publishes an event to all subscribed handlers
-	Publish(ctx context.Context, event *Event) error
-
-	// PublishAsync publishes an event asynchronously
-	PublishAsync(ctx context.Context, event *Event) error
-
-	// Close closes the event bus and cleans up resources
-	Close() error
-}
-
-// DefaultEventBus is the default implementation of EventBus
-type DefaultEventBus struct {
+// EventBus is the default in-memory implementation of PubSub.
+type EventBus struct {
 	mu           sync.RWMutex
-	handlers     map[string][]Handler
-	onceHandlers map[string][]Handler
+	handlers     map[EventType][]Handler
+	onceHandlers map[EventType][]Handler
 	logger       *slog.Logger
 	closed       bool
 }
 
 // NewEventBus creates a new event bus
-func NewEventBus(logger *slog.Logger) EventBus {
+func NewEventBus(logger *slog.Logger) PubSub {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DefaultEventBus{
-		handlers:     make(map[string][]Handler),
-		onceHandlers: make(map[string][]Handler),
+	return &EventBus{
+		handlers:     make(map[EventType][]Handler),
+		onceHandlers: make(map[EventType][]Handler),
 		logger:       logger.With("module", "eventbus"),
 	}
 }
 
 // Subscribe registers a handler for a specific event type
-func (eb *DefaultEventBus) Subscribe(eventType string, handler Handler) error {
+func (eb *EventBus) Subscribe(eventType EventType, handler Handler) error {
 	if err := validateSubscription(eventType, handler); err != nil {
 		return err
 	}
@@ -73,16 +51,16 @@ func (eb *DefaultEventBus) Subscribe(eventType string, handler Handler) error {
 }
 
 // SubscribeAsync registers an async handler for a specific event type
-func (eb *DefaultEventBus) SubscribeAsync(eventType string, handler Handler) error {
+func (eb *EventBus) SubscribeAsync(eventType EventType, handler Handler) error {
 	if err := validateSubscription(eventType, handler); err != nil {
 		return err
 	}
-	asyncHandler := NewAsyncHandler(handler)
+	asyncHandler := newAsyncHandler(handler, eb.logger)
 	return eb.Subscribe(eventType, asyncHandler)
 }
 
 // SubscribeOnce registers a handler that will be called only once
-func (eb *DefaultEventBus) SubscribeOnce(eventType string, handler Handler) error {
+func (eb *EventBus) SubscribeOnce(eventType EventType, handler Handler) error {
 	if err := validateSubscription(eventType, handler); err != nil {
 		return err
 	}
@@ -99,7 +77,7 @@ func (eb *DefaultEventBus) SubscribeOnce(eventType string, handler Handler) erro
 }
 
 // Unsubscribe removes a handler for a specific event type
-func (eb *DefaultEventBus) Unsubscribe(eventType string, handler Handler) error {
+func (eb *EventBus) Unsubscribe(eventType EventType, handler Handler) error {
 	if err := validateSubscription(eventType, handler); err != nil {
 		return err
 	}
@@ -118,7 +96,7 @@ func (eb *DefaultEventBus) Unsubscribe(eventType string, handler Handler) error 
 }
 
 // Publish publishes an event to all subscribed handlers
-func (eb *DefaultEventBus) Publish(ctx context.Context, event *Event) error {
+func (eb *EventBus) Publish(ctx context.Context, event *Event) error {
 	if ctx == nil {
 		return fmt.Errorf("publish context is nil")
 	}
@@ -164,7 +142,7 @@ func (eb *DefaultEventBus) Publish(ctx context.Context, event *Event) error {
 
 // PublishAsync publishes an event asynchronously
 // Uses a fresh background context so the goroutine isn't affected by caller context cancellation
-func (eb *DefaultEventBus) PublishAsync(ctx context.Context, event *Event) error {
+func (eb *EventBus) PublishAsync(ctx context.Context, event *Event) error {
 	if ctx == nil {
 		return fmt.Errorf("publish context is nil")
 	}
@@ -183,7 +161,7 @@ func (eb *DefaultEventBus) PublishAsync(ctx context.Context, event *Event) error
 }
 
 // Close closes the event bus and cleans up resources
-func (eb *DefaultEventBus) Close() error {
+func (eb *EventBus) Close() error {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
@@ -192,15 +170,15 @@ func (eb *DefaultEventBus) Close() error {
 	}
 
 	eb.closed = true
-	eb.handlers = make(map[string][]Handler)
-	eb.onceHandlers = make(map[string][]Handler)
+	eb.handlers = make(map[EventType][]Handler)
+	eb.onceHandlers = make(map[EventType][]Handler)
 	eb.logger.Info("Event bus closed")
 
 	return nil
 }
 
 // GetSubscriberCount returns the number of subscribers for an event type
-func (eb *DefaultEventBus) GetSubscriberCount(eventType string) int {
+func (eb *EventBus) GetSubscriberCount(eventType EventType) int {
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
 
@@ -208,11 +186,11 @@ func (eb *DefaultEventBus) GetSubscriberCount(eventType string) int {
 }
 
 // GetEventTypes returns all event types that have subscribers
-func (eb *DefaultEventBus) GetEventTypes() []string {
+func (eb *EventBus) GetEventTypes() []string {
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
 
-	types := make(map[string]struct{})
+	types := make(map[EventType]struct{})
 	for eventType := range eb.handlers {
 		types[eventType] = struct{}{}
 	}
@@ -222,13 +200,13 @@ func (eb *DefaultEventBus) GetEventTypes() []string {
 
 	result := make([]string, 0, len(types))
 	for eventType := range types {
-		result = append(result, eventType)
+		result = append(result, string(eventType))
 	}
 
 	return result
 }
 
-func validateSubscription(eventType string, handler Handler) error {
+func validateSubscription(eventType EventType, handler Handler) error {
 	if eventType == "" {
 		return fmt.Errorf("event type is empty")
 	}
@@ -238,7 +216,7 @@ func validateSubscription(eventType string, handler Handler) error {
 	return nil
 }
 
-func removeHandler(handlersByType map[string][]Handler, eventType string, handler Handler) bool {
+func removeHandler(handlersByType map[EventType][]Handler, eventType EventType, handler Handler) bool {
 	handlers := handlersByType[eventType]
 	for i, candidate := range handlers {
 		if sameHandler(candidate, handler) {
@@ -269,6 +247,13 @@ func isNilHandler(handler Handler) bool {
 }
 
 func sameHandler(left, right Handler) bool {
+	if asyncHandler, ok := left.(*AsyncHandler); ok {
+		left = asyncHandler.handler
+	}
+	if asyncHandler, ok := right.(*AsyncHandler); ok {
+		right = asyncHandler.handler
+	}
+
 	if isNilHandler(left) || isNilHandler(right) {
 		return isNilHandler(left) && isNilHandler(right)
 	}
