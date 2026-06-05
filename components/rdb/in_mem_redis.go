@@ -27,19 +27,22 @@ func newMiniRedis(t tester) (Cmdable, error) {
 	if err := m.Start(); err != nil {
 		return nil, errors.WithMessage(err, "start miniredis")
 	}
+	t.Cleanup(m.Close)
 
 	opts := &redis.Options{Addr: m.Addr()}
-	p, err := NewClient(opts)
+	p, err := NewRDBFromConfig(opts)
 	if err != nil {
 		return nil, errors.WithMessage(err, "new redis client")
 	}
-
-	t.Cleanup(m.Close)
 
 	cli, ok := Unwrap(p)
 	if !ok {
 		return nil, errors.New("unwrap provider failed")
 	}
+	t.Cleanup(func() {
+		_ = Close(cli)
+	})
+
 	// cli := p.DB(context.Background())
 	return cli, nil
 }

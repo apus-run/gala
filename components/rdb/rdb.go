@@ -2,15 +2,34 @@ package rdb
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 func NewClient(opts *Options) (Provider, error) {
+	return NewRDBFromConfig(opts)
+}
+
+func NewRDB(url string) (Provider, error) {
+	opts, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse redis url: %w", err)
+	}
+	return NewRDBFromConfig(opts)
+}
+
+func NewRDBFromConfig(opts *Options) (Provider, error) {
+	if opts == nil {
+		return nil, ErrNilOptions
+	}
 	cli := redis.NewClient(opts)
 	return &provider{cli: cli}, nil
+}
+
+func NewRDBFromClient(cli *Client) Provider {
+	return &provider{cli: cli}
 }
 
 func Unwrap(cli Provider) (*Client, bool) {
@@ -26,7 +45,7 @@ func Close(rdb *Client) error {
 	}
 
 	err := rdb.Close()
-	if err != nil && errors.Is(err, redis.ErrClosed) {
+	if err != nil && !IsClosedError(err) {
 		return err
 	}
 
@@ -35,17 +54,25 @@ func Close(rdb *Client) error {
 
 func ConnectRDB(opts *Options) (Provider, error) {
 	// 创建客户端
-	cli := redis.NewClient(opts)
+	rdb, err := NewRDBFromConfig(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create redis client: %w", err)
+	}
 
 	// 创建超时上下文
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	if err := cli.Ping(ctx).Err(); err != nil {
-		_ = Close(cli)
-		return nil, err
+	client, ok := Unwrap(rdb)
+	if !ok {
+		return nil, fmt.Errorf("failed to unwrap redis client")
 	}
-	return &provider{cli: cli}, nil
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = Close(client)
+		return nil, fmt.Errorf("failed to ping redis: %w", err)
+	}
+	return rdb, nil
 }
 
 // NewScript returns a new Script instance.
