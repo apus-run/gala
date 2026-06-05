@@ -23,7 +23,7 @@ type Token interface {
 // Authenticator defines methods used for token processing.
 type Authenticator interface {
 	// Sign is used to generate a token.
-	Sign(ctx context.Context, userID string) (Token, error)
+	Sign(ctx context.Context) (Token, error)
 
 	// Destroy is used to destroy a token.
 	Destroy(ctx context.Context, accessToken string) error

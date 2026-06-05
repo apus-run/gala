@@ -10,6 +10,8 @@ import (
 	rdb "github.com/apus-run/gala/components/authn/store"
 )
 
+var _ Authenticator = (*JwtAuth)(nil)
+
 var (
 	ErrTokenInvalid           = errors.New("token is invalid")
 	ErrUnSupportSigningMethod = errors.New("wrong signing method")
@@ -53,6 +55,9 @@ func (j *JwtAuth) Destroy(ctx context.Context, refreshToken string) error {
 	if err != nil {
 		return err
 	}
+	if claims.ExpiresAt == nil {
+		return ErrTokenInvalid
+	}
 
 	// If storage is set, put the unexpired token in
 	store := func(store rdb.Storer) error {
@@ -89,10 +94,18 @@ func (j *JwtAuth) ParseClaims(ctx context.Context, accessToken string) (*jwt.Reg
 		return nil, err
 	}
 
-	return token.Claims.(*jwt.RegisteredClaims), nil
+	claims, ok := token.Claims.(*jwt.RegisteredClaims)
+	if !ok {
+		return nil, ErrTokenInvalid
+	}
+	return claims, nil
 }
 
-func (j *JwtAuth) ParseToken(ctx context.Context, accessToken string) (token *jwt.Token, err error) {
+func (j *JwtAuth) ParseToken(_ context.Context, accessToken string) (token *jwt.Token, err error) {
+	if accessToken == "" {
+		return nil, ErrTokenInvalid
+	}
+
 	if j.claims != nil {
 		token, err = jwt.ParseWithClaims(accessToken, j.claims(), j.keyFunc)
 	} else {
@@ -100,7 +113,7 @@ func (j *JwtAuth) ParseToken(ctx context.Context, accessToken string) (token *jw
 	}
 
 	// 过期的, 伪造的, 都可以认为是无效token
-	if err != nil || !token.Valid {
+	if err != nil || token == nil || !token.Valid {
 		return nil, ErrTokenInvalid
 	}
 
@@ -111,7 +124,7 @@ func (j *JwtAuth) ParseToken(ctx context.Context, accessToken string) (token *jw
 	return token, nil
 }
 
-func (j *JwtAuth) GenerateToken(ctx context.Context) (string, error) {
+func (j *JwtAuth) GenerateToken(_ context.Context) (string, error) {
 	token := jwt.NewWithClaims(j.signingMethod, j.claims())
 	if j.tokenHeader != nil {
 		for k, v := range j.tokenHeader {
