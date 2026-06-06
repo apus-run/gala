@@ -4,13 +4,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type ClaimsFunc func() jwt.Claims
+
 // Option is jwt option.
 type Option func(*Options)
 
 // Options is jwt options.
 type Options struct {
 	signingMethod jwt.SigningMethod
-	claims        func() jwt.Claims
+	claims        ClaimsFunc
 	tokenHeader   map[string]any
 }
 
@@ -39,7 +41,7 @@ func WithSigningMethod(method jwt.SigningMethod) Option {
 // WithClaims with customer claim
 // If you use it in Server, f needs to return a new jwt.Claims object each time to avoid concurrent write problems
 // If you use it in Client, f only needs to return a single object to provide performance
-func WithClaims(f func() jwt.Claims) Option {
+func WithClaims(f ClaimsFunc) Option {
 	return func(o *Options) {
 		o.claims = f
 	}

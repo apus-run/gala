@@ -6,7 +6,7 @@ import (
 
 const (
 	// defaultCharset 定义默认的字符集
-	defaultCharset = "abcdefghijklmnopqrstuvwxyz1234567890"
+	defaultCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 	// defaultIDLength 定义生成的唯一标识符长度
 	defaultIDLength = 6
@@ -31,7 +31,7 @@ func (rid ResourceID) New(counter uint64) string {
 	uniqueStr := id.NewCode(
 		counter,
 		id.WithCodeChars([]rune(defaultCharset)),
-		id.WithCodeL(6),
+		id.WithCodeL(defaultIDLength),
 		id.WithCodeSalt(Salt()),
 	)
 	return rid.String() + "-" + uniqueStr
