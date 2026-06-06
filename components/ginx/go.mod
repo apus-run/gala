@@ -5,8 +5,8 @@ go 1.25.0
 replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
-	github.com/apus-run/gala/pkg v0.0.0-20251021010046-b9d7b05283b9
-	github.com/apus-run/gala/pkg/errorsx v0.6.9
+	github.com/apus-run/gala/pkg/errorsx v0.8.1
+	github.com/apus-run/gala/pkg/lang v0.8.1
 	github.com/gavv/httpexpect/v2 v2.17.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -70,7 +70,6 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sanity-io/litter v1.5.5 // indirect
 	github.com/sergi/go-diff v1.0.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

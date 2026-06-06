@@ -4,7 +4,8 @@ go 1.25
 
 require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
-	github.com/apus-run/gala/pkg v0.0.0-20251021010046-b9d7b05283b9
+	github.com/apus-run/gala/pkg/jsonx v0.8.1
+	github.com/apus-run/gala/pkg/lang v0.8.1
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.6.0
@@ -22,13 +23,12 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.1 // indirect
-	github.com/kr/pretty v0.3.1 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/panjf2000/ants/v2 v2.11.3 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sirupsen/logrus v1.4.2 // indirect
 	github.com/tidwall/gjson v1.13.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

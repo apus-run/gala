@@ -5,7 +5,7 @@ go 1.25
 replace github.com/apus-run/gala/pkg/id => ../id
 
 require (
-	github.com/apus-run/gala/pkg/id v0.0.0-00010101000000-000000000000
+	github.com/apus-run/gala/pkg/id v0.8.1
 	github.com/stretchr/testify v1.11.1
 )
 
