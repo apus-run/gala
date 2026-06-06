@@ -44,16 +44,16 @@ func GenerateToken(keyProvider jwt.Keyfunc, opts ...Option) (string, error) {
 }
 
 // ParseToken 解析jwt token
-func ParseToken(jwtToken string, keyFunc jwt.Keyfunc, opts ...Option) (token *jwt.Token, err error) {
+func ParseToken(tokenStr string, keyFunc jwt.Keyfunc, opts ...Option) (token *jwt.Token, err error) {
 	o := Apply(opts...)
 	if keyFunc == nil {
 		return nil, ErrMissingKeyFunc
 	}
 
 	if o.claims != nil {
-		token, err = jwt.ParseWithClaims(jwtToken, o.claims(), keyFunc)
+		token, err = jwt.ParseWithClaims(tokenStr, o.claims(), keyFunc)
 	} else {
-		token, err = jwt.Parse(jwtToken, keyFunc)
+		token, err = jwt.Parse(tokenStr, keyFunc)
 	}
 
 	// 过期的, 伪造的, 都可以认为是无效token

@@ -3,6 +3,7 @@ package jwtx
 import (
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
@@ -218,6 +219,149 @@ func TestParseToken(t *testing.T) {
 
 			assert.Equal(t, tc.wantErr, err)
 
+			tc.after(t)
+		})
+	}
+}
+
+func TestValidateToken(t *testing.T) {
+	testKey := "testKey"
+	tProvider := func(*jwt.Token) (any, error) {
+		return []byte(testKey), nil
+	}
+	now := time.Now()
+
+	testCases := []struct {
+		// 名字
+		name string
+
+		// 要提前准备数据
+		before func(t *testing.T)
+		// 验证并且删除数据
+		after func(t *testing.T)
+
+		// 预期入参
+		token         func() string
+		tokenProvider jwt.Keyfunc
+		signingMethod jwt.SigningMethod
+		claims        func() jwt.Claims
+		key           string
+
+		// 预期响应
+		want    any
+		wantErr error
+	}{
+		{
+			name:   "成功生成并验证 access token",
+			before: func(t *testing.T) {},
+			after:  func(t *testing.T) {},
+			token: func() string {
+				tokenStr, err := jwt.
+					NewWithClaims(jwt.SigningMethodHS256, &CustomClaims{
+						UserID:    123,
+						UserAgent: "test-agent",
+						RegisteredClaims: jwt.RegisteredClaims{
+							Subject:   "access",
+							ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
+							IssuedAt:  jwt.NewNumericDate(now),
+							NotBefore: jwt.NewNumericDate(now),
+						},
+					}).
+					SignedString([]byte(testKey))
+				assert.NoError(t, err)
+				return tokenStr
+			},
+			tokenProvider: tProvider,
+			signingMethod: jwt.SigningMethodHS256,
+			claims: func() jwt.Claims {
+				return &CustomClaims{
+					UserID:    123,
+					UserAgent: "test-agent",
+					RegisteredClaims: jwt.RegisteredClaims{
+						Subject:   "access",
+						ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
+						IssuedAt:  jwt.NewNumericDate(now),
+						NotBefore: jwt.NewNumericDate(now),
+					},
+				}
+			},
+			want:    "access",
+			wantErr: nil,
+			key:     testKey,
+		},
+		{
+			name:   "成功生成并验证 refresh token",
+			before: func(t *testing.T) {},
+			after:  func(t *testing.T) {},
+			token: func() string {
+				tokenStr, err := jwt.
+					NewWithClaims(jwt.SigningMethodHS256, &CustomClaims{
+						UserID:    123,
+						UserAgent: "test-agent",
+						RegisteredClaims: jwt.RegisteredClaims{
+							Subject:   "refresh",
+							ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
+							IssuedAt:  jwt.NewNumericDate(now),
+							NotBefore: jwt.NewNumericDate(now),
+						},
+					}).
+					SignedString([]byte(testKey))
+				assert.NoError(t, err)
+				return tokenStr
+			},
+			tokenProvider: tProvider,
+			signingMethod: jwt.SigningMethodHS256,
+			claims: func() jwt.Claims {
+				return &CustomClaims{
+					UserID:    123,
+					UserAgent: "test-agent",
+					RegisteredClaims: jwt.RegisteredClaims{
+						Subject:   "refresh",
+						ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
+						IssuedAt:  jwt.NewNumericDate(now),
+						NotBefore: jwt.NewNumericDate(now),
+					},
+				}
+			},
+			want:    "refresh",
+			wantErr: nil,
+			key:     testKey,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.before(t)
+			tokenStr, err := GenerateToken(
+				tc.tokenProvider,
+				WithClaims(tc.claims),
+				WithSigningMethod(tc.signingMethod),
+			)
+			assert.Equal(t, tc.wantErr, err)
+			assert.Equal(t, tc.token(), tokenStr)
+			if err != nil {
+				return
+			}
+
+			token, err := ParseToken(
+				tokenStr,
+				tc.tokenProvider,
+				WithClaims(func() jwt.Claims {
+					return &CustomClaims{}
+				}),
+				WithSigningMethod(tc.signingMethod),
+			)
+			assert.Equal(t, tc.wantErr, err)
+			if err != nil {
+				return
+			}
+
+			claims, ok := token.Claims.(*CustomClaims)
+			assert.True(t, ok)
+			assert.Equal(t, uint64(123), claims.UserID)
+			assert.Equal(t, "test-agent", claims.UserAgent)
+			assert.Equal(t, tc.want, claims.Subject)
+			assert.True(t, token.Valid)
 			tc.after(t)
 		})
 	}
