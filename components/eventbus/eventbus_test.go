@@ -79,13 +79,11 @@ func TestSubscribeOnceConcurrent(t *testing.T) {
 
 	var wait sync.WaitGroup
 	for range 32 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			if err := bus.Publish(context.Background(), NewEvent("test", nil)); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wait.Wait()
 
@@ -102,10 +100,11 @@ func TestUnsubscribe(t *testing.T) {
 		return nil
 	})
 
-	if err := bus.Subscribe("test", handler); err != nil {
+	cancel, err := bus.SubscribeWithCancel("test", handler)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := bus.Unsubscribe("test", handler); err != nil {
+	if err := cancel(); err != nil {
 		t.Fatal(err)
 	}
 	if err := bus.Publish(context.Background(), NewEvent("test", nil)); err != nil {
@@ -123,10 +122,11 @@ func TestUnsubscribeOnce(t *testing.T) {
 		return nil
 	})
 
-	if err := bus.SubscribeOnce("test", handler); err != nil {
+	cancel, err := bus.SubscribeOnceWithCancel("test", handler)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := bus.Unsubscribe("test", handler); err != nil {
+	if err := cancel(); err != nil {
 		t.Fatal(err)
 	}
 	if err := bus.Publish(context.Background(), NewEvent("test", nil)); err != nil {

@@ -87,15 +87,18 @@ manager.SubscribeGlobal("user.created", eventbus.EventHandlerFunc(func(ctx conte
 }))
 
 // Publish to global bus
-event := eventbus.NewEvent("user.created", eventbus.UserCreatedEvent{
-    UserID:   123,
-    Username: "john_doe",
-    Email:    "john@example.com",
+event := eventbus.NewEvent("user.created", map[string]any{
+	"user_id":  123,
+	"username": "john_doe",
+	"email":    "john@example.com",
 })
 manager.PublishGlobal(ctx, event)
 
 // Use named buses for isolation
-emailBus := manager.GetBus("email")
+emailBus, err := manager.GetBus("email")
+if err != nil {
+    return err
+}
 emailBus.Subscribe("email.received", handler)
 ```
 
@@ -172,39 +175,10 @@ bus.SubscribeOnce("system.started", eventbus.EventHandlerFunc(func(ctx context.C
 }))
 ```
 
-## Predefined Event Types
+## Event Types
 
-The package includes common event types:
-
-```go
-// Email events
-eventbus.EventEmailReceived
-eventbus.EventEmailSent
-eventbus.EventEmailDeleted
-eventbus.EventEmailRead
-eventbus.EventEmailFlagged
-eventbus.EventEmailProcessed
-eventbus.EventEmailFailed
-
-// User events
-eventbus.EventUserCreated
-eventbus.EventUserUpdated
-eventbus.EventUserDeleted
-eventbus.EventUserLoggedIn
-eventbus.EventUserLoggedOut
-
-// Task events
-eventbus.EventTaskCreated
-eventbus.EventTaskStarted
-eventbus.EventTaskCompleted
-eventbus.EventTaskFailed
-eventbus.EventTaskCancelled
-
-// System events
-eventbus.EventSystemStarted
-eventbus.EventSystemStopped
-eventbus.EventSystemError
-```
+Event types and payload DTOs belong to the application or domain package. The
+generic eventbus intentionally does not define email, user, or task events.
 
 ## Event Metadata
 
@@ -245,7 +219,7 @@ type EmailReceivedData struct {
 bus := eventbus.NewEventBus(logger)
 
 // Subscribe to email events
-bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+bus.Subscribe("email.received", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
     var data EmailReceivedData
     if err := event.GetData(&data); err != nil {
         return err
@@ -255,7 +229,7 @@ bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx co
     slog.Info("Processing email", "from", data.From, "subject", data.Subject)
 
     // Trigger another event
-    processedEvent := eventbus.NewEvent(eventbus.EventEmailProcessed, map[string]interface{}{
+    processedEvent := eventbus.NewEvent("email.processed", map[string]any{
         "email_id": data.EmailID,
         "success": true,
     })
@@ -263,7 +237,7 @@ bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx co
 }))
 
 // Publish email received event
-emailEvent := eventbus.NewEvent(eventbus.EventEmailReceived, EmailReceivedData{
+emailEvent := eventbus.NewEvent("email.received", EmailReceivedData{
     EmailID: "123",
     From:    "sender@example.com",
     To:      "receiver@example.com",

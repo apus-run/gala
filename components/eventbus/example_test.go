@@ -9,6 +9,25 @@ import (
 	"github.com/apus-run/gala/components/eventbus"
 )
 
+const (
+	eventEmailReceived  eventbus.EventType = "email.received"
+	eventEmailSent      eventbus.EventType = "email.sent"
+	eventEmailDeleted   eventbus.EventType = "email.deleted"
+	eventEmailRead      eventbus.EventType = "email.read"
+	eventEmailFlagged   eventbus.EventType = "email.flagged"
+	eventEmailProcessed eventbus.EventType = "email.processed"
+	eventEmailFailed    eventbus.EventType = "email.failed"
+)
+
+type emailReceivedEvent struct {
+	EmailID   string `json:"email_id"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Subject   string `json:"subject"`
+	Mailbox   string `json:"mailbox"`
+	AccountID string `json:"account_id"`
+}
+
 // Example_basic demonstrates basic event bus usage
 func Example_basic() {
 	// Create event bus
@@ -23,7 +42,7 @@ func Example_basic() {
 
 	// Publish event
 	ctx := context.Background()
-	event := eventbus.NewEvent("user.created", map[string]interface{}{
+	event := eventbus.NewEvent("user.created", map[string]any{
 		"username": "john_doe",
 		"email":    "john@example.com",
 	})
@@ -37,8 +56,8 @@ func Example_typedEvents() {
 	defer bus.Close()
 
 	// Subscribe with typed data
-	bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
-		var emailData eventbus.EmailReceivedEvent
+	bus.Subscribe(eventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+		var emailData emailReceivedEvent
 		if err := event.GetData(&emailData); err != nil {
 			return err
 		}
@@ -49,7 +68,7 @@ func Example_typedEvents() {
 
 	// Publish typed event
 	ctx := context.Background()
-	emailEvent := eventbus.NewEvent(eventbus.EventEmailReceived, eventbus.EmailReceivedEvent{
+	emailEvent := eventbus.NewEvent(eventEmailReceived, emailReceivedEvent{
 		EmailID:   "email-123",
 		From:      "sender@example.com",
 		To:        "receiver@example.com",
@@ -85,7 +104,7 @@ func Example_middleware() {
 
 	// Publish event
 	ctx := context.Background()
-	event := eventbus.NewEvent("task.started", map[string]interface{}{
+	event := eventbus.NewEvent("task.started", map[string]any{
 		"task_id": "task-123",
 	})
 
@@ -104,8 +123,8 @@ func Example_manager() {
 	}))
 
 	// Use named bus for email events
-	emailBus := manager.GetBus("email")
-	emailBus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+	emailBus, _ := manager.GetBus("email")
+	emailBus.Subscribe(eventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
 		fmt.Printf("Email event: %v\n", event.Data)
 		return nil
 	}))
@@ -116,7 +135,7 @@ func Example_manager() {
 	systemEvent := eventbus.NewEvent("system.started", nil)
 	manager.PublishGlobal(ctx, systemEvent)
 
-	emailEvent := eventbus.NewEvent(eventbus.EventEmailReceived, map[string]interface{}{
+	emailEvent := eventbus.NewEvent(eventEmailReceived, map[string]any{
 		"from": "test@example.com",
 	})
 	manager.Publish(ctx, "email", emailEvent)
@@ -172,7 +191,7 @@ func Example_subscribeOnce() {
 	ctx := context.Background()
 
 	// Publish multiple times
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		event := eventbus.NewEvent("init", nil)
 		bus.Publish(ctx, event)
 	}
@@ -207,7 +226,7 @@ func Example_chainHandlers() {
 
 	// Publish event - all handlers will execute in sequence
 	ctx := context.Background()
-	event := eventbus.NewEvent("order.created", map[string]interface{}{
+	event := eventbus.NewEvent("order.created", map[string]any{
 		"order_id": "order-123",
 	})
 

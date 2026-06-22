@@ -3,12 +3,18 @@ package eventbus
 import (
 	"crypto/rand"
 	"encoding/json"
+	"maps"
+	"sync/atomic"
 	"time"
 )
 
+var fallbackIDCounter atomic.Uint64
+
 type EventType string
 
-// Event represents a generic event that can carry any type of data
+// Event represents a generic event that can carry any type of data. Concurrent
+// publishers isolate the Event and Metadata per handler; handlers must treat
+// Data as immutable unless the payload provides its own synchronization.
 type Event struct {
 	// ID is a unique identifier for the event
 	ID string `json:"id"`
@@ -81,13 +87,15 @@ func (e *Event) GetData(v any) error {
 	return json.Unmarshal(jsonData, v)
 }
 
-// Clone creates a shallow copy of the event
+// Clone creates a handler-safe copy of the event. Metadata is cloned; Data is
+// shared and must be treated as immutable by handlers.
 func (e *Event) Clone() *Event {
 	if e == nil {
 		return nil
 	}
 
 	cloned := *e
+	cloned.Metadata = maps.Clone(e.Metadata)
 	return &cloned
 }
 
@@ -101,9 +109,10 @@ func randomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
-		now := time.Now().UnixNano()
-		for i := range b {
-			b[i] = charset[(now+int64(i))%int64(len(charset))]
+		sequence := fallbackIDCounter.Add(1)
+		for i := len(b) - 1; i >= 0; i-- {
+			b[i] = charset[sequence%uint64(len(charset))]
+			sequence /= uint64(len(charset))
 		}
 		return string(b)
 	}

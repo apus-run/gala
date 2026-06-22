@@ -35,8 +35,8 @@ func TestEventClone(t *testing.T) {
 	if data.Values[0] != 9 {
 		t.Fatal("Clone did not share the original data slice")
 	}
-	if event.Metadata["source"] != "cloned" {
-		t.Fatal("Clone did not share the original metadata")
+	if event.Metadata["source"] != "original" {
+		t.Fatal("Clone modified the original metadata")
 	}
 }
 

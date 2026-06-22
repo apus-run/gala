@@ -18,7 +18,10 @@ eventBusManager := eventbus.NewManager(logger)
 defer eventBusManager.Close()
 
 // Get or create email event bus
-emailEventBus := eventBusManager.GetBus("email")
+emailEventBus, err := eventBusManager.GetBus("email")
+if err != nil {
+    return err
+}
 ```
 
 ### 2. Update Email Processor Handler
@@ -80,14 +83,14 @@ func (h *EmailProcessorTaskHandler) publishEmailReceivedEvent(ctx context.Contex
         return
     }
 
-    event := eventbus.NewEvent(eventbus.EventEmailReceived, eventbus.EmailReceivedEvent{
-        EmailID:   email.ID,
-        From:      h.getFirstAddress(email.From),
-        To:        h.getFirstAddress(email.To),
-        Subject:   email.Subject,
-        Mailbox:   email.Mailbox,
-        AccountID: email.AccountID,
-        TenantID:  h.getTenantID(email.TenantID),
+    event := eventbus.NewEvent("email.received", map[string]any{
+        "email_id":   email.ID,
+        "from":       h.getFirstAddress(email.From),
+        "to":         h.getFirstAddress(email.To),
+        "subject":    email.Subject,
+        "mailbox":    email.Mailbox,
+        "account_id": email.AccountID,
+        "tenant_id":  h.getTenantID(email.TenantID),
     }).WithSource("email-processor")
 
     if err := h.eventBus.Publish(ctx, event); err != nil {
@@ -100,7 +103,7 @@ func (h *EmailProcessorTaskHandler) publishEmailFailedEvent(ctx context.Context,
         return
     }
 
-    event := eventbus.NewEvent(eventbus.EventEmailFailed, map[string]interface{}{
+    event := eventbus.NewEvent("email.failed", map[string]any{
         "email_id":   emailID,
         "account_id": accountID,
         "mailbox":    mailbox,
@@ -144,8 +147,8 @@ import (
 // RegisterEmailEventHandlers registers all email-related event handlers
 func RegisterEmailEventHandlers(bus eventbus.PubSub, logger *slog.Logger) {
     // Log all received emails
-    bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
-        var data eventbus.EmailReceivedEvent
+    bus.Subscribe("email.received", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+        var data EmailReceivedEvent
         if err := event.GetData(&data); err != nil {
             return err
         }
@@ -155,15 +158,15 @@ func RegisterEmailEventHandlers(bus eventbus.PubSub, logger *slog.Logger) {
     }))
 
     // Handle email failures
-    bus.Subscribe(eventbus.EventEmailFailed, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+    bus.Subscribe("email.failed", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
         logger.Error("Email processing failed", "data", event.Data)
         // Could send alerts, update metrics, etc.
         return nil
     }))
 
     // Trigger notifications for new emails
-    bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
-        var data eventbus.EmailReceivedEvent
+    bus.Subscribe("email.received", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+        var data EmailReceivedEvent
         if err := event.GetData(&data); err != nil {
             return err
         }
@@ -179,7 +182,7 @@ func RegisterEmailEventHandlers(bus eventbus.PubSub, logger *slog.Logger) {
     }))
 
     // Update email statistics
-    bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+    bus.Subscribe("email.received", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
         logger.Debug("Updating email statistics")
         return nil
     }))
@@ -219,7 +222,10 @@ func (s *TaskService) registerHandlersWithAudit() error {
     registry := s.taskManager.Registry()
 
     // Get email event bus
-    emailEventBus := s.eventBusManager.GetBus("email")
+    emailEventBus, err := s.eventBusManager.GetBus("email")
+    if err != nil {
+        return err
+    }
 
     // Register email event handlers
     handlers.RegisterEmailEventHandlers(emailEventBus, slog.Default())
@@ -287,7 +293,7 @@ func TestEmailProcessor_WithEventBus(t *testing.T) {
 
     // Track published events
     var receivedEvents []*eventbus.Event
-    bus.Subscribe(eventbus.EventEmailReceived, eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
+    bus.Subscribe("email.received", eventbus.EventHandlerFunc(func(ctx context.Context, event *eventbus.Event) error {
         receivedEvents = append(receivedEvents, event)
         return nil
     }))
@@ -300,7 +306,7 @@ func TestEmailProcessor_WithEventBus(t *testing.T) {
 
     // Verify event was published
     assert.Equal(t, 1, len(receivedEvents))
-    assert.Equal(t, eventbus.EventEmailReceived, receivedEvents[0].Type)
+    assert.Equal(t, eventbus.EventType("email.received"), receivedEvents[0].Type)
 }
 ```
 

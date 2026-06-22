@@ -2,6 +2,7 @@ package eventbus
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -16,12 +17,12 @@ func LoggingMiddleware(logger *slog.Logger) Middleware {
 	}
 	return func(next Handler) Handler {
 		return EventHandlerFunc(func(ctx context.Context, event *Event) error {
-			logger.Info("Handling event", "type", event.Type, "id", event.ID, "source", event.Source)
+			logger.InfoContext(ctx, "handling event", "type", event.Type, "id", event.ID, "source", event.Source)
 			err := next.Handle(ctx, event)
 			if err != nil {
-				logger.Error("Error handling event", "id", event.ID, "error", err)
+				logger.ErrorContext(ctx, "error handling event", "id", event.ID, "error", err)
 			} else {
-				logger.Debug("Successfully handled event", "id", event.ID)
+				logger.DebugContext(ctx, "successfully handled event", "id", event.ID)
 			}
 			return err
 		})
@@ -37,7 +38,7 @@ func RecoveryMiddleware(logger *slog.Logger) Middleware {
 		return EventHandlerFunc(func(ctx context.Context, event *Event) (err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.Error("Panic recovered in event handler", "type", event.Type, "panic", r)
+					logger.ErrorContext(ctx, "panic recovered in event handler", "type", event.Type, "panic", r)
 					err = &PanicError{Value: r}
 				}
 			}()
@@ -46,34 +47,35 @@ func RecoveryMiddleware(logger *slog.Logger) Middleware {
 	}
 }
 
-// TimeoutMiddleware adds timeout to event handling
+// TimeoutMiddleware adds a cooperative timeout to event handling. The wrapped
+// handler must observe ctx for prompt cancellation; no orphan goroutine is
+// created when it does not.
 func TimeoutMiddleware(timeout time.Duration) Middleware {
+	if timeout <= 0 {
+		panic("eventbus: timeout must be positive")
+	}
 	return func(next Handler) Handler {
 		return EventHandlerFunc(func(ctx context.Context, event *Event) error {
-			ctx, cancel := context.WithTimeout(ctx, timeout)
+			timeoutErr := &TimeoutError{EventID: event.ID, EventType: event.Type, Timeout: timeout}
+			ctx, cancel := context.WithTimeoutCause(ctx, timeout, timeoutErr)
 			defer cancel()
-
-			done := make(chan error, 1)
-			go func() {
-				done <- next.Handle(ctx, event)
-			}()
-
-			select {
-			case err := <-done:
-				return err
-			case <-ctx.Done():
-				return &TimeoutError{
-					EventID:   event.ID,
-					EventType: event.Type,
-					Timeout:   timeout,
-				}
+			err := next.Handle(ctx, event)
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
 			}
+			return err
 		})
 	}
 }
 
 // RetryMiddleware retries failed event handling
 func RetryMiddleware(maxRetries int, delay time.Duration) Middleware {
+	if maxRetries < 0 {
+		panic("eventbus: max retries must not be negative")
+	}
+	if delay < 0 {
+		panic("eventbus: retry delay must not be negative")
+	}
 	return func(next Handler) Handler {
 		return EventHandlerFunc(func(ctx context.Context, event *Event) error {
 			var err error
@@ -88,7 +90,7 @@ func RetryMiddleware(maxRetries int, delay time.Duration) Middleware {
 					select {
 					case <-ctx.Done():
 						timer.Stop()
-						return ctx.Err()
+						return context.Cause(ctx)
 					case <-timer.C:
 					}
 				}
@@ -109,7 +111,7 @@ func MetricsMiddleware(logger *slog.Logger) Middleware {
 			err := next.Handle(ctx, event)
 			duration := time.Since(start)
 
-			logger.Info("Event handling metrics", "type", event.Type, "duration", duration, "success", err == nil)
+			logger.InfoContext(ctx, "event handling metrics", "type", event.Type, "duration", duration, "success", err == nil)
 
 			return err
 		})
@@ -128,11 +130,11 @@ func Chain(middlewares ...Middleware) Middleware {
 
 // PanicError represents a panic that occurred during event handling
 type PanicError struct {
-	Value interface{}
+	Value any
 }
 
 func (e *PanicError) Error() string {
-	return "panic in event handler"
+	return "panic in event handler: " + fmt.Sprint(e.Value)
 }
 
 // TimeoutError represents a timeout during event handling

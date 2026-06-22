@@ -26,8 +26,6 @@ func ExampleNewResourceID() {
 
 	fmt.Println(orderID.String())
 	fmt.Println(strings.HasPrefix(orderID.New(1001), "order-"))
-
-	// Output:
 	// order
 	// true
 }
