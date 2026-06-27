@@ -45,6 +45,14 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("error: code = %d, status = %s, message = %s", e.Code, e.Status, e.Message)
 }
 
+// HTTPStatus returns the HTTP status code represented by this error.
+func (e *Error) HTTPStatus() int {
+	if e == nil {
+		return http.StatusInternalServerError
+	}
+	return e.Code
+}
+
 // WithDetails 用于设置与错误相关的详细信息，通常用于提供额外的上下文或调试信息
 func (e *Error) WithDetails(details any) *Error {
 	e.Details = details

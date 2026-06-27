@@ -9,6 +9,23 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type claimsContextKey struct{}
+
+// SetClaims 将 claims 写入 gin.Context，供 WC/BC 读取。
+func SetClaims(ctx *gin.Context, claims func() jwt.Claims) {
+	ctx.Set(claimsContextKey{}, claims)
+}
+
+// GetClaims 从 gin.Context 读取 WC/BC 使用的 claims。
+func GetClaims(ctx *gin.Context) (func() jwt.Claims, bool) {
+	rawVal, ok := ctx.Get(claimsContextKey{})
+	if !ok {
+		return nil, false
+	}
+	claims, ok := rawVal.(func() jwt.Claims)
+	return claims, ok
+}
+
 func W(fn func(ctx *Context) (Result, error)) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		res, err := fn(&Context{Context: ctx})
@@ -22,8 +39,11 @@ func W(fn func(ctx *Context) (Result, error)) gin.HandlerFunc {
 			return
 		}
 		if err != nil {
-			slog.Error("执行业务逻辑失败", slog.Any("err", err))
-			ctx.JSON(http.StatusInternalServerError, res)
+			httpStatus := httpStatusFromError(err)
+			slog.Error("执行业务逻辑失败",
+				slog.Any("err", err),
+				slog.Int("http_status", httpStatus))
+			ctx.JSON(httpStatus, res)
 			return
 		}
 		ctx.JSON(http.StatusOK, res)
@@ -53,8 +73,11 @@ func B[Req any](fn func(ctx *Context, req Req) (Result, error)) gin.HandlerFunc 
 			return
 		}
 		if err != nil {
-			slog.Error("执行业务逻辑失败", slog.Any("err", err))
-			ctx.JSON(http.StatusInternalServerError, res)
+			httpStatus := httpStatusFromError(err)
+			slog.Error("执行业务逻辑失败",
+				slog.Any("err", err),
+				slog.Int("http_status", httpStatus))
+			ctx.JSON(httpStatus, res)
 			return
 		}
 		ctx.JSON(http.StatusOK, res)
@@ -63,20 +86,11 @@ func B[Req any](fn func(ctx *Context, req Req) (Result, error)) gin.HandlerFunc 
 
 func WC(fn func(*gin.Context, func() jwt.Claims) (Result, error)) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		rawVal, ok := ctx.Get("claims")
-
+		claims, ok := GetClaims(ctx)
 		if !ok {
-			ctx.AbortWithStatus(http.StatusUnauthorized)
 			slog.Error("无法获得 claims",
 				slog.String("path", ctx.Request.URL.Path))
-			return
-		}
-
-		claims, ok := rawVal.(func() jwt.Claims)
-		if !ok {
 			ctx.AbortWithStatus(http.StatusUnauthorized)
-			slog.Error("无法获得 claims",
-				slog.String("path", ctx.Request.URL.Path))
 			return
 		}
 
@@ -93,9 +107,11 @@ func WC(fn func(*gin.Context, func() jwt.Claims) (Result, error)) gin.HandlerFun
 			return
 		}
 		if err != nil {
+			httpStatus := httpStatusFromError(err)
 			slog.Error("执行业务逻辑失败",
-				slog.Any("err", err))
-			ctx.JSON(http.StatusInternalServerError, res)
+				slog.Any("err", err),
+				slog.Int("http_status", httpStatus))
+			ctx.JSON(httpStatus, res)
 			return
 		}
 		ctx.JSON(http.StatusOK, res)
@@ -106,7 +122,7 @@ func BC[Req any](fn func(*gin.Context, Req, func() jwt.Claims) (Result, error)) 
 	return func(ctx *gin.Context) {
 		var req Req
 		if err := ctx.ShouldBind(&req); err != nil {
-			slog.Error("解析请求失败", slog.Any("err", err))
+			slog.Debug("绑定参数失败", slog.Any("err", err))
 			ctx.AbortWithStatusJSON(http.StatusBadRequest, Result{
 				Code: http.StatusBadRequest,
 				Msg:  err.Error(),
@@ -115,20 +131,11 @@ func BC[Req any](fn func(*gin.Context, Req, func() jwt.Claims) (Result, error)) 
 			return
 		}
 
-		rawVal, ok := ctx.Get("claims")
-
+		claims, ok := GetClaims(ctx)
 		if !ok {
-			ctx.AbortWithStatus(http.StatusUnauthorized)
 			slog.Error("无法获得 claims",
 				slog.String("path", ctx.Request.URL.Path))
-			return
-		}
-
-		claims, ok := rawVal.(func() jwt.Claims)
-		if !ok {
 			ctx.AbortWithStatus(http.StatusUnauthorized)
-			slog.Error("无法获得 claims",
-				slog.String("path", ctx.Request.URL.Path))
 			return
 		}
 
@@ -145,10 +152,29 @@ func BC[Req any](fn func(*gin.Context, Req, func() jwt.Claims) (Result, error)) 
 			return
 		}
 		if err != nil {
-			slog.Error("执行业务逻辑失败", slog.Any("err", err))
-			ctx.JSON(http.StatusInternalServerError, res)
+			httpStatus := httpStatusFromError(err)
+			slog.Error("执行业务逻辑失败",
+				slog.Any("err", err),
+				slog.Int("http_status", httpStatus))
+			ctx.JSON(httpStatus, res)
 			return
 		}
 		ctx.JSON(http.StatusOK, res)
 	}
+}
+
+type httpStatusError interface {
+	error
+	HTTPStatus() int
+}
+
+func httpStatusFromError(err error) int {
+	var statusErr httpStatusError
+	if errors.As(err, &statusErr) {
+		code := statusErr.HTTPStatus()
+		if code >= 100 && code <= 599 {
+			return code
+		}
+	}
+	return http.StatusInternalServerError
 }

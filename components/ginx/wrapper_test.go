@@ -12,6 +12,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apus-run/gala/pkg/errorsx"
 )
 
 func TestBind(t *testing.T) {
@@ -233,10 +235,32 @@ func TestBInvalidRequestReturnsJSONBadRequest(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), `"code":400`)
 }
 
+func TestSetGetClaims(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	expected := jwt.MapClaims{"sub": "user-1"}
+
+	SetClaims(ctx, func() jwt.Claims { return expected })
+
+	claims, ok := GetClaims(ctx)
+	require.True(t, ok)
+	assert.Equal(t, expected, claims())
+}
+
+func TestGetClaimsDoesNotReadStringClaimsKey(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	expected := jwt.MapClaims{"sub": "user-1"}
+
+	ctx.Set("claims", func() jwt.Claims { return expected })
+
+	claims, ok := GetClaims(ctx)
+	assert.False(t, ok)
+	assert.Nil(t, claims)
+}
+
 func TestWCErrorDoesNotReturnOK(t *testing.T) {
 	server := gin.New()
 	server.GET("/claims", func(ctx *gin.Context) {
-		ctx.Set("claims", func() jwt.Claims { return jwt.MapClaims{} })
+		SetClaims(ctx, func() jwt.Claims { return jwt.MapClaims{} })
 		WC(func(*gin.Context, func() jwt.Claims) (Result, error) {
 			return Result{Code: CodeErr, Msg: "failed"}, errors.New("boom")
 		})(ctx)
@@ -253,7 +277,7 @@ func TestWCErrorDoesNotReturnOK(t *testing.T) {
 func TestBCErrorDoesNotReturnOK(t *testing.T) {
 	server := gin.New()
 	server.POST("/claims", func(ctx *gin.Context) {
-		ctx.Set("claims", func() jwt.Claims { return jwt.MapClaims{} })
+		SetClaims(ctx, func() jwt.Claims { return jwt.MapClaims{} })
 		BC(func(*gin.Context, struct{}, func() jwt.Claims) (Result, error) {
 			return Result{Code: CodeErr, Msg: "failed"}, errors.New("boom")
 		})(ctx)
@@ -266,4 +290,87 @@ func TestBCErrorDoesNotReturnOK(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "failed")
+}
+
+func TestWrapperFuncsPreserveErrorsxHTTPStatus(t *testing.T) {
+	testCases := []struct {
+		name       string
+		method     string
+		register   func(*gin.Engine, error)
+		err        error
+		wantStatus int
+		body       string
+	}{
+		{
+			name:   "W invalid params",
+			method: http.MethodGet,
+			register: func(server *gin.Engine, err error) {
+				server.GET("/test", W(func(ctx *Context) (Result, error) {
+					return Result{Code: CodeErr, Msg: "failed"}, err
+				}))
+			},
+			err: errorsx.InvalidParams("INVALID_PARAMS").
+				WithMessage("invalid input").
+				KV("field", "name"),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:   "B not found",
+			method: http.MethodPost,
+			register: func(server *gin.Engine, err error) {
+				server.POST("/test", B(func(ctx *Context, req struct{}) (Result, error) {
+					return Result{Code: CodeErr, Msg: "failed"}, err
+				}))
+			},
+			err:        errorsx.NotFound("NOT_FOUND").WithMessage("resource not found"),
+			wantStatus: http.StatusNotFound,
+			body:       `{}`,
+		},
+		{
+			name:   "WC invalid params",
+			method: http.MethodGet,
+			register: func(server *gin.Engine, err error) {
+				server.GET("/test", func(ctx *gin.Context) {
+					SetClaims(ctx, func() jwt.Claims { return jwt.MapClaims{} })
+					WC(func(*gin.Context, func() jwt.Claims) (Result, error) {
+						return Result{Code: CodeErr, Msg: "failed"}, err
+					})(ctx)
+				})
+			},
+			err:        errorsx.InvalidParams("INVALID_PARAMS").WithMessage("invalid input"),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:   "BC not found",
+			method: http.MethodPost,
+			register: func(server *gin.Engine, err error) {
+				server.POST("/test", func(ctx *gin.Context) {
+					SetClaims(ctx, func() jwt.Claims { return jwt.MapClaims{} })
+					BC(func(*gin.Context, struct{}, func() jwt.Claims) (Result, error) {
+						return Result{Code: CodeErr, Msg: "failed"}, err
+					})(ctx)
+				})
+			},
+			err:        errorsx.NotFound("NOT_FOUND").WithMessage("resource not found"),
+			wantStatus: http.StatusNotFound,
+			body:       `{}`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := gin.New()
+			tc.register(server, tc.err)
+
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, "/test", bytes.NewBufferString(tc.body))
+			if tc.body != "" {
+				req.Header.Set("Content-Type", gin.MIMEJSON)
+			}
+			server.ServeHTTP(recorder, req)
+
+			assert.Equal(t, tc.wantStatus, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), `"msg":"failed"`)
+		})
+	}
 }
