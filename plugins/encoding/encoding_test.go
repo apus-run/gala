@@ -2,7 +2,9 @@ package encoding
 
 import (
 	"encoding/xml"
+	"fmt"
 	"runtime/debug"
+	"sync"
 	"testing"
 )
 
@@ -35,6 +37,22 @@ func (codec2) Name() string {
 	return "xml"
 }
 
+type namedCodec struct {
+	name string
+}
+
+func (namedCodec) Marshal(_ any) ([]byte, error) {
+	return []byte{}, nil
+}
+
+func (namedCodec) Unmarshal(_ []byte, _ any) error {
+	return nil
+}
+
+func (c namedCodec) Name() string {
+	return c.name
+}
+
 func TestRegisterCodec(t *testing.T) {
 	f := func() { RegisterCodec(nil) }
 	funcDidPanic, panicValue, _ := didPanic(f)
@@ -60,6 +78,25 @@ func TestRegisterCodec(t *testing.T) {
 	if got != codec {
 		t.Fatalf("RegisterCodec(%v) want %v got %v", codec, codec, got)
 	}
+}
+
+func TestRegisterCodecConcurrentAccess(t *testing.T) {
+	const workers = 64
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := range workers {
+		go func(i int) {
+			defer wg.Done()
+
+			codec := namedCodec{name: fmt.Sprintf("codec-%d", i)}
+			RegisterCodec(codec)
+			if got := GetCodec(codec.name); got != codec {
+				t.Errorf("GetCodec(%q) = %v, want %v", codec.name, got, codec)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 // PanicTestFunc defines a func that should be passed to assert.Panics and assert.NotPanics

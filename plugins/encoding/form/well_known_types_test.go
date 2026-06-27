@@ -1,11 +1,13 @@
 package form
 
 import (
+	"bytes"
 	"encoding/base64"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -17,12 +19,16 @@ func TestMarshalTimeStamp(t *testing.T) {
 		expect string
 	}{
 		{
-			input:  timestamppb.New(time.Date(2022, 1, 2, 3, 4, 5, 6, time.Local)),
+			input:  timestamppb.New(time.Date(2022, 1, 2, 3, 4, 5, 6, time.UTC)),
 			expect: "2022-01-02T03:04:05.000000006Z",
 		},
 		{
-			input:  timestamppb.New(time.Date(2022, 13, 1, 13, 61, 61, 100, time.Local)),
+			input:  timestamppb.New(time.Date(2022, 13, 1, 13, 61, 61, 100, time.UTC)),
 			expect: "2023-01-01T14:02:01.000000100Z",
+		},
+		{
+			input:  timestamppb.New(time.Date(2022, 1, 2, 3, 4, 5, 6, time.FixedZone("UTC+8", 8*60*60))),
+			expect: "2022-01-01T19:04:05.000000006Z",
 		},
 	}
 	for _, v := range tests {
@@ -33,6 +39,51 @@ func TestMarshalTimeStamp(t *testing.T) {
 		if want := v.expect; got != want {
 			t.Errorf("expect %v, got %v", want, got)
 		}
+	}
+}
+
+func TestParseMessageNullReturnsInvalidValue(t *testing.T) {
+	value, err := parseMessage((&timestamppb.Timestamp{}).ProtoReflect().Descriptor(), nullStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.IsValid() {
+		t.Fatalf("parseMessage(null).IsValid() = true, want false")
+	}
+}
+
+func TestCodecUnmarshalRejectsNilTarget(t *testing.T) {
+	c := codec{encoder: encoder, decoder: decoder}
+
+	if err := c.Unmarshal([]byte("name=gala"), nil); err == nil {
+		t.Fatal("Unmarshal(nil) error = nil, want error")
+	}
+
+	var dst *struct {
+		Name string `json:"name"`
+	}
+	if err := c.Unmarshal([]byte("name=gala"), dst); err == nil {
+		t.Fatal("Unmarshal(typed nil pointer) error = nil, want error")
+	}
+}
+
+func TestCodecBytesRoundTripUsesURLBase64(t *testing.T) {
+	c := codec{encoder: encoder, decoder: decoder}
+	input := &anypb.Any{
+		Value: []byte{0xfb, 0xff},
+	}
+
+	data, err := c.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var output anypb.Any
+	if err := c.Unmarshal(data, &output); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.Value, input.Value; !bytes.Equal(got, want) {
+		t.Fatalf("round trip bytes = %v, want %v", got, want)
 	}
 }
 

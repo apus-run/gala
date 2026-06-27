@@ -122,6 +122,9 @@ func populateField(fd protoreflect.FieldDescriptor, v protoreflect.Message, valu
 	if err != nil {
 		return fmt.Errorf("parsing field %q: %w", fd.FullName().Name(), err)
 	}
+	if !val.IsValid() {
+		return nil
+	}
 	v.Set(fd, val)
 	return nil
 }
@@ -131,6 +134,9 @@ func populateRepeatedField(fd protoreflect.FieldDescriptor, list protoreflect.Li
 		v, err := parseField(fd, value)
 		if err != nil {
 			return fmt.Errorf("parsing list %q: %w", fd.FullName().Name(), err)
+		}
+		if !v.IsValid() {
+			continue
 		}
 		list.Append(v)
 	}
@@ -149,6 +155,9 @@ func populateMapField(fd protoreflect.FieldDescriptor, mp protoreflect.Map, fiel
 	value, err := parseField(fd.MapValue(), values[len(values)-1])
 	if err != nil {
 		return fmt.Errorf("parsing map value %q: %w", fd.FullName().Name(), err)
+	}
+	if !value.IsValid() {
+		return nil
 	}
 	mp.Set(key.MapKey(), value)
 	return nil
@@ -221,7 +230,7 @@ func parseField(fd protoreflect.FieldDescriptor, value string) (protoreflect.Val
 	case protoreflect.StringKind:
 		return protoreflect.ValueOfString(value), nil
 	case protoreflect.BytesKind:
-		v, err := base64.StdEncoding.DecodeString(value)
+		v, err := decodeBase64Value(value)
 		if err != nil {
 			return protoreflect.Value{}, err
 		}
@@ -238,16 +247,16 @@ func parseMessage(md protoreflect.MessageDescriptor, value string) (protoreflect
 	switch md.FullName() {
 	case "google.protobuf.Timestamp":
 		if value == nullStr {
-			break
+			return protoreflect.Value{}, nil
 		}
-		t, err := time.ParseInLocation(time.RFC3339Nano, value, time.Local)
+		t, err := time.Parse(time.RFC3339Nano, value)
 		if err != nil {
 			return protoreflect.Value{}, err
 		}
 		msg = timestamppb.New(t)
 	case "google.protobuf.Duration":
 		if value == nullStr {
-			break
+			return protoreflect.Value{}, nil
 		}
 		d, err := time.ParseDuration(value)
 		if err != nil {
@@ -299,11 +308,9 @@ func parseMessage(md protoreflect.MessageDescriptor, value string) (protoreflect
 	case "google.protobuf.StringValue":
 		msg = wrapperspb.String(value)
 	case "google.protobuf.BytesValue":
-		v, err := base64.StdEncoding.DecodeString(value)
+		v, err := decodeBase64Value(value)
 		if err != nil {
-			if v, err = base64.URLEncoding.DecodeString(value); err != nil {
-				return protoreflect.Value{}, err
-			}
+			return protoreflect.Value{}, err
 		}
 		msg = wrapperspb.Bytes(v)
 	case "google.protobuf.FieldMask":
@@ -328,6 +335,14 @@ func parseMessage(md protoreflect.MessageDescriptor, value string) (protoreflect
 		return protoreflect.Value{}, fmt.Errorf("unsupported message type: %q", string(md.FullName()))
 	}
 	return protoreflect.ValueOfMessage(msg.ProtoReflect()), nil
+}
+
+func decodeBase64Value(value string) ([]byte, error) {
+	v, err := base64.URLEncoding.DecodeString(value)
+	if err == nil {
+		return v, nil
+	}
+	return base64.StdEncoding.DecodeString(value)
 }
 
 // jsonSnakeCase converts a camelCase identifier to a snake_case identifier,

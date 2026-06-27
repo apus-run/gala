@@ -1,6 +1,7 @@
 package form
 
 import (
+	"errors"
 	"net/url"
 	"reflect"
 
@@ -66,8 +67,14 @@ func (c codec) Unmarshal(data []byte, v any) error {
 	}
 
 	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return errors.New("form: unmarshal target is nil")
+	}
 	for rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
+			if !rv.CanSet() {
+				return errors.New("form: unmarshal target is nil pointer")
+			}
 			rv.Set(reflect.New(rv.Type().Elem()))
 		}
 		rv = rv.Elem()

@@ -4,6 +4,7 @@ package proto
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	"google.golang.org/protobuf/proto"
@@ -22,7 +23,11 @@ func init() {
 type codec struct{}
 
 func (codec) Marshal(v any) ([]byte, error) {
-	return proto.Marshal(v.(proto.Message))
+	pm, err := getProtoMessage(v)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal: %w", err)
+	}
+	return proto.Marshal(pm)
 }
 
 func (codec) Unmarshal(data []byte, v any) error {
@@ -38,14 +43,28 @@ func (codec) Name() string {
 }
 
 func getProtoMessage(v any) (proto.Message, error) {
+	if v == nil {
+		return nil, errors.New("not proto message")
+	}
 	if msg, ok := v.(proto.Message); ok {
+		if isNilPointer(msg) {
+			return nil, errors.New("nil proto message")
+		}
 		return msg, nil
 	}
 	val := reflect.ValueOf(v)
-	if val.Kind() != reflect.Pointer {
+	if !val.IsValid() || val.Kind() != reflect.Pointer {
 		return nil, errors.New("not proto message")
+	}
+	if val.IsNil() {
+		return nil, errors.New("nil proto message")
 	}
 
 	val = val.Elem()
 	return getProtoMessage(val.Interface())
+}
+
+func isNilPointer(v any) bool {
+	val := reflect.ValueOf(v)
+	return val.Kind() == reflect.Pointer && val.IsNil()
 }
