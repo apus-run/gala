@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/authz
 
-go 1.25.0
+go 1.25
 
 require (
 	github.com/casbin/casbin/v3 v3.10.0

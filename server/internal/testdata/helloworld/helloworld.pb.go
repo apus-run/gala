@@ -7,12 +7,13 @@
 package helloworld
 
 import (
-	_ "google.golang.org/genproto/googleapis/api/annotations"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	_ "google.golang.org/genproto/googleapis/api/annotations"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -126,7 +127,7 @@ const file_helloworld_proto_rawDesc = "" +
 	"\aGreeter\x12S\n" +
 	"\bSayHello\x12\x18.helloworld.HelloRequest\x1a\x16.helloworld.HelloReply\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/hello/{name}\x12S\n" +
 	"\fSayHelloPost\x12\x18.helloworld.HelloRequest\x1a\x16.helloworld.HelloReply\"\x11\x82\xd3\xe4\x93\x02\v:\x01*\"\x06/hello\x12F\n" +
-	"\x0eSayHelloStream\x12\x18.helloworld.HelloRequest\x1a\x16.helloworld.HelloReply(\x010\x01B7Z5github.com/apus-run/bone/internal/testdata/helloworldb\x06proto3"
+	"\x0eSayHelloStream\x12\x18.helloworld.HelloRequest\x1a\x16.helloworld.HelloReply(\x010\x01B7Z5github.com/apus-run/gala/internal/testdata/helloworldb\x06proto3"
 
 var (
 	file_helloworld_proto_rawDescOnce sync.Once

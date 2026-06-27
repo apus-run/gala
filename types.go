@@ -7,12 +7,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/apus-run/gala/pkg/ctxkey"
 	"github.com/apus-run/gala/registry"
 	"github.com/apus-run/gala/server"
 )
-
-var ServiceContextKey = ctxkey.NewContextKey[Gala]()
 
 type Gala interface {
 	ID() string
