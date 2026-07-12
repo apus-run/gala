@@ -1,6 +1,6 @@
 module github.com/apus-run/gala
 
-go 1.25
+go 1.25.0
 
 replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
