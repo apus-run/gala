@@ -57,3 +57,6 @@ coverage.html
 # Local development
 .local/
 .local
+
+# Agents
+.agents/
