@@ -1,0 +1,6 @@
+p, editor, blog, create
+p, editor, blog, delete
+p, editor, /blog, POST
+p, editor, /blog/*, DELETE
+g, alice, editor
+g, editor, admin

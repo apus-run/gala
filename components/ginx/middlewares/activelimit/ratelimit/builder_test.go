@@ -386,3 +386,71 @@ func TestRateLimit_Concurrent(t *testing.T) {
 	// 但应该至少有一些请求被限流
 	assert.Equal(t, int32(totalRequests), atomic.LoadInt32(&successCount)+atomic.LoadInt32(&blockedCount), "所有请求应该有响应")
 }
+
+type coldKeyCache struct {
+	*MockCache
+	arrived atomic.Int64
+	missed  chan struct{}
+	workers int64
+}
+
+func (m *coldKeyCache) Get(key string) (*rate.Limiter, bool) {
+	if n := m.arrived.Add(1); n <= m.workers {
+		if n == m.workers {
+			close(m.missed)
+		}
+		<-m.missed
+		return nil, false
+	}
+	return m.MockCache.Get(key)
+}
+
+func TestRateLimitConcurrentColdKeyUsesOneBucket(t *testing.T) {
+	const workers = 16
+	cache := &coldKeyCache{MockCache: NewMockCache(), missed: make(chan struct{}), workers: workers}
+	r := NewRateLimit(time.Hour, 1).SetKeyFunc(func(*gin.Context) string { return "same-key" })
+	r.store = cache
+	router := gin.New()
+	// Both handlers must share the cache-miss lock as well as the buckets.
+	router.GET("/first", r.Build(), func(c *gin.Context) { c.Status(204) })
+	router.GET("/second", r.Build(), func(c *gin.Context) { c.Status(204) })
+	var admitted atomic.Int64
+	var group sync.WaitGroup
+	for i := range workers {
+		group.Go(func() {
+			path := "/first"
+			if i%2 != 0 {
+				path = "/second"
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+			if response.Code == 204 {
+				admitted.Add(1)
+			}
+		})
+	}
+	group.Wait()
+	assert.Equal(t, int64(1), admitted.Load())
+}
+
+func TestRateLimitBuildCapturesConfiguration(t *testing.T) {
+	r := NewRateLimit(time.Hour, 1).SetKeyFunc(func(*gin.Context) string { return "same-key" })
+	router := gin.New()
+	router.GET("/test", r.Build(), func(c *gin.Context) { c.Status(204) })
+	r.SetRequests(10).SetWindow(time.Minute)
+	for _, status := range []int{204, 429} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest("GET", "/test", nil))
+		assert.Equal(t, status, response.Code)
+		assert.Equal(t, "1", response.Header().Get("X-RateLimit-Limit"))
+	}
+}
+
+func TestRateLimitRejectsInvalidConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		window   time.Duration
+		requests int
+	}{{0, 1}, {-time.Second, 1}, {time.Second, 0}, {time.Second, -1}} {
+		assert.Panics(t, func() { NewRateLimit(tc.window, tc.requests).Build() })
+	}
+}

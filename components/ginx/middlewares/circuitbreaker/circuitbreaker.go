@@ -1,0 +1,608 @@
+// Copyright (c) 2021 Fiber. Adapted from gofiber/contrib/v3/circuitbreaker.
+// Licensed under the MIT License; see LICENSE.
+
+// Package circuitbreaker provides a Gin circuit breaker with bounded recovery probes.
+package circuitbreaker
+
+import (
+	"errors"
+	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+// State represents the state of the circuit breaker
+type State string
+
+const (
+	StateClosed   State = "closed"    // Normal operation
+	StateOpen     State = "open"      // Requests are blocked
+	StateHalfOpen State = "half-open" // Limited requests allowed to check recovery
+)
+
+// Config holds the configurable parameters
+type Config struct {
+	// Failure threshold to trip the circuit
+	FailureThreshold int
+	// Duration circuit stays open before allowing probes; not an execution timeout
+	Timeout time.Duration
+	// Success threshold to close the circuit from half-open
+	SuccessThreshold int
+	// Maximum concurrent requests allowed in half-open state
+	HalfOpenMaxConcurrent int
+	// Interval for resetting failure counts in closed state.
+	// Zero means failures accumulate until the circuit opens.
+	Interval time.Duration
+	// Custom failure detector function (return true if response should count as failure)
+	IsFailure func(c *gin.Context, err error) bool
+
+	// Clock reads the current time. Recovery is derived from it rather than
+	// scheduled, so substituting a clock drives the circuit through every
+	// state without waiting.
+	//
+	// Optional. Default: time.Now
+	Clock func() time.Time
+
+	// OnOpen and OnHalfOpen answer a request refused because the circuit is
+	// open, or because half-open is already at HalfOpenMaxConcurrent. None of
+	// the three fires on a transition alone.
+	//
+	// OnClose is a notification, not a response writer: it runs after the
+	// probe that closed the circuit, by which point the protected handler has
+	// already answered. Record recovery here; do not write to the response or
+	// advance the handler chain. Callbacks must be concurrency-safe and must
+	// not retain gin.Context.
+	OnOpen     gin.HandlerFunc
+	OnHalfOpen gin.HandlerFunc
+	OnClose    gin.HandlerFunc
+}
+
+// DefaultConfig supplies the upstream defaults. Set Interval for a bounded
+// failure-count window in production. Do not mutate this variable concurrently.
+var DefaultConfig = Config{
+	FailureThreshold:      5,
+	Timeout:               5 * time.Second,
+	SuccessThreshold:      1,
+	HalfOpenMaxConcurrent: 1,
+	Interval:              0,
+	Clock:                 time.Now,
+	IsFailure: func(c *gin.Context, err error) bool {
+		return err != nil || c.Writer.Status() >= http.StatusInternalServerError
+	},
+	OnOpen: func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+			"error": "service unavailable",
+		})
+	},
+	OnHalfOpen: func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+			"error": "service under recovery",
+		})
+	},
+	OnClose: func(c *gin.Context) {
+	},
+}
+
+// CircuitBreaker implements the circuit breaker pattern. Requests normally reach it
+// through Middleware. Do not copy an instance after use.
+type CircuitBreaker struct {
+	failureCount     int64 // Count of failures (atomic)
+	successCount     int64 // Count of successes in half-open state (atomic)
+	totalRequests    int64 // Count of total requests (atomic)
+	rejectedRequests int64 // Count of rejected requests (atomic)
+
+	mutex sync.RWMutex // Protects every field below
+
+	state           State
+	lastStateChange time.Time
+	openedAt        time.Time // with timeout, the recovery deadline
+	forced          bool      // ForceOpen suspends recovery until closed explicitly
+
+	// gen advances on every transition. A slot is released by it, and an
+	// outcome matched against it, so a request that outlived the circuit that
+	// admitted it can neither free a later probe's slot nor be counted.
+	halfOpenInFlight int
+	gen              uint64
+
+	expiry time.Time // when the failure count is dropped, if Interval is set
+
+	config                Config
+	clock                 func() time.Time
+	failureThreshold      int
+	successThreshold      int
+	halfOpenMaxConcurrent int
+	timeout               time.Duration
+	interval              time.Duration
+}
+
+// New initializes a circuit breaker with the given configuration
+func New(config Config) *CircuitBreaker {
+	// Apply default values for zero values
+	if config.FailureThreshold <= 0 {
+		config.FailureThreshold = DefaultConfig.FailureThreshold
+	}
+	if config.Timeout <= 0 {
+		config.Timeout = DefaultConfig.Timeout
+	}
+	if config.SuccessThreshold <= 0 {
+		config.SuccessThreshold = DefaultConfig.SuccessThreshold
+	}
+	if config.HalfOpenMaxConcurrent <= 0 {
+		config.HalfOpenMaxConcurrent = DefaultConfig.HalfOpenMaxConcurrent
+	}
+	if config.Clock == nil {
+		config.Clock = DefaultConfig.Clock
+	}
+	if config.IsFailure == nil {
+		config.IsFailure = DefaultConfig.IsFailure
+	}
+	if config.OnOpen == nil {
+		config.OnOpen = DefaultConfig.OnOpen
+	}
+	if config.OnHalfOpen == nil {
+		config.OnHalfOpen = DefaultConfig.OnHalfOpen
+	}
+	if config.OnClose == nil {
+		config.OnClose = DefaultConfig.OnClose
+	}
+
+	now := config.Clock()
+
+	var expiry time.Time
+	if config.Interval > 0 {
+		expiry = now.Add(config.Interval)
+	}
+
+	return &CircuitBreaker{
+		state:                 StateClosed,
+		lastStateChange:       now,
+		expiry:                expiry,
+		config:                config,
+		clock:                 config.Clock,
+		failureThreshold:      config.FailureThreshold,
+		successThreshold:      config.SuccessThreshold,
+		halfOpenMaxConcurrent: config.HalfOpenMaxConcurrent,
+		timeout:               config.Timeout,
+		interval:              config.Interval,
+	}
+}
+
+// Middleware adapts Gin requests to the circuit. Mount a separate circuit per
+// protected route group or dependency. A nil circuit is a setup error.
+func Middleware(cb *CircuitBreaker) gin.HandlerFunc {
+	if cb == nil {
+		panic("circuitbreaker: nil circuit")
+	}
+	return func(c *gin.Context) { cb.serve(c, c.Next) }
+}
+
+// Build returns the middleware for this circuit.
+func (cb *CircuitBreaker) Build() gin.HandlerFunc { return Middleware(cb) }
+
+// admission records how a request was let in, so its outcome is applied to the
+// circuit that admitted it rather than to whatever the circuit has become by
+// the time it finishes.
+type admission struct {
+	state State
+	gen   uint64
+	// any belongs to the deprecated protocol, which reports an outcome with no
+	// admission to match it against.
+	any bool
+}
+
+// current reports whether the circuit is still the one that admitted the
+// request. Every transition advances the generation, so matching it is the
+// whole test - the state cannot have changed without it. An outcome that fails
+// this describes a circuit that no longer exists: the request may have started
+// before the circuit opened, have probed a window that has since ended, or
+// have outlived a whole open-and-recover cycle whose closing probe already
+// judged the dependency more recently.
+func (a admission) current(gen uint64) bool {
+	return a.any || a.gen == gen
+}
+
+// serve owns admission, outcome reporting and half-open slot release.
+// Panics count as failures and are rethrown to the application's Recovery
+// middleware. This works whether Recovery is before or after this handler.
+func (cb *CircuitBreaker) serve(c *gin.Context, next func()) {
+	allowed, adm, release := cb.admit(cb.clock())
+	if !allowed {
+		c.Abort()
+		if adm.state == StateHalfOpen {
+			cb.config.OnHalfOpen(c)
+		} else {
+			cb.config.OnOpen(c)
+		}
+		return
+	}
+	defer release()
+	defer func() {
+		if value := recover(); value != nil {
+			cb.recordFailure(cb.clock(), adm)
+			panic(value)
+		}
+	}()
+	previousErrors := len(c.Errors)
+	next()
+	var failures []error
+	if len(c.Errors) > previousErrors {
+		for _, failure := range c.Errors[previousErrors:] {
+			failures = append(failures, failure.Err)
+		}
+	}
+	if cb.config.IsFailure(c, errors.Join(failures...)) {
+		cb.recordFailure(cb.clock(), adm)
+		return
+	}
+	if cb.recordSuccess(cb.clock(), adm) {
+		cb.config.OnClose(c)
+	}
+}
+
+// admit reports whether one request may proceed, how it was admitted, and the
+// release for what it took - a no-op unless it took a probe slot.
+//
+// Closed and open both decide from the state alone, so the two that carry the
+// traffic share the read lock rather than serializing every request. Only
+// crossing a transition or taking a probe slot needs exclusive access.
+func (cb *CircuitBreaker) admit(now time.Time) (bool, admission, func()) {
+	atomic.AddInt64(&cb.totalRequests, 1)
+
+	cb.mutex.RLock()
+	state, gen := cb.state, cb.gen
+	readOnly := state != StateHalfOpen && !cb.recoveryDueLocked(now)
+	cb.mutex.RUnlock()
+
+	if readOnly {
+		return cb.admitOnState(state, gen)
+	}
+
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.recoverLocked(now)
+
+	if cb.state == StateHalfOpen {
+		return cb.admitProbeLocked()
+	}
+	return cb.admitOnState(cb.state, cb.gen)
+}
+
+// admitOnState admits or refuses on the state alone, which is all a closed or
+// open circuit needs, so the caller may have read that state under either lock.
+func (cb *CircuitBreaker) admitOnState(state State, gen uint64) (bool, admission, func()) {
+	if state == StateOpen {
+		atomic.AddInt64(&cb.rejectedRequests, 1)
+		return false, admission{state: StateOpen, gen: gen}, func() {}
+	}
+	return true, admission{state: StateClosed, gen: gen}, func() {}
+}
+
+// admitProbeLocked takes a slot of the current half-open window if one is free,
+// tagged with that window so a probe outliving it cannot free a later slot.
+func (cb *CircuitBreaker) admitProbeLocked() (bool, admission, func()) {
+	if cb.halfOpenInFlight >= cb.halfOpenMaxConcurrent {
+		atomic.AddInt64(&cb.rejectedRequests, 1)
+		return false, admission{state: StateHalfOpen}, func() {}
+	}
+
+	cb.halfOpenInFlight++
+	gen := cb.gen
+	return true, admission{state: StateHalfOpen, gen: gen}, func() { cb.releaseProbe(gen) }
+}
+
+// releaseProbe gives back a slot taken in generation gen. The transition that
+// ends a window reclaims every slot of it, so a probe outliving its window has
+// nothing to return: releasing would free a slot another probe now holds.
+func (cb *CircuitBreaker) releaseProbe(gen uint64) {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	if cb.gen != gen || cb.halfOpenInFlight == 0 {
+		return
+	}
+	cb.halfOpenInFlight--
+}
+
+// recoveryDueLocked reports whether the open to half-open transition has come
+// due. Either lock is enough to read it.
+func (cb *CircuitBreaker) recoveryDueLocked(now time.Time) bool {
+	return cb.state == StateOpen && !cb.forced && !now.Before(cb.openedAt.Add(cb.timeout))
+}
+
+// recoverLocked moves an open circuit to half-open once its deadline has
+// passed. Nothing schedules it - the first request or state read after the
+// deadline applies it - so a circuit with no traffic keeps reporting open.
+func (cb *CircuitBreaker) recoverLocked(now time.Time) {
+	if !cb.recoveryDueLocked(now) {
+		return
+	}
+
+	cb.state = StateHalfOpen
+	cb.lastStateChange = now
+	atomic.StoreInt64(&cb.failureCount, 0)
+	atomic.StoreInt64(&cb.successCount, 0)
+	cb.nextGenLocked()
+}
+
+// nextGenLocked starts a new generation, freeing every probe slot and leaving
+// the admissions of the generation that just ended stale.
+func (cb *CircuitBreaker) nextGenLocked() {
+	cb.halfOpenInFlight = 0
+	cb.gen++
+}
+
+// openLocked opens the circuit on a fresh deadline; a forced open suspends
+// recovery until the circuit is closed explicitly.
+func (cb *CircuitBreaker) openLocked(now time.Time, forced bool) {
+	cb.state = StateOpen
+	cb.openedAt = now
+	cb.lastStateChange = now
+	cb.forced = forced
+	atomic.StoreInt64(&cb.failureCount, 0)
+	cb.nextGenLocked()
+}
+
+// closeLocked returns the circuit to normal operation.
+func (cb *CircuitBreaker) closeLocked(now time.Time) {
+	cb.state = StateClosed
+	cb.lastStateChange = now
+	cb.forced = false
+	cb.openedAt = time.Time{}
+	atomic.StoreInt64(&cb.failureCount, 0)
+	atomic.StoreInt64(&cb.successCount, 0)
+	if cb.interval > 0 {
+		cb.expiry = now.Add(cb.interval)
+	}
+	cb.nextGenLocked()
+}
+
+// recordFailure counts a failure and opens the circuit if that was enough.
+//
+// A failure from a request the circuit has since moved past is ignored rather
+// than treated as a failed probe. Ignoring it cannot make the circuit
+// optimistic - only a success closes it, and those are matched the same way -
+// while acting on it would end a trial that has not run and push the recovery
+// deadline out again, so a backlog of stale failures could starve recovery
+// indefinitely.
+func (cb *CircuitBreaker) recordFailure(now time.Time, adm admission) {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.recoverLocked(now)
+
+	if !adm.current(cb.gen) {
+		return
+	}
+
+	switch cb.state {
+	case StateHalfOpen:
+		// One failure ends the trial.
+		cb.openLocked(now, false)
+	case StateClosed:
+		cb.dropExpiredFailuresLocked(now)
+		if int(atomic.AddInt64(&cb.failureCount, 1)) >= cb.failureThreshold {
+			cb.openLocked(now, false)
+		}
+	}
+}
+
+// recordSuccess counts a success and reports whether this one closed the
+// circuit, so OnClose does not depend on a second state read that another
+// request could win.
+//
+// Only a probe of the current half-open window vouches for recovery, by the
+// same matching rule the failure path uses.
+func (cb *CircuitBreaker) recordSuccess(now time.Time, adm admission) bool {
+	// A closed circuit records no successes, so the path that carries the
+	// traffic needs no more than the read lock.
+	cb.mutex.RLock()
+	closed := cb.state == StateClosed
+	cb.mutex.RUnlock()
+
+	if closed {
+		return false
+	}
+
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.recoverLocked(now)
+
+	if cb.state != StateHalfOpen || !adm.current(cb.gen) {
+		return false
+	}
+	if int(atomic.AddInt64(&cb.successCount, 1)) < cb.successThreshold {
+		return false
+	}
+
+	cb.closeLocked(now)
+	return true
+}
+
+// dropExpiredFailuresLocked forgets accumulated failures once the Interval
+// window has elapsed, the boundary instant included.
+func (cb *CircuitBreaker) dropExpiredFailuresLocked(now time.Time) {
+	if cb.interval <= 0 || cb.expiry.After(now) {
+		return
+	}
+	atomic.StoreInt64(&cb.failureCount, 0)
+	cb.expiry = now.Add(cb.interval)
+}
+
+// stateAt reports the state at now, applying a due recovery first. The common
+// case does not need the write lock.
+func (cb *CircuitBreaker) stateAt(now time.Time) State {
+	cb.mutex.RLock()
+	state := cb.state
+	due := cb.recoveryDueLocked(now)
+	cb.mutex.RUnlock()
+
+	if !due {
+		return state
+	}
+
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+	cb.recoverLocked(now)
+	return cb.state
+}
+
+// GetState returns the current state of the circuit breaker
+func (cb *CircuitBreaker) GetState() State {
+	return cb.stateAt(cb.clock())
+}
+
+// IsOpen returns true if the circuit is open
+func (cb *CircuitBreaker) IsOpen() bool {
+	return cb.GetState() == StateOpen
+}
+
+// Reset resets the circuit breaker to closed, ForceOpen included.
+func (cb *CircuitBreaker) Reset() {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.closeLocked(cb.clock())
+}
+
+// ForceOpen forcibly opens the circuit regardless of failure count, and keeps
+// it open: a forced-open circuit does not recover on its own when Timeout
+// elapses, only when Reset or ForceClose is called.
+func (cb *CircuitBreaker) ForceOpen() {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.openLocked(cb.clock(), true)
+}
+
+// ForceClose forcibly closes the circuit regardless of current state
+func (cb *CircuitBreaker) ForceClose() {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.closeLocked(cb.clock())
+}
+
+// SetTimeout updates the timeout duration. A circuit that is already open
+// recovers on the new deadline, since the deadline is derived, not scheduled.
+func (cb *CircuitBreaker) SetTimeout(timeout time.Duration) {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.timeout = timeout
+}
+
+// Stop releases the circuit breaker's resources.
+//
+// Deprecated: recovery is derived from the clock rather than scheduled, so
+// there is nothing to stop. This does nothing.
+func (cb *CircuitBreaker) Stop() {}
+
+// AllowRequest determines if a request is allowed based on circuit state.
+//
+// Deprecated: use Middleware, which admits, reports and releases as one
+// operation. A slot taken here is held until ReleaseSemaphore returns it or
+// the next state change reclaims it.
+func (cb *CircuitBreaker) AllowRequest() (bool, State) {
+	allowed, adm, _ := cb.admit(cb.clock())
+	return allowed, adm.state
+}
+
+// ReleaseSemaphore releases a slot in the half-open semaphore.
+//
+// Deprecated: use Middleware. This releases a slot in the current half-open
+// window, which is not necessarily the one it was taken in.
+func (cb *CircuitBreaker) ReleaseSemaphore() {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	if cb.halfOpenInFlight > 0 {
+		cb.halfOpenInFlight--
+	}
+}
+
+// ReportSuccess increments success count and closes circuit if threshold met.
+//
+// Deprecated: use Middleware, which reports the outcome of the request it
+// admitted and runs OnClose when that success closes the circuit.
+func (cb *CircuitBreaker) ReportSuccess() {
+	// No admission to match, so the outcome applies to whatever state is
+	// current - the behaviour this method has always had.
+	cb.recordSuccess(cb.clock(), admission{any: true})
+}
+
+// ReportFailure increments failure count and opens circuit if threshold met.
+//
+// Deprecated: use Middleware, which reports the outcome of the request it
+// admitted.
+func (cb *CircuitBreaker) ReportFailure() {
+	// As with ReportSuccess, there is no admission to match.
+	cb.recordFailure(cb.clock(), admission{any: true})
+}
+
+// Metrics returns basic metrics about the circuit breaker
+func (cb *CircuitBreaker) Metrics() gin.H {
+	return gin.H{
+		"state":            cb.GetState(),
+		"failures":         atomic.LoadInt64(&cb.failureCount),
+		"successes":        atomic.LoadInt64(&cb.successCount),
+		"totalRequests":    atomic.LoadInt64(&cb.totalRequests),
+		"rejectedRequests": atomic.LoadInt64(&cb.rejectedRequests),
+	}
+}
+
+// GetStateStats returns detailed statistics about the circuit breaker.
+//
+// The state and the fields describing it are read under one lock, so a
+// transition racing the read cannot pair the old state with the new
+// timestamps.
+func (cb *CircuitBreaker) GetStateStats() gin.H {
+	now := cb.clock()
+
+	cb.mutex.RLock()
+	if !cb.recoveryDueLocked(now) {
+		defer cb.mutex.RUnlock()
+		return cb.statsLocked()
+	}
+	cb.mutex.RUnlock()
+
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	cb.recoverLocked(now)
+	return cb.statsLocked()
+}
+
+// statsLocked builds the statistics map. Caller holds either lock.
+func (cb *CircuitBreaker) statsLocked() gin.H {
+	return gin.H{
+		"state":            cb.state,
+		"failures":         atomic.LoadInt64(&cb.failureCount),
+		"successes":        atomic.LoadInt64(&cb.successCount),
+		"totalRequests":    atomic.LoadInt64(&cb.totalRequests),
+		"rejectedRequests": atomic.LoadInt64(&cb.rejectedRequests),
+		"lastStateChange":  cb.lastStateChange,
+		"openDuration":     cb.timeout,
+		"failureThreshold": cb.failureThreshold,
+		"successThreshold": cb.successThreshold,
+		"expiry":           cb.expiry,
+	}
+}
+
+// HealthHandler reports 503 while open, and 200 otherwise. Register this
+// handler outside the protected route group so an open circuit cannot hide it.
+func (cb *CircuitBreaker) HealthHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		state := cb.GetState()
+		data := gin.H{"state": state, "healthy": state == StateClosed}
+		status := http.StatusOK
+		if state == StateOpen {
+			status = http.StatusServiceUnavailable
+		}
+		c.JSON(status, data)
+	}
+}

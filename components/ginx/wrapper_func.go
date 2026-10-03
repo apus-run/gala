@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/apus-run/gala/pkg/errorsx"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -175,6 +176,12 @@ func httpStatusFromError(err error) int {
 		if code >= 100 && code <= 599 {
 			return code
 		}
+	}
+	// Published errorsx v0.8.1 exposes Code but does not yet implement
+	// HTTPStatus. Preserve its status when this module is used without go.work.
+	var legacyErr *errorsx.Error
+	if errors.As(err, &legacyErr) && legacyErr != nil && legacyErr.Code >= 100 && legacyErr.Code <= 599 {
+		return legacyErr.Code
 	}
 	return http.StatusInternalServerError
 }

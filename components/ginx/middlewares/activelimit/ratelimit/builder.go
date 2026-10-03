@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,13 +19,15 @@ var (
 	DefaultTTL       = 6 * time.Hour
 )
 
-// Cache 缓存接口，用于存储限流器
+// Cache stores limiters and must support concurrent access.
 type Cache interface {
 	Add(key string, value *rate.Limiter) bool
 	Get(key string) (*rate.Limiter, bool)
 }
 
-// RateLimit 速率限制结构体
+// RateLimit limits request rates per key in this process. Configure setters
+// before the first Build; create a new instance to change the configuration.
+// Do not copy an instance after use.
 type RateLimit struct {
 	// 时间窗口
 	window time.Duration
@@ -34,6 +37,7 @@ type RateLimit struct {
 	keyFunc func(*gin.Context) string
 
 	store Cache
+	mu    sync.Mutex // Serializes cache misses across handlers built from this instance.
 }
 
 // NewRateLimit 创建速率限制器
@@ -80,16 +84,26 @@ func (r *RateLimit) Build() gin.HandlerFunc {
 		}
 	}
 
-	rateLimit := rate.Limit(float64(r.requests) / r.window.Seconds())
-	burst := r.requests
+	window, requests := r.window, r.requests
+	if window <= 0 || requests <= 0 {
+		panic("ratelimit: window and requests must be positive")
+	}
+	rateLimit := rate.Limit(float64(requests) / window.Seconds())
+	burst := requests
 
 	return func(c *gin.Context) {
 		key := keyFunc(c)
 
 		lim, ok := store.Get(key)
 		if !ok {
-			lim = rate.NewLimiter(rateLimit, burst)
-			store.Add(key, lim)
+			r.mu.Lock()
+			// Another request may have initialized this key while we waited.
+			lim, ok = store.Get(key)
+			if !ok {
+				lim = rate.NewLimiter(rateLimit, burst)
+				store.Add(key, lim)
+			}
+			r.mu.Unlock()
 		}
 
 		res := lim.Reserve()
@@ -101,7 +115,7 @@ func (r *RateLimit) Build() gin.HandlerFunc {
 			resetAt := time.Now().Add(time.Duration(ra) * time.Second).Unix()
 
 			c.Header("Retry-After", strconv.Itoa(ra))
-			c.Header("X-RateLimit-Limit", strconv.Itoa(r.requests))
+			c.Header("X-RateLimit-Limit", strconv.Itoa(requests))
 			c.Header("X-RateLimit-Remaining", "0")
 			c.Header("X-RateLimit-Reset", strconv.FormatInt(resetAt, 10))
 
@@ -116,9 +130,9 @@ func (r *RateLimit) Build() gin.HandlerFunc {
 		}
 
 		remaining := lim.Tokens()
-		resetAt := time.Now().Add(r.window).Unix()
+		resetAt := time.Now().Add(window).Unix()
 
-		c.Header("X-RateLimit-Limit", strconv.Itoa(r.requests))
+		c.Header("X-RateLimit-Limit", strconv.Itoa(requests))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(int(remaining)))
 		c.Header("X-RateLimit-Reset", strconv.FormatInt(resetAt, 10))
 

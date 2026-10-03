@@ -1,0 +1,174 @@
+// Copyright (c) 2019-present Fenny and Contributors.
+// Adapted from gofiber/fiber/v3/middleware/helmet under the MIT License; see LICENSE.
+
+package helmet
+
+import (
+	"github.com/gin-gonic/gin"
+)
+
+// Config defines the security response headers. Build snapshots the first Config.
+// Callbacks must be concurrency-safe and must not retain gin.Context.
+type Config struct {
+	// Next defines a function to skip middleware.
+	// Optional. Default: nil
+	Next func(*gin.Context) bool
+
+	// IsSecure adapts Fiber's framework-level Secure check to Gin. If nil,
+	// only an actual TLS connection is considered secure. A custom check must
+	// verify the immediate proxy before accepting forwarded scheme headers.
+	// Optional. Default: nil (Request.TLS != nil).
+	IsSecure func(*gin.Context) bool
+
+	// XSSProtection
+	// Optional. Default value "0".
+	XSSProtection string
+
+	// ContentTypeNosniff
+	// Optional. Default value "nosniff".
+	ContentTypeNosniff string
+
+	// XFrameOptions
+	// Optional. Default value "SAMEORIGIN".
+	// Possible values: "SAMEORIGIN", "DENY", "ALLOW-FROM uri"
+	XFrameOptions string
+
+	// ContentSecurityPolicy
+	// Optional. Default value "".
+	ContentSecurityPolicy string
+
+	// ReferrerPolicy
+	// Optional. Default value "no-referrer".
+	ReferrerPolicy string
+
+	// Permissions-Policy
+	// Optional. Default value "".
+	PermissionPolicy string
+
+	// Cross-Origin-Embedder-Policy
+	// Optional. Default value "require-corp".
+	CrossOriginEmbedderPolicy string
+
+	// Cross-Origin-Opener-Policy
+	// Optional. Default value "same-origin".
+	CrossOriginOpenerPolicy string
+
+	// Cross-Origin-Resource-Policy
+	// Optional. Default value "same-origin".
+	CrossOriginResourcePolicy string
+
+	// Origin-Agent-Cluster
+	// Optional. Default value "?1".
+	OriginAgentCluster string
+
+	// X-DNS-Prefetch-Control
+	// Optional. Default value "off".
+	XDNSPrefetchControl string
+
+	// X-Download-Options
+	// Optional. Default value "noopen".
+	XDownloadOptions string
+
+	// X-Permitted-Cross-Domain-Policies
+	// Optional. Default value "none".
+	XPermittedCrossDomain string
+
+	// HSTSMaxAge
+	// Optional. Default value 0.
+	HSTSMaxAge int
+
+	// HSTSExcludeSubdomains
+	// Optional. Default value false.
+	HSTSExcludeSubdomains bool
+
+	// CSPReportOnly
+	// Optional. Default value false.
+	CSPReportOnly bool
+
+	// HSTSPreloadEnabled
+	// Requires HSTSExcludeSubdomains to be false.
+	// Optional. Default value false.
+	HSTSPreloadEnabled bool
+}
+
+// ConfigDefault is the upstream default config. Configure it before creating
+// handlers; do not mutate this variable concurrently with Build.
+var ConfigDefault = Config{
+	XSSProtection:             "0",
+	ContentTypeNosniff:        "nosniff",
+	XFrameOptions:             "SAMEORIGIN",
+	ReferrerPolicy:            "no-referrer",
+	CrossOriginEmbedderPolicy: "require-corp",
+	CrossOriginOpenerPolicy:   "same-origin",
+	CrossOriginResourcePolicy: "same-origin",
+	OriginAgentCluster:        "?1",
+	XDNSPrefetchControl:       "off",
+	XDownloadOptions:          "noopen",
+	XPermittedCrossDomain:     "none",
+}
+
+// Helper function to set default values
+func configDefault(config ...Config) Config {
+	// Return default config if nothing provided
+	if len(config) < 1 {
+		return ConfigDefault
+	}
+
+	// Override default config
+	cfg := config[0]
+
+	if cfg.HSTSMaxAge < 0 {
+		panic("helmet: HSTSMaxAge must be greater than or equal to 0")
+	}
+
+	if cfg.HSTSPreloadEnabled && cfg.HSTSExcludeSubdomains {
+		panic("helmet: HSTSPreloadEnabled requires HSTSExcludeSubdomains to be false")
+	}
+
+	// Set default values
+	if cfg.XSSProtection == "" {
+		cfg.XSSProtection = ConfigDefault.XSSProtection
+	}
+
+	if cfg.ContentTypeNosniff == "" {
+		cfg.ContentTypeNosniff = ConfigDefault.ContentTypeNosniff
+	}
+
+	if cfg.XFrameOptions == "" {
+		cfg.XFrameOptions = ConfigDefault.XFrameOptions
+	}
+
+	if cfg.ReferrerPolicy == "" {
+		cfg.ReferrerPolicy = ConfigDefault.ReferrerPolicy
+	}
+
+	if cfg.CrossOriginEmbedderPolicy == "" {
+		cfg.CrossOriginEmbedderPolicy = ConfigDefault.CrossOriginEmbedderPolicy
+	}
+
+	if cfg.CrossOriginOpenerPolicy == "" {
+		cfg.CrossOriginOpenerPolicy = ConfigDefault.CrossOriginOpenerPolicy
+	}
+
+	if cfg.CrossOriginResourcePolicy == "" {
+		cfg.CrossOriginResourcePolicy = ConfigDefault.CrossOriginResourcePolicy
+	}
+
+	if cfg.OriginAgentCluster == "" {
+		cfg.OriginAgentCluster = ConfigDefault.OriginAgentCluster
+	}
+
+	if cfg.XDNSPrefetchControl == "" {
+		cfg.XDNSPrefetchControl = ConfigDefault.XDNSPrefetchControl
+	}
+
+	if cfg.XDownloadOptions == "" {
+		cfg.XDownloadOptions = ConfigDefault.XDownloadOptions
+	}
+
+	if cfg.XPermittedCrossDomain == "" {
+		cfg.XPermittedCrossDomain = ConfigDefault.XPermittedCrossDomain
+	}
+
+	return cfg
+}

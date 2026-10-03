@@ -1,10 +1,11 @@
 module github.com/apus-run/gala/components/ginx
 
-go 1.25
+go 1.25.0
 
 replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
+	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/apus-run/gala/pkg/errorsx v0.8.1
 	github.com/apus-run/gala/pkg/lang v0.8.1
 	github.com/gavv/httpexpect/v2 v2.17.0
@@ -82,6 +83,7 @@ require (
 	github.com/yalp/jsonpath v0.0.0-20180802001716-5cc68e5049a0 // indirect
 	github.com/yudai/gojsondiff v1.0.0 // indirect
 	github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect

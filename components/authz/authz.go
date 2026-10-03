@@ -1,126 +1,132 @@
-// Package authz 提供基于 Casbin 的访问控制功能.
-// authorization 对权鉴的一个封装.
+// Package authz wraps Casbin authorization with configurable model and policy storage.
 package authz
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
-	adapter "github.com/casbin/gorm-adapter/v3"
-	"github.com/google/wire"
+	"github.com/casbin/casbin/v3/persist"
+	gormadapter "github.com/casbin/gorm-adapter/v3"
+
 	"gorm.io/gorm"
 )
 
-const (
-	// 默认的 Casbin 访问控制模型.
-	defaultAclModel = `[request_definition]
-r = sub, obj, act
-
-[policy_definition]
-p = sub, obj, act, eft
-
-[role_definition]
-g = _, _
-
-[policy_effect]
-e = !some(where (p.eft == deny))
-
-[matchers]
-m = g(r.sub, p.sub) && keyMatch(r.obj, p.obj) && r.act == p.act`
-)
-
-// Authz 定义了一个授权器，提供授权功能.
-type Authz struct {
-	*casbin.SyncedEnforcer // 使用 Casbin 的同步授权器
+// Authorizer provides synchronized authorization and serialized policy reloads.
+// Do not copy an instance after use.
+type Authorizer struct {
+	engine *casbin.SyncedEnforcer
+	mu     sync.Mutex
 }
 
-// Option 定义了一个函数选项类型，用于自定义 NewAuthz 的行为.
-type Option func(*authzConfig)
-
-// authzConfig 是授权器的配置结构.
-type authzConfig struct {
-	aclModel           string        // Casbin 的模型字符串
-	autoLoadPolicyTime time.Duration // 自动加载策略的时间间隔
+// timedAdapter bounds the database part of each policy load, including the
+// constructor's initial load. It does not promise to cancel Casbin's CPU work.
+// gorm-adapter's ordinary LoadPolicy uses context.Background, so putting a
+// deadline on the GORM session alone would not bound that load.
+type timedAdapter struct {
+	*gormadapter.Adapter
+	timeout time.Duration
 }
 
-// ProviderSet 是一个 Wire 的 Provider 集合，用于声明依赖注入的规则。
-// 包含 NewAuthz 构造函数，用于生成 Authz 实例。
-var ProviderSet = wire.NewSet(NewAuthz, DefaultOptions)
-
-// defaultAuthzConfig 返回一个默认的配置.
-func defaultAuthzConfig() *authzConfig {
-	return &authzConfig{
-		// 默认使用内置的 ACL 模型
-		aclModel: defaultAclModel,
-		// 默认的自动加载策略时间间隔
-		autoLoadPolicyTime: 5 * time.Second,
-	}
+func (a *timedAdapter) LoadPolicy(m model.Model) error {
+	ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
+	defer cancel()
+	return a.Adapter.LoadPolicyCtx(ctx, m)
 }
 
-// DefaultOptions 提供默认的授权器选项配置.
-func DefaultOptions() []Option {
-	return []Option{
-		// 使用默认的 ACL 模型
-		WithAclModel(defaultAclModel),
-		// 设置自动加载策略的时间间隔为 10 秒
-		WithAutoLoadPolicyTime(10 * time.Second),
-	}
+// New creates an initialized enforcer using the configured policy adapter.
+// Adapters with an already filtered policy are not supported.
+// The caller owns injected dependencies and policy synchronization tasks.
+func New(opts ...Option) (*Authorizer, error) {
+	return buildAuthorizer(nil, opts...)
 }
 
-// WithAclModel 允许通过选项自定义 ACL 模型.
-func WithAclModel(model string) Option {
-	return func(cfg *authzConfig) {
-		cfg.aclModel = model
+// NewAuthz uses db for GORM policy storage, overriding the configured adapter.
+// The application must create the policy table before calling NewAuthz.
+// The caller owns db.
+func NewAuthz(db *gorm.DB, opts ...Option) (*Authorizer, error) {
+	if db == nil {
+		return nil, errors.New("authz: nil database")
 	}
+	return buildAuthorizer(db, opts...)
 }
 
-// WithAutoLoadPolicyTime 允许通过选项自定义自动加载策略的时间间隔.
-func WithAutoLoadPolicyTime(interval time.Duration) Option {
-	return func(cfg *authzConfig) {
-		cfg.autoLoadPolicyTime = interval
-	}
-}
-
-// NewAuthz 创建一个使用 Casbin 完成授权的授权器，通过函数选项模式支持自定义配置.
-func NewAuthz(db *gorm.DB, opts ...Option) (*Authz, error) {
-	// 初始化默认配置
-	cfg := defaultAuthzConfig()
-
-	// 应用所有选项
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	// 初始化 Gorm 适配器并用于 Casbin 授权器
-	adapter, err := adapter.NewAdapterByDB(db)
-	if err != nil {
-		return nil, err // 返回错误
-	}
-
-	// 从配置中加载 Casbin 模型
-	m, _ := model.NewModelFromString(cfg.aclModel)
-
-	// 初始化授权器
-	enforcer, err := casbin.NewSyncedEnforcer(m, adapter)
-	if err != nil {
-		return nil, err // 返回错误
-	}
-
-	// 从数据库加载策略
-	if err := enforcer.LoadPolicy(); err != nil {
-		return nil, err // 返回错误
-	}
-
-	// 启动自动加载策略，使用配置的时间间隔
-	enforcer.StartAutoLoadPolicy(cfg.autoLoadPolicyTime)
-
-	// 返回新的授权器实例
-	return &Authz{enforcer}, nil
-}
-
-// Authorize 用于进行授权.
-func (a *Authz) Authorize(sub, obj, act string) (bool, error) {
-	// 调用 Enforce 方法进行授权检查
+// Authorize checks the subject, object and action against the current policy.
+func (a *Authorizer) Authorize(sub, obj, act string) (bool, error) {
 	return a.Enforce(sub, obj, act)
+}
+
+// Enforce checks model-specific request values using the synchronized enforcer.
+func (a *Authorizer) Enforce(rvals ...any) (bool, error) {
+	allowed, err := a.engine.Enforce(rvals...)
+	if err != nil {
+		return false, fmt.Errorf("authz: enforce: %w", err)
+	}
+	return allowed, nil
+}
+
+// LoadPolicy reloads policies through the synchronized enforcer.
+func (a *Authorizer) LoadPolicy() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.engine.LoadPolicy(); err != nil {
+		return fmt.Errorf("authz: reload policy: %w", err)
+	}
+	return nil
+}
+
+func buildAuthorizer(db *gorm.DB, opts ...Option) (*Authorizer, error) {
+	options := NewOptions(opts...)
+	if err := options.Validate(); err != nil {
+		return nil, fmt.Errorf("authz: validate options: %w", err)
+	}
+
+	m, err := model.NewModelFromFile(options.modelFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("authz: parse model: %w", err)
+	}
+	adapter := options.policyAdapter
+	if db != nil {
+		adapter, err = newGORMAdapter(db, options.policyLoadTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("authz: create adapter: %w", err)
+		}
+	}
+	// Casbin skips the initial load when IsFiltered is true. This wrapper has
+	// no filtered-loading API, so returning such an enforcer would leave it empty.
+	if filtered, ok := adapter.(persist.FilteredAdapter); ok && filtered.IsFiltered() {
+		return nil, errors.New("authz: initial policy load: already filtered policy adapter is not supported")
+	}
+	engine, err := casbin.NewSyncedEnforcer(m, adapter)
+	if err != nil {
+		return nil, fmt.Errorf("authz: initial policy load: %w", err)
+	}
+
+	// Application services own policy writes; this authorizer reads committed
+	// policies through LoadPolicy. Disable incremental persistence so in-memory
+	// policy edits cannot bypass the application's policy management path.
+	// Explicit SavePolicy and the adapter's schema migration are not affected.
+	engine.EnableAutoSave(false)
+	return &Authorizer{engine: engine}, nil
+}
+
+func newGORMAdapter(db *gorm.DB, timeout time.Duration) (*timedAdapter, error) {
+	// Materialize the clean statement before TurnOffAutoMigrate calls WithContext;
+	// otherwise that call replaces GORM's pending NewDB reset with a statement clone
+	// and retains the caller's query conditions. The caller's DB stays untouched.
+	policyDB := db.Session(&gorm.Session{
+		NewDB:       true,
+		Context:     context.Background(),
+		Initialized: true,
+	})
+	gormadapter.TurnOffAutoMigrate(policyDB)
+	adapter, err := gormadapter.NewAdapterByDB(policyDB)
+	if err != nil {
+		return nil, err
+	}
+	return &timedAdapter{Adapter: adapter, timeout: timeout}, nil
 }

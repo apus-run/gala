@@ -1,11 +1,10 @@
 module github.com/apus-run/gala/components/authz
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/casbin/casbin/v3 v3.10.0
 	github.com/casbin/gorm-adapter/v3 v3.41.0
-	github.com/google/wire v0.6.0
 	gorm.io/gorm v1.31.1
 )
 
