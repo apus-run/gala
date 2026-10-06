@@ -25,8 +25,8 @@ const AcceptLanguageHeaderName = "Accept-Language"
 const ClientTimezoneOffsetHeaderName = "X-Timezone-Offset"
 
 type Handler interface {
-	PrivateRoutes(server *gin.Engine)
-	PublicRoutes(server *gin.Engine)
+	PrivateRoutes(r gin.IRoutes)
+	PublicRoutes(r gin.IRoutes)
 }
 
 // Context a wrapper of gin.Context
