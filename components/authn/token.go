@@ -28,10 +28,6 @@ func (t *tokenInfo) GetTokenType() string {
 	return t.Type
 }
 
-func (t *tokenInfo) GetExpiresAt() int64 {
-	return t.ExpiresAt
-}
-
 func (t *tokenInfo) EncodeToJSON() ([]byte, error) {
 	return json.Marshal(t)
 }

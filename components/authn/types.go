@@ -6,7 +6,6 @@ import (
 	"context"
 
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type Token interface {
@@ -21,6 +20,7 @@ type Token interface {
 }
 
 // Authenticator defines methods used for token processing.
+// 只有三件事：签发、吊销、校验（含吊销名单）。
 type Authenticator interface {
 	// Sign is used to generate a token.
 	Sign(ctx context.Context) (Token, error)
@@ -29,22 +29,7 @@ type Authenticator interface {
 	Destroy(ctx context.Context, accessToken string) error
 
 	// ParseClaims parse the token and return the claims.
-	ParseClaims(ctx context.Context, accessToken string) (*jwt.RegisteredClaims, error)
-
-	// ParseToken is used to parse a token.
-	ParseToken(ctx context.Context, accessToken string) (*jwt.Token, error)
-
-	// GenerateToken is used to generate a token.
-	GenerateToken(ctx context.Context) (string, error)
-}
-
-// Encrypt encrypts the plain text with bcrypt.
-func Encrypt(source string) (string, error) {
-	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(source), bcrypt.DefaultCost)
-	return string(hashedBytes), err
-}
-
-// Compare compares the encrypted text with the plain text if it's the same.
-func Compare(hashedPassword, password string) error {
-	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+	// 返回的是 claims 工厂产出的那个对象（不是副本），所以工厂必须每次返回新对象 ——
+	// 共享一个对象时并发请求会互相覆写。没有存储时跳过吊销名单检查。
+	ParseClaims(ctx context.Context, accessToken string) (jwt.Claims, error)
 }

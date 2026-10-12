@@ -38,8 +38,6 @@ func (s *Store) Delete(ctx context.Context, accessToken string) (bool, error) {
 
 // Check check if the specified JWT Token exists in Redis.
 func (s *Store) Check(ctx context.Context, accessToken string) (bool, error) {
-	s.cli.Get(ctx, s.key(accessToken))
-
 	cmd := s.cli.Exists(ctx, s.key(accessToken))
 	if err := cmd.Err(); err != nil {
 		return false, err

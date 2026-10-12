@@ -1,51 +1,25 @@
 package authn
 
 import (
-	"time"
-
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/apus-run/gala/components/token"
+	"github.com/apus-run/gala/pkg/option"
 )
 
-const (
-	// defaultKey holds the default key used to sign a jwt token.
-	defaultKey = "authn::jwt(#)9527"
-)
-
-// Option is jwt option.
+// Option 只覆盖 authn 自己的开关。JWT 的配置面不在这里重复一份 ——
+// 密钥、算法、audience/issuer 校验等直接用 components/token 的选项（WithJWTOptions）。
 type Option func(*Options)
 
-// Options is jwt options.
+// Options is authn options.
 type Options struct {
-	signingMethod jwt.SigningMethod
-	claims        func() jwt.Claims
-	tokenHeader   map[string]any
-
-	expired   time.Duration
-	keyFunc   jwt.Keyfunc
-	tokenType string
+	claims  func() jwt.Claims
+	jwtOpts []option.Option[token.JwtConfig]
 }
 
 // DefaultOptions .
 func DefaultOptions() *Options {
-	options := &Options{
-		tokenType:     "Bearer",
-		expired:       2 * time.Hour,
-		signingMethod: jwt.SigningMethodHS256,
-		keyFunc: func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, ErrTokenInvalid
-			}
-			return []byte(defaultKey), nil
-		},
-	}
-	// 没给 claims factory 时用它。绑在 options 上，读的是 Apply 之后最终的 expired
-	options.claims = options.expiringClaims
-	return options
-}
-
-// expiringClaims 是默认 claims：只带 exp，寿命取 WithExpired
-func (o *Options) expiringClaims() jwt.Claims {
-	return &jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(o.expired))}
+	return &Options{}
 }
 
 func Apply(opts ...Option) *Options {
@@ -56,40 +30,23 @@ func Apply(opts ...Option) *Options {
 	return options
 }
 
-// WithSigningMethod with signing method option.
-func WithSigningMethod(method jwt.SigningMethod) Option {
-	return func(o *Options) {
-		o.signingMethod = method
-	}
-}
-
-// WithClaims with customer claim
-// If you use it in Server, f needs to return a new jwt.Claims object each time to avoid concurrent write problems
-// If you use it in Client, f only needs to return a single object to provide performance
+// WithClaims 设置 claims 工厂：签发用它产出 claims，校验用它作为解析目标，所以类型要一致。
+// 服务端每次要返回新对象，避免并发写（见 token.WithClaims 的说明）。
+//
+// exp 由工厂负责填 —— 这是签发必带的声明，缺了 token 层会返回 jwtx.ErrNoExpiration。
+// 工厂里填了 iss/aud 的话，还要用 token.WithIssuer/WithAudience 配同一个值：校验侧按
+// 配置查（token 的默认 issuer 是 gala/token），两边对不上会得到 ErrTokenInvalidIssuer。
+// token.WithExpiry 只作用于 token 自己的内置 claims，对工厂产出的 claims 不生效。
 func WithClaims(f func() jwt.Claims) Option {
 	return func(o *Options) {
 		o.claims = f
 	}
 }
 
-// WithTokenHeader withe customer tokenHeader for client side
-func WithTokenHeader(header map[string]any) Option {
+// WithJWTOptions 透传 components/token 的 JWT 配置：WithSecretKey/WithAlgorithm 决定怎么签，
+// WithAudience/WithIssuer/WithParserOptions 决定怎么验。不配密钥就签不出来（没有默认密钥）。
+func WithJWTOptions(opts ...option.Option[token.JwtConfig]) Option {
 	return func(o *Options) {
-		o.tokenHeader = header
-	}
-}
-
-// WithKeyFunc set the callback function for verifying the key.
-func WithKeyFunc(keyFunc jwt.Keyfunc) Option {
-	return func(o *Options) {
-		o.keyFunc = keyFunc
-	}
-}
-
-// WithExpired sets the lifetime used when no claims factory is provided.
-// A factory that sets exp itself is used as-is. Default is 2h.
-func WithExpired(expired time.Duration) Option {
-	return func(o *Options) {
-		o.expired = expired
+		o.jwtOpts = append(o.jwtOpts, opts...)
 	}
 }
