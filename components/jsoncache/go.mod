@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/jsoncache
 
-go 1.25
+go 1.27
 
 require github.com/redis/go-redis/v9 v9.19.0
 

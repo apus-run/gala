@@ -2,7 +2,7 @@
 
 为 Gin 响应添加常见安全头，移植自 [Fiber v3 Helmet](https://github.com/gofiber/fiber/tree/main/middleware/helmet)，保留其配置字段、默认值、跳过逻辑、CSP 模式和 HSTS 参数规则。Gin 版使用无状态 Builder 构建处理器，并增加 `IsSecure` 回调支持应用自己的 HTTPS 判定。
 
-当前 ginx 模块要求 **Go 1.25 或更高版本**，不依赖 Fiber。上游用法可参考 [Fiber Helmet 文档](https://docs.gofiber.io/next/middleware/helmet/)，Gin 接口和行为以本目录源码及本文为准。移植代码保留上游版权声明和 [MIT License](LICENSE)。现有移植未记录上游提交号，链接用于查阅来源，不代表始终与上游最新版本一致。
+当前 ginx 模块要求 **Go 1.27 或更高版本**，不依赖 Fiber。上游用法可参考 [Fiber Helmet 文档](https://docs.gofiber.io/next/middleware/helmet/)，Gin 接口和行为以本目录源码及本文为准。移植代码保留上游版权声明和 [MIT License](LICENSE)。现有移植未记录上游提交号，链接用于查阅来源，不代表始终与上游最新版本一致。
 
 ## 安装与接口
 

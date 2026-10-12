@@ -4,7 +4,7 @@
 
 ## 安装
 
-要求 **Go 1.25 或更高版本**，使用 **Casbin v3**。
+要求 **Go 1.27 或更高版本**，使用 **Casbin v3**。
 
 ```sh
 go get github.com/apus-run/gala/components/authz

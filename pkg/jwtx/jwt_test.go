@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type CustomClaims struct {
@@ -18,10 +19,54 @@ type CustomClaims struct {
 	jwt.RegisteredClaims
 }
 
+const testKey = "testKey"
+
+// 固定密钥 testKey 签出的 golden token，喂各种边界。claims 见 testClaims()，
+// 改了 claims 可以在 jwt.io 上按同一密钥重算；noneAlg 例外，它是把 alg 改成 none、
+// 签名段留空的攻击样本，无密钥可签。
+var (
+	testJwtValid   = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJVc2VySUQiOjEyMywiVXNlckFnZW50IjoidGVzdC1hZ2VudCIsImlzcyI6ImdhbGEiLCJzdWIiOiJhY2Nlc3MiLCJhdWQiOlsidGVzdF9hdWQiXSwiZXhwIjoyNzg5MTkxODIyLCJuYmYiOjE1MjY4ODQyMjIsImlhdCI6MTUyNjg4NDIyMiwianRpIjoianRpLTEifQ.HDHW98_dDPSETIwWZdz-j8BwBa1JeeipEIYsXfrwKdY"
+	testJwtExpired = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJVc2VySUQiOjEyMywiVXNlckFnZW50IjoidGVzdC1hZ2VudCIsImlzcyI6ImdhbGEiLCJzdWIiOiJhY2Nlc3MiLCJhdWQiOlsidGVzdF9hdWQiXSwiZXhwIjoxNTI2ODg3ODIyLCJuYmYiOjE1MjY4ODQyMjIsImlhdCI6MTUyNjg4NDIyMiwianRpIjoianRpLTEifQ.UuudfcmWcEUQBez7hFYPXRM1ZrpWinq7sth8-8p-dMk"
+	testJwtNbf     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJVc2VySUQiOjEyMywiVXNlckFnZW50IjoidGVzdC1hZ2VudCIsImlzcyI6ImdhbGEiLCJzdWIiOiJhY2Nlc3MiLCJhdWQiOlsidGVzdF9hdWQiXSwiZXhwIjoyNzg5MTkxODIyLCJuYmYiOjk5OTk4ODQyMjUsImlhdCI6MTUyNjg4NDIyMiwianRpIjoianRpLTEifQ.xlaGLtDErkevlV1aZ0IJaluAc7I_D7lxGJXDeTiYbDI"
+	testJwtBadSign = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJVc2VySUQiOjEyMywiVXNlckFnZW50IjoidGVzdC1hZ2VudCIsImlzcyI6ImdhbGEiLCJzdWIiOiJhY2Nlc3MiLCJhdWQiOlsidGVzdF9hdWQiXSwiZXhwIjoyNzg5MTkxODIyLCJuYmYiOjE1MjY4ODQyMjIsImlhdCI6MTUyNjg4NDIyMiwianRpIjoianRpLTEifQ.dzkyekCTsm6e-s-TqxIUd3Mbu5qmtfBlYCKKKTMh_is"
+	testJwtNoAud   = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJVc2VySUQiOjEyMywiVXNlckFnZW50IjoidGVzdC1hZ2VudCIsImlzcyI6ImdhbGEiLCJzdWIiOiJhY2Nlc3MiLCJleHAiOjI3ODkxOTE4MjIsIm5iZiI6MTUyNjg4NDIyMiwiaWF0IjoxNTI2ODg0MjIyLCJqdGkiOiJqdGktMSJ9.vOkABUbXkBMNLuzWAE1EA4URq3GdhJa25yXBFIV5des"
+	testJwtNoneAlg = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJVc2VySUQiOjEyMywiVXNlckFnZW50IjoidGVzdC1hZ2VudCIsImlzcyI6ImdhbGEiLCJzdWIiOiJhY2Nlc3MiLCJhdWQiOlsidGVzdF9hdWQiXSwiZXhwIjoyNzg5MTkxODIyLCJuYmYiOjE1MjY4ODQyMjIsImlhdCI6MTUyNjg4NDIyMiwianRpIjoianRpLTEifQ."
+)
+
+func testKeyFunc(*jwt.Token) (any, error) { return []byte(testKey), nil }
+
+func testClaims() *CustomClaims {
+	return &CustomClaims{
+		UserID:    123,
+		UserAgent: "test-agent",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:       "jti-1",
+			Issuer:   "gala",
+			Subject:  "access",
+			Audience: jwt.ClaimStrings{"test_aud"},
+			// 时间用 Local()：jwt/v5 解析出来的是 time.Unix() 的本地时间，不然 DeepEqual 比不过
+			IssuedAt:  jwt.NewNumericDate(time.Date(2018, 5, 21, 6, 30, 22, 0, time.UTC).Local()),
+			NotBefore: jwt.NewNumericDate(time.Date(2018, 5, 21, 6, 30, 22, 0, time.UTC).Local()),
+			ExpiresAt: jwt.NewNumericDate(time.Date(2058, 5, 21, 7, 30, 22, 0, time.UTC).Local()),
+		},
+	}
+}
+
+// testClaimsNoAud 同 testClaims 但没有 aud，用来证明 jwtx 默认不校验 aud
+func testClaimsNoAud() *CustomClaims {
+	c := testClaims()
+	c.Audience = nil
+	return c
+}
+
 func TestGenerateToken(t *testing.T) {
-	testKey := "testKey"
 	tProvider := func(*jwt.Token) (any, error) {
 		return []byte(testKey), nil
+	}
+	// 两边共用同一个 exp，签出的 token 串才能逐个字节相等
+	exp := jwt.NewNumericDate(time.Now().Add(time.Hour))
+	withExp := func() jwt.Claims {
+		return &CustomClaims{RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: exp}}
 	}
 	testCases := []struct {
 		// 名字
@@ -49,36 +94,45 @@ func TestGenerateToken(t *testing.T) {
 			after:  func(t *testing.T) {},
 			token: func() string {
 				tokenStr, err := jwt.
-					NewWithClaims(jwt.SigningMethodHS256, &CustomClaims{}).
+					NewWithClaims(jwt.SigningMethodHS256, withExp()).
 					SignedString([]byte(testKey))
 				assert.NoError(t, err)
 				return tokenStr
 			},
 			tokenProvider: tProvider,
 			signingMethod: jwt.SigningMethodHS256,
-			claims: func() jwt.Claims {
-				return &CustomClaims{}
-			},
-			wantErr: nil,
-			key:     testKey,
+			claims:        withExp,
+			wantErr:       nil,
+			key:           testKey,
 		},
 		{
 			name:   "CustomClaims 为 nil",
 			before: func(t *testing.T) {},
 			after:  func(t *testing.T) {},
 			token: func() string {
-				tokenStr, err := jwt.
-					NewWithClaims(jwt.SigningMethodHS256, nil).
-					SignedString([]byte(testKey))
-				assert.NoError(t, err)
-				return tokenStr
+				return "" // claims 为 nil 不再签发
 			},
 			tokenProvider: tProvider,
 			signingMethod: jwt.SigningMethodHS256,
 			claims: func() jwt.Claims {
 				return nil
 			},
-			wantErr: nil,
+			wantErr: ErrMissingClaims,
+			key:     testKey,
+		},
+		{
+			name:   "claims 没有 exp",
+			before: func(t *testing.T) {},
+			after:  func(t *testing.T) {},
+			token: func() string {
+				return "" // 没有 exp 不再签发，否则就是永不过期的 token
+			},
+			tokenProvider: tProvider,
+			signingMethod: jwt.SigningMethodHS256,
+			claims: func() jwt.Claims {
+				return &CustomClaims{UserID: 123}
+			},
+			wantErr: ErrNoExpiration,
 			key:     testKey,
 		},
 		{
@@ -86,19 +140,13 @@ func TestGenerateToken(t *testing.T) {
 			before: func(t *testing.T) {},
 			after:  func(t *testing.T) {},
 			token: func() string {
-				tokenStr, err := jwt.
-					NewWithClaims(jwt.SigningMethodHS256, &CustomClaims{}).
-					SignedString(nil)
-				assert.Error(t, err)
-				return tokenStr
+				return ""
 			},
 			tokenProvider: nil,
 			signingMethod: jwt.SigningMethodHS512,
-			claims: func() jwt.Claims {
-				return &CustomClaims{}
-			},
-			wantErr: ErrNeedTokenProvider,
-			key:     testKey,
+			claims:        withExp,
+			wantErr:       ErrNeedTokenProvider,
+			key:           testKey,
 		},
 	}
 
@@ -110,16 +158,16 @@ func TestGenerateToken(t *testing.T) {
 				WithClaims(tc.claims),
 				WithSigningMethod(jwt.SigningMethodHS256),
 			)
-			t.Logf("\n1: %s\n2: %s\n", tokenStr, tc.token())
-			assert.Equal(t, tc.wantErr, err)
-			assert.Equal(t, tokenStr, tc.token())
+			assert.ErrorIs(t, err, tc.wantErr)
+			if tc.wantErr == nil {
+				assert.Equal(t, tc.token(), tokenStr)
+			}
 			tc.after(t)
 		})
 	}
 }
 
 func TestParseToken(t *testing.T) {
-	testKey := "testKey"
 	tProvider := func(*jwt.Token) (any, error) {
 		return []byte(testKey), nil
 	}
@@ -217,15 +265,33 @@ func TestParseToken(t *testing.T) {
 				}
 			}
 
-			assert.Equal(t, tc.wantErr, err)
+			assert.ErrorIs(t, err, tc.wantErr)
 
 			tc.after(t)
 		})
 	}
 }
 
+func TestParseTokenGuards(t *testing.T) {
+	// 算法不符的 token 不进入调用方的 keyFunc
+	called := false
+	_, err := ParseToken(testJwtValid, func(*jwt.Token) (any, error) {
+		called = true
+		return []byte(testKey), nil
+	}, WithSigningMethod(jwt.SigningMethodHS512), WithClaims(func() jwt.Claims { return &CustomClaims{} }))
+	assert.ErrorIs(t, err, ErrUnSupportSigningMethod)
+	assert.False(t, called, "keyFunc 不该被非预期算法的 token 调到")
+
+	// 透传 parser option：过期 token 也解析得出来（签名照验，只是跳过时间校验），供刷新流程使用
+	tok, err := ParseToken(testJwtExpired, testKeyFunc,
+		WithClaims(func() jwt.Claims { return &CustomClaims{} }),
+		WithParserOptions(jwt.WithoutClaimsValidation()))
+	require.NoError(t, err)
+	require.NotNil(t, tok)
+	assert.True(t, tok.Valid)
+}
+
 func TestValidateToken(t *testing.T) {
-	testKey := "testKey"
 	tProvider := func(*jwt.Token) (any, error) {
 		return []byte(testKey), nil
 	}
@@ -337,7 +403,7 @@ func TestValidateToken(t *testing.T) {
 				WithClaims(tc.claims),
 				WithSigningMethod(tc.signingMethod),
 			)
-			assert.Equal(t, tc.wantErr, err)
+			assert.ErrorIs(t, err, tc.wantErr)
 			assert.Equal(t, tc.token(), tokenStr)
 			if err != nil {
 				return
@@ -351,7 +417,7 @@ func TestValidateToken(t *testing.T) {
 				}),
 				WithSigningMethod(tc.signingMethod),
 			)
-			assert.Equal(t, tc.wantErr, err)
+			assert.ErrorIs(t, err, tc.wantErr)
 			if err != nil {
 				return
 			}
@@ -365,4 +431,86 @@ func TestValidateToken(t *testing.T) {
 			tc.after(t)
 		})
 	}
+}
+
+// TestParseTokenCorpus 拿固定语料喂 ParseToken：成功的要 claims 全等，失败的要能从
+// errors.Is 链上认出 jwt/v5 的具体原因，而不是只有一句 ErrTokenInvalid。
+func TestParseTokenCorpus(t *testing.T) {
+	testCases := []struct {
+		name     string
+		tokenStr string
+		want     *CustomClaims // 非 nil 表示应当解析成功且 claims 逐个字段相等
+		wantErr  []error       // 全部都要命中 errors.Is
+	}{
+		{name: "有效 token", tokenStr: testJwtValid, want: testClaims()},
+		{name: "没有 aud 默认放行", tokenStr: testJwtNoAud, want: testClaimsNoAud()},
+		{name: "过期", tokenStr: testJwtExpired, wantErr: []error{ErrTokenInvalid, jwt.ErrTokenExpired}},
+		{name: "nbf 在未来", tokenStr: testJwtNbf, wantErr: []error{ErrTokenInvalid, jwt.ErrTokenNotValidYet}},
+		{name: "签名不对", tokenStr: testJwtBadSign, wantErr: []error{ErrTokenInvalid, jwt.ErrTokenSignatureInvalid}},
+		{name: "alg=none 攻击", tokenStr: testJwtNoneAlg, wantErr: []error{ErrUnSupportSigningMethod, jwt.ErrTokenUnverifiable}},
+		{name: "空串", tokenStr: "", wantErr: []error{ErrTokenInvalid, jwt.ErrTokenMalformed}},
+		{name: "段数不对", tokenStr: "bad.bad.bad", wantErr: []error{ErrTokenInvalid, jwt.ErrTokenMalformed}},
+		{name: "根本不是 token", tokenStr: "bad", wantErr: []error{ErrTokenInvalid, jwt.ErrTokenMalformed}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok, err := ParseToken(tc.tokenStr, testKeyFunc, WithClaims(func() jwt.Claims { return &CustomClaims{} }))
+
+			if tc.want != nil {
+				require.NoError(t, err)
+				require.NotNil(t, tok)
+				assert.Equal(t, tc.want, tok.Claims, "round-trip 回来的 claims 必须逐个字段相等")
+				assert.True(t, tok.Valid)
+				return
+			}
+
+			for _, want := range tc.wantErr {
+				assert.ErrorIs(t, err, want)
+			}
+			assert.Nil(t, tok, "解析失败不能漏出半成品 token")
+		})
+	}
+}
+
+// TestParseTokenSigningMethod 换算法必须双向成立：HS512 签的要能用 HS512 解析，
+// 否则「卡算法」就成了「一律拒绝」，而语料里的 HS256 用例察觉不到。
+func TestParseTokenSigningMethod(t *testing.T) {
+	tokenStr, err := GenerateToken(testKeyFunc,
+		WithSigningMethod(jwt.SigningMethodHS512), WithClaims(func() jwt.Claims { return testClaims() }))
+	require.NoError(t, err)
+
+	tok, err := ParseToken(tokenStr, testKeyFunc,
+		WithSigningMethod(jwt.SigningMethodHS512), WithClaims(func() jwt.Claims { return &CustomClaims{} }))
+	require.NoError(t, err)
+	assert.Equal(t, testClaims(), tok.Claims)
+
+	// 默认 HS256 解析同一个 token 必须被拒
+	_, err = ParseToken(tokenStr, testKeyFunc, WithClaims(func() jwt.Claims { return &CustomClaims{} }))
+	assert.ErrorIs(t, err, ErrUnSupportSigningMethod)
+}
+
+// TestParseTokenParserOptions 同一个 token，配置不同结论就该不同；顺带证明选项
+// 不跨调用泄漏（每次 ParseToken 都是新 Options）。
+func TestParseTokenParserOptions(t *testing.T) {
+	parse := func(tokenStr string, opts ...Option) error {
+		_, err := ParseToken(tokenStr, testKeyFunc,
+			append(opts, WithClaims(func() jwt.Claims { return &CustomClaims{} }))...)
+		return err
+	}
+
+	assert.NoError(t, parse(testJwtValid, WithParserOptions(jwt.WithAudience("test_aud"))))
+	assert.ErrorIs(t, parse(testJwtValid, WithParserOptions(jwt.WithAudience("other_aud"))), jwt.ErrTokenInvalidAudience)
+	assert.NoError(t, parse(testJwtValid, WithParserOptions(jwt.WithIssuer("gala"))))
+	assert.ErrorIs(t, parse(testJwtValid, WithParserOptions(jwt.WithIssuer("other"))), jwt.ErrTokenInvalidIssuer)
+
+	// 上面刚带过 WithAudience，这里不带必须恢复宽松，否则就是选项泄漏到了下一次调用
+	assert.NoError(t, parse(testJwtNoAud))
+	assert.NoError(t, parse(testJwtValid))
+}
+
+// 没配 WithClaims 时 o.claims 是 nil，调它就是 nil func → panic。锁住现状：
+// 想让它返回 ErrMissingClaims 而不是 panic，就在 GenerateToken 里补 o.claims == nil 守卫。
+func TestGenerateTokenWithoutClaimsPanics(t *testing.T) {
+	assert.Panics(t, func() { _, _ = GenerateToken(testKeyFunc) })
 }

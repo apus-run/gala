@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/pkg/id
 
-go 1.25
+go 1.27
 
 require (
 	github.com/sony/sonyflake/v2 v2.2.0

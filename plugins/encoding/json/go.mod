@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/plugins/encoding/json
 
-go 1.25
+go 1.27
 
 require github.com/apus-run/gala/plugins/encoding v0.0.0
 

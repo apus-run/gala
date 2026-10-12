@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/conf
 
-go 1.25
+go 1.27
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0

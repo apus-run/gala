@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/pkg/jsonx
 
-go 1.25
+go 1.27
 
 require (
 	github.com/bytedance/sonic v1.15.0

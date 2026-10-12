@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/pkg/validator
 
-go 1.25
+go 1.27
 
 require (
 	github.com/go-playground/locales v0.14.1

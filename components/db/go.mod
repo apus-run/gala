@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/db
 
-go 1.25
+go 1.27
 
 require (
 	github.com/apus-run/gala/pkg/lang v0.0.0-20251114123351-8359a2c70c91

@@ -6,7 +6,7 @@
 
 ## Go 版本与安装
 
-当前 ginx 模块要求 **Go 1.25 或更高版本**，本包使用 Gin，不依赖 Fiber。
+当前 ginx 模块要求 **Go 1.27 或更高版本**，本包使用 Gin，不依赖 Fiber。
 
 ```sh
 go get github.com/apus-run/gala/components/ginx

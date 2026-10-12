@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/plugins/transport/mcp
 
-go 1.25.5
+go 1.27
 
 require github.com/mark3labs/mcp-go v0.55.0
 

@@ -2,21 +2,23 @@ package authn
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/apus-run/gala/pkg/jwtx"
 
 	rdb "github.com/apus-run/gala/components/authn/store"
 )
 
 var _ Authenticator = (*JwtAuth)(nil)
 
+// 直接复用 jwtx 的错误，避免两处各定义一份再慢慢漂移
 var (
-	ErrTokenInvalid           = errors.New("token is invalid")
-	ErrUnSupportSigningMethod = errors.New("wrong signing method")
-	ErrSignToken              = errors.New("can not sign token. is the key correct")
-	ErrGetKey                 = errors.New("can not get key while signing token")
+	ErrTokenInvalid           = jwtx.ErrTokenInvalid
+	ErrUnSupportSigningMethod = jwtx.ErrUnSupportSigningMethod
+	ErrSignToken              = jwtx.ErrSignToken
+	ErrGetKey                 = jwtx.ErrGetKey
 )
 
 // JwtAuth implement the authn.Authenticator interface.
@@ -35,19 +37,15 @@ func NewJwtAuth(store rdb.Storer, opts ...Option) *JwtAuth {
 }
 
 func (j *JwtAuth) Sign(ctx context.Context) (Token, error) {
-	now := time.Now()
-	expiresAt := now.Add(j.expired)
-
 	tokenString, err := j.GenerateToken(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tokenInfo := &tokenInfo{
+	return &tokenInfo{
 		Token:     tokenString,
 		Type:      j.tokenType,
-		ExpiresAt: expiresAt.Unix(),
-	}
-	return tokenInfo, nil
+		ExpiresAt: time.Now().Add(j.expired).Unix(),
+	}, nil
 }
 
 func (j *JwtAuth) Destroy(ctx context.Context, refreshToken string) error {
@@ -101,46 +99,17 @@ func (j *JwtAuth) ParseClaims(ctx context.Context, accessToken string) (*jwt.Reg
 	return claims, nil
 }
 
-func (j *JwtAuth) ParseToken(_ context.Context, accessToken string) (token *jwt.Token, err error) {
+func (j *JwtAuth) ParseToken(_ context.Context, accessToken string) (*jwt.Token, error) {
 	if accessToken == "" {
 		return nil, ErrTokenInvalid
 	}
-
-	if j.claims != nil {
-		token, err = jwt.ParseWithClaims(accessToken, j.claims(), j.keyFunc)
-	} else {
-		token, err = jwt.Parse(accessToken, j.keyFunc)
-	}
-
-	// 过期的, 伪造的, 都可以认为是无效token
-	if err != nil || token == nil || !token.Valid {
-		return nil, ErrTokenInvalid
-	}
-
-	if token.Method != j.signingMethod {
-		return nil, ErrUnSupportSigningMethod
-	}
-
-	return token, nil
+	return jwtx.ParseToken(accessToken, j.keyFunc,
+		jwtx.WithSigningMethod(j.signingMethod), jwtx.WithClaims(j.claims))
 }
 
 func (j *JwtAuth) GenerateToken(_ context.Context) (string, error) {
-	token := jwt.NewWithClaims(j.signingMethod, j.claims())
-	if j.tokenHeader != nil {
-		for k, v := range j.tokenHeader {
-			token.Header[k] = v
-		}
-	}
-	key, err := j.keyFunc(token)
-	if err != nil {
-		return "", ErrGetKey
-	}
-	tokenStr, err := token.SignedString(key)
-	if err != nil {
-		return "", ErrSignToken
-	}
-
-	return tokenStr, nil
+	return jwtx.GenerateToken(j.keyFunc,
+		jwtx.WithSigningMethod(j.signingMethod), jwtx.WithClaims(j.claims), jwtx.WithTokenHeader(j.tokenHeader))
 }
 
 func (j *JwtAuth) callStore(fn func(rdb.Storer) error) error {

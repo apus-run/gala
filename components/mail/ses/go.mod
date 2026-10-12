@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/mail/ses
 
-go 1.25
+go 1.27
 
 require (
 	github.com/apus-run/gala/components/mail v0.10.0

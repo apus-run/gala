@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/plugins/registry/etcd
 
-go 1.25
+go 1.27
 
 require (
 	github.com/apus-run/gala v0.8.3

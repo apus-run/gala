@@ -27,7 +27,7 @@ type Options struct {
 
 // DefaultOptions .
 func DefaultOptions() *Options {
-	return &Options{
+	options := &Options{
 		tokenType:     "Bearer",
 		expired:       2 * time.Hour,
 		signingMethod: jwt.SigningMethodHS256,
@@ -38,6 +38,14 @@ func DefaultOptions() *Options {
 			return []byte(defaultKey), nil
 		},
 	}
+	// 没给 claims factory 时用它。绑在 options 上，读的是 Apply 之后最终的 expired
+	options.claims = options.expiringClaims
+	return options
+}
+
+// expiringClaims 是默认 claims：只带 exp，寿命取 WithExpired
+func (o *Options) expiringClaims() jwt.Claims {
+	return &jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(o.expired))}
 }
 
 func Apply(opts ...Option) *Options {
@@ -78,7 +86,8 @@ func WithKeyFunc(keyFunc jwt.Keyfunc) Option {
 	}
 }
 
-// WithExpired set the token expiration time (in seconds, default 2h).
+// WithExpired sets the lifetime used when no claims factory is provided.
+// A factory that sets exp itself is used as-is. Default is 2h.
 func WithExpired(expired time.Duration) Option {
 	return func(o *Options) {
 		o.expired = expired

@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/cache
 
-go 1.25
+go 1.27
 
 require (
 	github.com/apus-run/gala/pkg/lang v0.6.9

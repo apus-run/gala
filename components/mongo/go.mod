@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/mongo
 
-go 1.25
+go 1.27
 
 require (
 	github.com/apus-run/gala/components/log v0.0.0-20251212142758-5fad7ed6a656

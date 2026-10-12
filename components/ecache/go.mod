@@ -1,6 +1,6 @@
 module github.com/apus-run/gala/components/ecache
 
-go 1.25
+go 1.27
 
 require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
