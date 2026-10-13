@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 )
 
@@ -121,8 +122,8 @@ func MetricsMiddleware(logger *slog.Logger) Middleware {
 // Chain chains multiple middlewares together
 func Chain(middlewares ...Middleware) Middleware {
 	return func(handler Handler) Handler {
-		for i := len(middlewares) - 1; i >= 0; i-- {
-			handler = middlewares[i](handler)
+		for _, middleware := range slices.Backward(middlewares) {
+			handler = middleware(handler)
 		}
 		return handler
 	}

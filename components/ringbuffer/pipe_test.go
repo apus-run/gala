@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +65,7 @@ func TestPipe2(t *testing.T) {
 	r, w := New(256).Pipe()
 	go reader(t, r, c)
 	var buf = make([]byte, 64)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		p := buf[0 : 5+i*10]
 		n, err := w.Write(p)
 		if n != len(p) {
@@ -102,7 +102,7 @@ func TestPipe3(t *testing.T) {
 	c := make(chan pipeReturn)
 	r, w := New(256).Pipe()
 	var wdat = make([]byte, 128)
-	for i := 0; i < len(wdat); i++ {
+	for i := range wdat {
 		wdat[i] = byte(i)
 	}
 	go writer(w, wdat, c)
@@ -136,7 +136,7 @@ func TestPipe3(t *testing.T) {
 	if tot != 128 {
 		t.Fatalf("total read %d != 128", tot)
 	}
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if rdat[i] != byte(i) {
 			t.Fatalf("rdat[%d] = %d", i, rdat[i])
 		}
@@ -354,7 +354,7 @@ func TestPipeConcurrent(t *testing.T) {
 	t.Run("Write", func(t *testing.T) {
 		r, w := New(256).Pipe()
 
-		for i := 0; i < count; i++ {
+		for range count {
 			go func() {
 				time.Sleep(time.Millisecond) // Increase probability of race
 				if n, err := w.Write([]byte(input)); n != len(input) || err != nil {
@@ -394,7 +394,7 @@ func TestPipeConcurrent(t *testing.T) {
 			}()
 		}
 
-		for i := 0; i < count; i++ {
+		for range count {
 			if n, err := w.Write([]byte(input)); n != len(input) || err != nil {
 				t.Errorf("Write() = (%d, %v); want (%d, nil)", n, err, len(input))
 			}
@@ -421,6 +421,6 @@ func sortBytesInGroups(b []byte, n int) []byte {
 		groups = append(groups, b[:n])
 		b = b[n:]
 	}
-	sort.Slice(groups, func(i, j int) bool { return bytes.Compare(groups[i], groups[j]) < 0 })
+	slices.SortFunc(groups, bytes.Compare)
 	return bytes.Join(groups, nil)
 }

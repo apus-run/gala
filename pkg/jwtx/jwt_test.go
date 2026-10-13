@@ -39,16 +39,14 @@ func testClaims() *CustomClaims {
 	return &CustomClaims{
 		UserID:    123,
 		UserAgent: "test-agent",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ID:       "jti-1",
-			Issuer:   "gala",
-			Subject:  "access",
-			Audience: jwt.ClaimStrings{"test_aud"},
-			// 时间用 Local()：jwt/v5 解析出来的是 time.Unix() 的本地时间，不然 DeepEqual 比不过
-			IssuedAt:  jwt.NewNumericDate(time.Date(2018, 5, 21, 6, 30, 22, 0, time.UTC).Local()),
-			NotBefore: jwt.NewNumericDate(time.Date(2018, 5, 21, 6, 30, 22, 0, time.UTC).Local()),
-			ExpiresAt: jwt.NewNumericDate(time.Date(2058, 5, 21, 7, 30, 22, 0, time.UTC).Local()),
-		},
+		ID:        "jti-1",
+		Issuer:    "gala",
+		Subject:   "access",
+		Audience:  jwt.ClaimStrings{"test_aud"},
+		// 时间用 Local()：jwt/v5 解析出来的是 time.Unix() 的本地时间，不然 DeepEqual 比不过
+		IssuedAt:  jwt.NewNumericDate(time.Date(2018, 5, 21, 6, 30, 22, 0, time.UTC).Local()),
+		NotBefore: jwt.NewNumericDate(time.Date(2018, 5, 21, 6, 30, 22, 0, time.UTC).Local()),
+		ExpiresAt: jwt.NewNumericDate(time.Date(2058, 5, 21, 7, 30, 22, 0, time.UTC).Local()),
 	}
 }
 
@@ -66,7 +64,7 @@ func TestGenerateToken(t *testing.T) {
 	// 两边共用同一个 exp，签出的 token 串才能逐个字节相等
 	exp := jwt.NewNumericDate(time.Now().Add(time.Hour))
 	withExp := func() jwt.Claims {
-		return &CustomClaims{RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: exp}}
+		return &CustomClaims{ExpiresAt: exp}
 	}
 	testCases := []struct {
 		// 名字
@@ -326,12 +324,10 @@ func TestValidateToken(t *testing.T) {
 					NewWithClaims(jwt.SigningMethodHS256, &CustomClaims{
 						UserID:    123,
 						UserAgent: "test-agent",
-						RegisteredClaims: jwt.RegisteredClaims{
-							Subject:   "access",
-							ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
-							IssuedAt:  jwt.NewNumericDate(now),
-							NotBefore: jwt.NewNumericDate(now),
-						},
+						Subject:   "access",
+						ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
+						IssuedAt:  jwt.NewNumericDate(now),
+						NotBefore: jwt.NewNumericDate(now),
 					}).
 					SignedString([]byte(testKey))
 				assert.NoError(t, err)
@@ -343,12 +339,10 @@ func TestValidateToken(t *testing.T) {
 				return &CustomClaims{
 					UserID:    123,
 					UserAgent: "test-agent",
-					RegisteredClaims: jwt.RegisteredClaims{
-						Subject:   "access",
-						ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
-						IssuedAt:  jwt.NewNumericDate(now),
-						NotBefore: jwt.NewNumericDate(now),
-					},
+					Subject:   "access",
+					ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
+					IssuedAt:  jwt.NewNumericDate(now),
+					NotBefore: jwt.NewNumericDate(now),
 				}
 			},
 			want:    "access",
@@ -364,12 +358,10 @@ func TestValidateToken(t *testing.T) {
 					NewWithClaims(jwt.SigningMethodHS256, &CustomClaims{
 						UserID:    123,
 						UserAgent: "test-agent",
-						RegisteredClaims: jwt.RegisteredClaims{
-							Subject:   "refresh",
-							ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
-							IssuedAt:  jwt.NewNumericDate(now),
-							NotBefore: jwt.NewNumericDate(now),
-						},
+						Subject:   "refresh",
+						ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
+						IssuedAt:  jwt.NewNumericDate(now),
+						NotBefore: jwt.NewNumericDate(now),
 					}).
 					SignedString([]byte(testKey))
 				assert.NoError(t, err)
@@ -381,12 +373,10 @@ func TestValidateToken(t *testing.T) {
 				return &CustomClaims{
 					UserID:    123,
 					UserAgent: "test-agent",
-					RegisteredClaims: jwt.RegisteredClaims{
-						Subject:   "refresh",
-						ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
-						IssuedAt:  jwt.NewNumericDate(now),
-						NotBefore: jwt.NewNumericDate(now),
-					},
+					Subject:   "refresh",
+					ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
+					IssuedAt:  jwt.NewNumericDate(now),
+					NotBefore: jwt.NewNumericDate(now),
 				}
 			},
 			want:    "refresh",

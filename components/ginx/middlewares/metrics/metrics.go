@@ -128,10 +128,7 @@ func Metrics(r *gin.Engine, opts ...Option) gin.HandlerFunc {
 		}
 
 		// no response content will return -1
-		respSize := c.Writer.Size()
-		if respSize < 0 {
-			respSize = 0
-		}
+		respSize := max(c.Writer.Size(), 0)
 
 		lvs := []string{strconv.Itoa(c.Writer.Status()), c.Request.URL.Path, c.Request.Method}
 		reqCount.WithLabelValues(lvs...).Inc()

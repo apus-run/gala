@@ -3,8 +3,6 @@ package conv
 import (
 	"encoding/json"
 	"strconv"
-
-	"github.com/apus-run/gala/pkg/lang/ptr"
 )
 
 // StrToInt64E returns strconv.ParseInt(v, 10, 64)
@@ -51,8 +49,8 @@ func BoolToIntPointer(p *bool) *int {
 	}
 
 	if *p == true {
-		return ptr.Of(int(1))
+		return new(int(1))
 	}
 
-	return ptr.Of(int(0))
+	return new(int(0))
 }

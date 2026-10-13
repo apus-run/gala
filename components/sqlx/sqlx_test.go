@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,8 +44,36 @@ type brokenModel struct {
 
 func (b *brokenModel) TableName() string { return "broken" }
 
-// 故意返回一个不存在的列名，触发 bindArgs 中的字段查找失败
+// 故意返回一个不存在的主键列名。
 func (b *brokenModel) KeyName() string { return "missing" }
+
+// onlyKeyModel 只有主键列，用于测试零值主键剔除后无列可插/可改的失败场景
+type onlyKeyModel struct {
+	ID int64 `db:"id"`
+}
+
+func (o *onlyKeyModel) TableName() string { return "onlykey" }
+func (o *onlyKeyModel) KeyName() string   { return "id" }
+
+// nestedModel 带非嵌入嵌套结构体，用于测试生成 SQL 前拒绝点分列名
+type nestedModel struct {
+	ID      int64 `db:"id"`
+	Profile struct {
+		City string `db:"city"`
+	} `db:"profile"`
+}
+
+func (n *nestedModel) TableName() string { return "nested" }
+func (n *nestedModel) KeyName() string   { return "id" }
+
+// valueModel 值接收器实现 Modeler，用于测试值类型模型
+type valueModel struct {
+	ID   int64  `db:"id"`
+	Name string `db:"name"`
+}
+
+func (v valueModel) TableName() string { return "value_models" }
+func (v valueModel) KeyName() string   { return "id" }
 
 // -----------------------------------------------------------------------------
 // 测试辅助函数
@@ -209,15 +239,15 @@ func TestNewDB_Success(t *testing.T) {
 }
 
 func TestNewDB_BadDSN(t *testing.T) {
-	if _, err := NewDB(WithDSN("not a url ::: %%%")); err == nil {
-		t.Fatal("expected parse error for bad DSN")
+	if _, err := NewDB(WithDSN("not a url ::: %%%")); err == nil || !strings.HasPrefix(err.Error(), "unable to parse database URL:") || errors.Unwrap(err) == nil {
+		t.Fatalf("expected wrapped parse error, got %v", err)
 	}
 }
 
 func TestNewDB_UnknownDriver(t *testing.T) {
 	// dburl 解析成功但驱动未注册时应返回连接错误
-	if _, err := NewDB(WithDSN("nodriver://localhost/x")); err == nil {
-		t.Fatal("expected error for unknown driver scheme")
+	if _, err := NewDB(WithDSN("postgres://localhost/x")); err == nil || !strings.HasPrefix(err.Error(), "unable to connect to database:") || errors.Unwrap(err) == nil || !strings.Contains(err.Error(), "unknown driver") {
+		t.Fatalf("expected wrapped unregistered-driver error after successful URL parsing, got %v", err)
 	}
 }
 
@@ -346,6 +376,50 @@ func TestDB_Insert_BrokenModelReturnsError(t *testing.T) {
 
 	if _, err := db.Insert(&brokenModel{ID: 1}); err == nil {
 		t.Fatal("expected error when modeler references missing field")
+	}
+}
+
+// 坏模型必须在生成 SQL 前返回错误，绝不 panic（nil 模型曾触发全局 mapper 死锁）
+func TestDB_Insert_NilModelReturnsError(t *testing.T) {
+	db := newTestDB(t)
+
+	if _, err := db.Insert(nil); err == nil {
+		t.Fatal("expected error for nil model")
+	}
+	if _, err := db.Update(nil); err == nil {
+		t.Fatal("expected error for nil model")
+	}
+	if _, err := db.Insert((*User)(nil)); err == nil {
+		t.Fatal("expected error for typed-nil model")
+	}
+}
+
+// 非嵌入嵌套结构体会生成点分列名的畸形 SQL，应在入口拒绝
+func TestDB_Insert_NestedStructModelReturnsError(t *testing.T) {
+	db := newTestDB(t)
+
+	if _, err := db.Insert(&nestedModel{ID: 1}); err == nil {
+		t.Fatal("expected error for nested struct model")
+	}
+}
+
+// 唯一列是零值主键：剔除后无列可插，应报错而非 panic
+func TestDB_Insert_OnlyZeroKeyModelReturnsError(t *testing.T) {
+	db := newTestDB(t)
+	mustExec(t, db, `CREATE TABLE onlykey (id INTEGER PRIMARY KEY)`)
+
+	if _, err := db.Insert(&onlyKeyModel{}); err == nil || !strings.Contains(err.Error(), "no column to insert") {
+		t.Fatalf("expected model validation error when no column left to insert, got %v", err)
+	}
+}
+
+// 只有主键列的 UPDATE 没有 SET 子句，应报错而非生成畸形 SQL
+func TestDB_Update_OnlyKeyModelReturnsError(t *testing.T) {
+	db := newTestDB(t)
+	mustExec(t, db, `CREATE TABLE onlykey (id INTEGER PRIMARY KEY)`)
+
+	if _, err := db.Update(&onlyKeyModel{ID: 1}); err == nil || !strings.Contains(err.Error(), "no non-key column to update") {
+		t.Fatalf("expected model validation error when no non-key column to update, got %v", err)
 	}
 }
 
@@ -670,12 +744,12 @@ func TestBindModeler_PointerAndValueAndSorted(t *testing.T) {
 		}
 	}
 
-	// 直接对值类型调用也应工作
-	names2, _, err := bindModeler(*u, mapper)
+	// 值接收器实现的模型（值类型）也应工作
+	names2, _, err := bindModeler(valueModel{ID: 1, Name: "a"}, mapper)
 	if err != nil {
 		t.Fatalf("bindModeler(value): %v", err)
 	}
-	if !equalStrings(names2, wantNames) {
+	if !equalStrings(names2, []string{"id", "name"}) {
 		t.Fatalf("names(value) not sorted: got %v", names2)
 	}
 }
@@ -685,7 +759,7 @@ func TestBindArgs_FieldNotFoundError(t *testing.T) {
 	mapper := db.GetMapper()
 
 	// 给 User 显式构造一个不存在的列名，应该返回错误
-	_, err := bindArgs([]string{"id", "not_a_field"}, &User{ID: 1}, mapper)
+	_, err := bindArgs([]string{"id", "not_a_field"}, reflect.ValueOf(User{ID: 1}), mapper)
 	if err == nil {
 		t.Fatal("expected error for missing field")
 	}

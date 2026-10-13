@@ -32,12 +32,12 @@ import (
 // ⚠️  WARNING: The returned pointer does not point to the original value because
 // Go is always pass by value, user CAN NOT modify the value by modifying the pointer.
 func Of[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 // ToPtr returns a pointer to the given value.
 func ToPtr[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 // From returns the value pointed to by the pointer p.
@@ -68,7 +68,7 @@ func ConvIntPtr[T, K Integer](p *T) *K {
 	if p == nil {
 		return nil
 	}
-	return Of((K)(*p))
+	return new((K)(*p))
 }
 
 // Indirect returns the value pointed to by the pointer p.
@@ -185,7 +185,7 @@ func Map[F, T any](p *F, f func(F) T) *T {
 	if p == nil {
 		return nil
 	}
-	return ToPtr(f(*p))
+	return new(f(*p))
 }
 
 // AllPtrFieldsNil tests whether all pointer fields in a struct are nil.  This is useful when,
@@ -205,8 +205,8 @@ func AllPtrFieldsNil(obj any) bool {
 		}
 		v = v.Elem()
 	}
-	for i := range v.NumField() {
-		if v.Field(i).Kind() == reflect.Ptr && !v.Field(i).IsNil() {
+	for _, field := range v.Fields() {
+		if field.Kind() == reflect.Ptr && !field.IsNil() {
 			return false
 		}
 	}

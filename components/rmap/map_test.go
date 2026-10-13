@@ -547,8 +547,7 @@ func TestJoinErrors(t *testing.T) {
 
 func TestSetErrors(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:16379", Password: redisPwd})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	m, err := Join(ctx, "test", rdb)
 	require.NoError(t, err)

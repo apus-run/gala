@@ -91,7 +91,7 @@ func (m Message) Validate() error {
 // colon. Iterate by byte so non-ASCII names are rejected rather than partially
 // accepted as UTF-8.
 func validHeaderName(name string) bool {
-	for i := 0; i < len(name); i++ {
+	for i := range len(name) {
 		if name[i] < 33 || name[i] > 126 || name[i] == ':' {
 			return false
 		}
@@ -103,7 +103,7 @@ func validHeaderName(name string) bool {
 // ASCII, and UTF-8 values. CR and LF remain forbidden, so callers cannot fold or
 // inject additional fields.
 func validHeaderValue(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		if value[i] == '\t' {
 			continue
 		}

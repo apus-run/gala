@@ -17,9 +17,9 @@ type ExponentialBackoffRetryStrategy struct {
 	// 最大重试次数
 	maxRetries int32
 	// 当前重试次数
-	retries int32
+	retries atomic.Int32
 	// 是否已经达到最大重试间隔
-	maxIntervalReached atomic.Value
+	maxIntervalReached atomic.Bool
 }
 
 func NewExponentialBackoffRetryStrategy(initialInterval, maxInterval time.Duration, maxRetries int32) *ExponentialBackoffRetryStrategy {
@@ -40,7 +40,7 @@ func (s *ExponentialBackoffRetryStrategy) NextWithRetries(retries int32) (time.D
 
 func (s *ExponentialBackoffRetryStrategy) nextWithRetries(retries int32) (time.Duration, bool) {
 	if s.maxRetries <= 0 || retries <= s.maxRetries {
-		if reached, ok := s.maxIntervalReached.Load().(bool); ok && reached {
+		if s.maxIntervalReached.Load() {
 			return s.maxInterval, true
 		}
 		const two = 2
@@ -56,6 +56,6 @@ func (s *ExponentialBackoffRetryStrategy) nextWithRetries(retries int32) (time.D
 }
 
 func (s *ExponentialBackoffRetryStrategy) Next() (time.Duration, bool) {
-	retries := atomic.AddInt32(&s.retries, 1)
+	retries := s.retries.Add(1)
 	return s.nextWithRetries(retries)
 }

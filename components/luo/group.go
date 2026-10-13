@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/apus-run/gala/pkg/chain"
 )
 
 // Group represents a set of routes with associated middleware.
@@ -303,15 +305,13 @@ func (g *Group) wrapMiddleware(handler http.Handler) http.Handler {
 	}
 
 	// child group: apply only middlewares added after mounting (exclude inherited root middlewares)
-	start := g.rootCount
-	if start > len(g.middlewares) {
-		start = len(g.middlewares) // safety: ensure start doesn't exceed bounds
-	}
+	// Ensure start doesn't exceed bounds.
+	start := min(g.rootCount, len(g.middlewares))
 
-	for i := len(g.middlewares) - 1; i >= start; i-- {
-		handler = g.middlewares[i](handler)
+	if start == len(g.middlewares) {
+		return handler
 	}
-	return handler
+	return chain.Chain(g.middlewares[start], g.middlewares[start+1:]...)(handler)
 }
 
 func (g *Group) clone() *Group {
@@ -329,10 +329,7 @@ func (g *Group) clone() *Group {
 
 // Wrap directly wraps the handler with the provided middleware(s).
 func Wrap(handler http.Handler, mw1 func(http.Handler) http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
-	for i := len(mws) - 1; i >= 0; i-- {
-		handler = mws[i](handler)
-	}
-	return mw1(handler) // apply the first middleware
+	return chain.Chain(mw1, mws...)(handler)
 }
 
 // wrapGlobal applies only the root group's middlewares to the provided handler.
@@ -342,10 +339,10 @@ func (g *Group) wrapGlobal(handler http.Handler) http.Handler {
 	if g.root != nil {
 		root = g.root
 	}
-	for i := len(root.middlewares) - 1; i >= 0; i-- {
-		handler = root.middlewares[i](handler)
+	if len(root.middlewares) == 0 {
+		return handler
 	}
-	return handler
+	return chain.Chain(root.middlewares[0], root.middlewares[1:]...)(handler)
 }
 
 // lockRoot marks this group as having registered routes.

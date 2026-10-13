@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -135,9 +136,7 @@ func (sm *Map) Map() map[string]string {
 	defer sm.lock.RUnlock()
 
 	hash := make(map[string]string, len(sm.content))
-	for k, v := range sm.content {
-		hash[k] = v
-	}
+	maps.Copy(hash, sm.content)
 	return hash
 }
 

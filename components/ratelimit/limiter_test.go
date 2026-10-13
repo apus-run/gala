@@ -14,7 +14,7 @@ func TestLocalLimiterAllowsWithinBudget(t *testing.T) {
 	l := New(nil, "test:", time.Minute, "inst")
 	ctx := context.Background()
 	const max = 3
-	for i := 0; i < max; i++ {
+	for i := range max {
 		if !l.Allow(ctx, "k1", max) {
 			t.Fatalf("request %d should be allowed", i+1)
 		}
@@ -34,7 +34,7 @@ func TestRedisLimiterCountsRequestsInSameMillisecond(t *testing.T) {
 	l.now = func() time.Time { return fixedNow }
 
 	const max = 3
-	for i := 0; i < max; i++ {
+	for i := range max {
 		if !l.Allow(context.Background(), "same-ms", max) {
 			t.Fatalf("request %d in the same millisecond should be allowed", i+1)
 		}
@@ -87,7 +87,7 @@ func TestLocalLimiterIndependentKeys(t *testing.T) {
 
 func TestAllowSkipsWhenMaxZero(t *testing.T) {
 	l := New(nil, "test:", time.Minute, "inst")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if !l.Allow(context.Background(), "k", 0) {
 			t.Fatal("max<=0 should always allow")
 		}
@@ -155,15 +155,13 @@ func TestLocalLimiterConcurrentAllowAndCleanup(t *testing.T) {
 	const workers = 32
 
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range workers {
+		wg.Go(func() {
+			for range 100 {
 				l.allow("key", time.Minute, workers*100, now)
 				l.cleanupExpired(time.Minute, now)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

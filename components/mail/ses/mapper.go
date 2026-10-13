@@ -20,7 +20,7 @@ const charsetUTF8 = "UTF-8"
 // 均为深拷贝，映射完成后请求不再引用调用方数据。
 func mapMessage(msg mail.Message, configurationSet string) *sesv2.SendEmailInput {
 	input := &sesv2.SendEmailInput{
-		FromEmailAddress: ptr(msg.From.String()),
+		FromEmailAddress: new(msg.From.String()),
 		Destination: &types.Destination{
 			ToAddresses:  addressStrings(msg.To),
 			CcAddresses:  addressStrings(msg.Cc),
@@ -29,8 +29,8 @@ func mapMessage(msg mail.Message, configurationSet string) *sesv2.SendEmailInput
 		Content: &types.EmailContent{
 			Simple: &types.Message{
 				Subject: &types.Content{
-					Data:    ptr(msg.Subject),
-					Charset: ptr(charsetUTF8),
+					Data:    new(msg.Subject),
+					Charset: new(charsetUTF8),
 				},
 				Body:        mapBody(msg),
 				Headers:     mapHeaders(msg.Headers),
@@ -43,7 +43,7 @@ func mapMessage(msg mail.Message, configurationSet string) *sesv2.SendEmailInput
 		input.ReplyToAddresses = []string{msg.ReplyTo.String()}
 	}
 	if configurationSet != "" {
-		input.ConfigurationSetName = ptr(configurationSet)
+		input.ConfigurationSetName = new(configurationSet)
 	}
 	return input
 }
@@ -51,10 +51,10 @@ func mapMessage(msg mail.Message, configurationSet string) *sesv2.SendEmailInput
 func mapBody(msg mail.Message) *types.Body {
 	body := &types.Body{}
 	if msg.Text != "" {
-		body.Text = &types.Content{Data: ptr(msg.Text), Charset: ptr(charsetUTF8)}
+		body.Text = &types.Content{Data: new(msg.Text), Charset: new(charsetUTF8)}
 	}
 	if msg.HTML != "" {
-		body.Html = &types.Content{Data: ptr(msg.HTML), Charset: ptr(charsetUTF8)}
+		body.Html = &types.Content{Data: new(msg.HTML), Charset: new(charsetUTF8)}
 	}
 	return body
 }
@@ -66,7 +66,7 @@ func mapHeaders(headers map[string]string) []types.MessageHeader {
 	}
 	out := make([]types.MessageHeader, 0, len(headers))
 	for _, name := range slices.Sorted(maps.Keys(headers)) {
-		out = append(out, types.MessageHeader{Name: ptr(name), Value: ptr(headers[name])})
+		out = append(out, types.MessageHeader{Name: new(name), Value: new(headers[name])})
 	}
 	return out
 }
@@ -78,7 +78,7 @@ func mapTags(tags map[string]string) []types.MessageTag {
 	}
 	out := make([]types.MessageTag, 0, len(tags))
 	for _, name := range slices.Sorted(maps.Keys(tags)) {
-		out = append(out, types.MessageTag{Name: ptr(name), Value: ptr(tags[name])})
+		out = append(out, types.MessageTag{Name: new(name), Value: new(tags[name])})
 	}
 	return out
 }
@@ -101,7 +101,7 @@ func mapAttachment(a mail.Attachment) types.Attachment {
 	}
 
 	return types.Attachment{
-		FileName:                ptr(a.Filename),
+		FileName:                new(a.Filename),
 		RawContent:              bytes.Clone(a.Content),
 		ContentType:             optionalString(a.ContentType),
 		ContentId:               optionalString(a.ContentID),
@@ -121,13 +121,11 @@ func addressStrings(addrs []mail.Address) []string {
 	return out
 }
 
-func ptr(s string) *string { return &s }
-
 func optionalString(s string) *string {
 	if s == "" {
 		return nil
 	}
-	return &s
+	return new(s)
 }
 
 // validateMessageSize 在任何深拷贝与 SDK 序列化之前，检查近似原始

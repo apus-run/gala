@@ -129,7 +129,7 @@ func releaser(t *testing.T, release chan struct{}) func() {
 // trip drives the circuit open through the middleware.
 func trip(t *testing.T, app *gin.Engine, failures int) {
 	t.Helper()
-	for i := 0; i < failures; i++ {
+	for range failures {
 		get(t, app, "/fail")
 	}
 }
@@ -260,7 +260,7 @@ func TestHalfOpenAdmitsAtMostMaxConcurrent(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
-	var halfOpenCalls int64
+	var halfOpenCalls atomic.Int64
 	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold:      1,
 		SuccessThreshold:      99, // never close, so the window stays open
@@ -268,7 +268,7 @@ func TestHalfOpenAdmitsAtMostMaxConcurrent(t *testing.T) {
 		Timeout:               time.Minute,
 		Clock:                 clock.Now,
 		OnHalfOpen: func(c *gin.Context) {
-			atomic.AddInt64(&halfOpenCalls, 1)
+			halfOpenCalls.Add(1)
 			c.Status(http.StatusTooManyRequests)
 		},
 	})
@@ -298,7 +298,7 @@ func TestHalfOpenAdmitsAtMostMaxConcurrent(t *testing.T) {
 
 	resp := get(t, app, "/block")
 	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "a third concurrent probe is refused")
-	require.Equal(t, int64(1), atomic.LoadInt64(&halfOpenCalls))
+	require.Equal(t, int64(1), halfOpenCalls.Load())
 
 	releaseAll()
 	for _, r := range held {
@@ -565,7 +565,7 @@ func TestCustomFailureDetection(t *testing.T) {
 	trip(t, app, 5)
 	require.Equal(t, circuitbreaker.StateClosed, cb.GetState(), "500 is not a failure under this detector")
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		get(t, app, "/missing")
 	}
 	require.Equal(t, circuitbreaker.StateOpen, cb.GetState(), "404 is a failure under this detector")
@@ -673,7 +673,7 @@ func TestConcurrentFailuresOpenOnce(t *testing.T) {
 	app := newApp(cb)
 
 	fired := make([]*bgRequest, 0, 20)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		fired = append(fired, inBackground(app, "/fail"))
 	}
 	for _, r := range fired {
@@ -688,7 +688,7 @@ func TestConcurrentProbesCloseTheCircuitOnce(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
-	var closeCalls int64
+	var closeCalls atomic.Int64
 	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold:      1,
 		SuccessThreshold:      2,
@@ -696,7 +696,7 @@ func TestConcurrentProbesCloseTheCircuitOnce(t *testing.T) {
 		Timeout:               time.Minute,
 		Clock:                 clock.Now,
 		OnClose: func(c *gin.Context) {
-			atomic.AddInt64(&closeCalls, 1)
+			closeCalls.Add(1)
 		},
 	})
 	app := newApp(cb)
@@ -705,7 +705,7 @@ func TestConcurrentProbesCloseTheCircuitOnce(t *testing.T) {
 	clock.Advance(time.Minute)
 
 	fired := make([]*bgRequest, 0, 20)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		fired = append(fired, inBackground(app, "/ok"))
 	}
 	for _, r := range fired {
@@ -713,7 +713,7 @@ func TestConcurrentProbesCloseTheCircuitOnce(t *testing.T) {
 	}
 
 	require.Equal(t, circuitbreaker.StateClosed, cb.GetState())
-	require.Equal(t, int64(1), atomic.LoadInt64(&closeCalls), "only the probe that crossed the threshold closes the circuit")
+	require.Equal(t, int64(1), closeCalls.Load(), "only the probe that crossed the threshold closes the circuit")
 }
 
 // The deprecated protocol keeps working for callers that have not moved to
@@ -845,7 +845,7 @@ func TestGetStateStatsIsNotTorn(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < rounds; i++ {
+	for range rounds {
 		clock.AdvanceToParity(0)
 		get(t, app, "/fail") // opens on an even second
 		clock.AdvanceToParity(1)
@@ -903,14 +903,14 @@ func TestStaleSuccessDoesNotCloseTheCircuit(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
-	var closeCalls int64
+	var closeCalls atomic.Int64
 	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold: 1,
 		SuccessThreshold: 1,
 		Timeout:          time.Minute,
 		Clock:            clock.Now,
 		OnClose: func(c *gin.Context) {
-			atomic.AddInt64(&closeCalls, 1)
+			closeCalls.Add(1)
 		},
 	})
 
@@ -947,13 +947,13 @@ func TestStaleSuccessDoesNotCloseTheCircuit(t *testing.T) {
 
 	require.Equal(t, circuitbreaker.StateHalfOpen, cb.GetState(),
 		"a success from a request admitted while closed must not close the circuit")
-	require.Equal(t, int64(0), atomic.LoadInt64(&closeCalls),
+	require.Equal(t, int64(0), closeCalls.Load(),
 		"OnClose must not fire for a request that was never a half-open probe")
 
 	// A genuine probe still closes it.
 	require.Equal(t, http.StatusOK, get(t, app, "/ok").StatusCode)
 	require.Equal(t, circuitbreaker.StateClosed, cb.GetState())
-	require.Equal(t, int64(1), atomic.LoadInt64(&closeCalls))
+	require.Equal(t, int64(1), closeCalls.Load())
 }
 
 // TestProbeFromAnEndedWindowDoesNotCloseTheCircuit is the other half of
@@ -965,7 +965,7 @@ func TestProbeFromAnEndedWindowDoesNotCloseTheCircuit(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
-	var closeCalls int64
+	var closeCalls atomic.Int64
 	cb := circuitbreaker.New(circuitbreaker.Config{
 		FailureThreshold:      1,
 		SuccessThreshold:      1,
@@ -973,7 +973,7 @@ func TestProbeFromAnEndedWindowDoesNotCloseTheCircuit(t *testing.T) {
 		Timeout:               time.Minute,
 		Clock:                 clock.Now,
 		OnClose: func(c *gin.Context) {
-			atomic.AddInt64(&closeCalls, 1)
+			closeCalls.Add(1)
 		},
 	})
 
@@ -1015,12 +1015,12 @@ func TestProbeFromAnEndedWindowDoesNotCloseTheCircuit(t *testing.T) {
 
 	require.Equal(t, circuitbreaker.StateHalfOpen, cb.GetState(),
 		"a probe from an ended window must not close the window that replaced it")
-	require.Equal(t, int64(0), atomic.LoadInt64(&closeCalls))
+	require.Equal(t, int64(0), closeCalls.Load())
 
 	// A probe of the current window still closes it.
 	require.Equal(t, http.StatusOK, get(t, app, "/ok").StatusCode)
 	require.Equal(t, circuitbreaker.StateClosed, cb.GetState())
-	require.Equal(t, int64(1), atomic.LoadInt64(&closeCalls))
+	require.Equal(t, int64(1), closeCalls.Load())
 }
 
 // TestStaleFailureDoesNotReopenTheCircuit is the failure-path mirror of
@@ -1169,10 +1169,10 @@ func TestStaleFailuresCannotStarveRecovery(t *testing.T) {
 
 	// A backlog of requests admitted while closed, all still in flight.
 	stale := make([]*bgRequest, 0, backlog)
-	for i := 0; i < backlog; i++ {
+	for range backlog {
 		stale = append(stale, inBackground(app, "/slowfail"))
 	}
-	for i := 0; i < backlog; i++ {
+	for range backlog {
 		awaitEntry(t, entered, "a backlog request was not admitted while closed")
 	}
 

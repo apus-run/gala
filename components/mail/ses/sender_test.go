@@ -48,7 +48,7 @@ func (f *fakeClient) SendEmail(
 	if f.spec.Err != nil {
 		return nil, f.spec.Err
 	}
-	return &sesv2.SendEmailOutput{MessageId: ptr(f.spec.MessageID)}, nil
+	return &sesv2.SendEmailOutput{MessageId: new(f.spec.MessageID)}, nil
 }
 
 func newTestSender(t *testing.T, spec mailtest.ClientSpec, options ...Option) (*Sender, *fakeClient) {
@@ -339,7 +339,7 @@ func TestInvalidSuccessResponse(t *testing.T) {
 	}{
 		{name: "nil output"},
 		{name: "nil message id", output: &sesv2.SendEmailOutput{}},
-		{name: "empty message id", output: &sesv2.SendEmailOutput{MessageId: ptr("")}},
+		{name: "empty message id", output: &sesv2.SendEmailOutput{MessageId: new("")}},
 	}
 
 	for _, test := range tests {
@@ -392,14 +392,14 @@ func TestErrorMapping(t *testing.T) {
 	}
 
 	t.Run("throttling is transient", func(t *testing.T) {
-		deliveryErr := send(t, wrap(&types.TooManyRequestsException{Message: ptr("slow down")}))
+		deliveryErr := send(t, wrap(&types.TooManyRequestsException{Message: new("slow down")}))
 		if !deliveryErr.IsTransient || deliveryErr.Code != "TooManyRequestsException" {
 			t.Fatalf("classification wrong: %+v", deliveryErr)
 		}
 	})
 
 	t.Run("limit exceeded is transient", func(t *testing.T) {
-		deliveryErr := send(t, wrap(&types.LimitExceededException{Message: ptr("limit")}))
+		deliveryErr := send(t, wrap(&types.LimitExceededException{Message: new("limit")}))
 		if !deliveryErr.IsTransient {
 			t.Fatalf("classification wrong: %+v", deliveryErr)
 		}
@@ -419,7 +419,7 @@ func TestErrorMapping(t *testing.T) {
 	t.Run("typed 4xx keeps its code and http status is ignored", func(t *testing.T) {
 		responseErr := wrap(&smithyhttp.ResponseError{
 			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 400}},
-			Err:      &types.MessageRejected{Message: ptr("nope")},
+			Err:      &types.MessageRejected{Message: new("nope")},
 		})
 		deliveryErr := send(t, responseErr)
 		if deliveryErr.IsTransient || deliveryErr.Code != "MessageRejected" {
@@ -428,12 +428,12 @@ func TestErrorMapping(t *testing.T) {
 	})
 
 	for _, apiErr := range []smithy.APIError{
-		&types.MessageRejected{Message: ptr("x")},
-		&types.MailFromDomainNotVerifiedException{Message: ptr("x")},
-		&types.AccountSuspendedException{Message: ptr("x")},
-		&types.SendingPausedException{Message: ptr("x")},
-		&types.BadRequestException{Message: ptr("x")},
-		&types.NotFoundException{Message: ptr("x")},
+		&types.MessageRejected{Message: new("x")},
+		&types.MailFromDomainNotVerifiedException{Message: new("x")},
+		&types.AccountSuspendedException{Message: new("x")},
+		&types.SendingPausedException{Message: new("x")},
+		&types.BadRequestException{Message: new("x")},
+		&types.NotFoundException{Message: new("x")},
 	} {
 		t.Run("permanent "+apiErr.ErrorCode(), func(t *testing.T) {
 			deliveryErr := send(t, wrap(apiErr))

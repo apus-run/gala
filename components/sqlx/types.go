@@ -59,13 +59,18 @@ type Options struct {
 
 type Option func(*Options)
 
-func Apply(opts ...Option) *Options {
-	o := &Options{
+// DefaultOptions returns an independent default configuration.
+func DefaultOptions() *Options {
+	return &Options{
 		maxOpenConns:    25,
 		maxIdleConns:    5,
 		connMaxLifetime: 30 * time.Minute,
 		connMaxIdleTime: 5 * time.Minute,
 	}
+}
+
+func Apply(opts ...Option) *Options {
+	o := DefaultOptions()
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -78,24 +83,32 @@ func WithDSN(dsn string) Option {
 	}
 }
 
+// WithMaxOpenConns sets the maximum number of open connections (default 25).
+// A non-positive value means unlimited, as in database/sql.
 func WithMaxOpenConns(n int) Option {
 	return func(o *Options) {
 		o.maxOpenConns = n
 	}
 }
 
+// WithMaxIdleConns sets the maximum number of idle connections (default 5).
+// A non-positive value disables idle connection retention, as in database/sql.
 func WithMaxIdleConns(n int) Option {
 	return func(o *Options) {
 		o.maxIdleConns = n
 	}
 }
 
+// WithConnMaxLifetime sets the maximum connection lifetime (default 30 minutes).
+// A non-positive value disables expiration by age, as in database/sql.
 func WithConnMaxLifetime(d time.Duration) Option {
 	return func(o *Options) {
 		o.connMaxLifetime = d
 	}
 }
 
+// WithConnMaxIdleTime sets the maximum idle duration (default 5 minutes).
+// A non-positive value disables expiration by idle time, as in database/sql.
 func WithConnMaxIdleTime(d time.Duration) Option {
 	return func(o *Options) {
 		o.connMaxIdleTime = d

@@ -37,7 +37,6 @@ import (
 	"reflect"
 
 	"github.com/apus-run/gala/pkg/lang/optional/of"
-	"github.com/apus-run/gala/pkg/lang/ptr"
 	"github.com/apus-run/gala/pkg/lang/value"
 )
 
@@ -173,7 +172,7 @@ type jsonR[T any] struct {
 func (r R[T]) MarshalJSON() ([]byte, error) {
 	jr := jsonR[T]{}
 	if r.err != nil {
-		jr.Err = ptr.Of(r.err.Error())
+		jr.Err = new(r.err.Error())
 	} else {
 		jr.Val = &r.val
 	}

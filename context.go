@@ -2,6 +2,7 @@ package gala
 
 import (
 	"context"
+	"maps"
 
 	"github.com/apus-run/gala/pkg/ctxkey"
 )
@@ -68,9 +69,7 @@ func WithRequestMetadata(ctx context.Context, md RequestMetadata) context.Contex
 	if next == nil {
 		next = make(RequestMetadata, len(md))
 	}
-	for k, v := range md {
-		next[k] = v
-	}
+	maps.Copy(next, md)
 	return RequestMetadataKey.NewContext(ctx, next)
 }
 
@@ -98,9 +97,7 @@ func cloneRequestMetadata(md RequestMetadata) RequestMetadata {
 		return nil
 	}
 	out := make(RequestMetadata, len(md))
-	for k, v := range md {
-		out[k] = v
-	}
+	maps.Copy(out, md)
 	return out
 }
 

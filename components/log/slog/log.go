@@ -267,11 +267,11 @@ func (l *SlogLogger) Panicf(msg string, args ...any) {
 
 func SprintfWithAttrs(format string, attrs ...Attr) string {
 	// 处理 Attr 类型并将其转换为字符串
-	attrStr := ""
+	var attrStr strings.Builder
 	for _, attr := range attrs {
-		attrStr += fmt.Sprintf("%v ", attr) // 根据需要格式化 Attr
+		attrStr.WriteString(fmt.Sprintf("%v ", attr)) // 根据需要格式化 Attr
 	}
-	return fmt.Sprintf(format, attrStr)
+	return fmt.Sprintf(format, attrStr.String())
 }
 
 func (l *SlogLogger) With(args ...any) *SlogLogger {

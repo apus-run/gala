@@ -3,6 +3,7 @@ package mongo
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/apus-run/gala/components/log/zlog"
@@ -17,8 +18,8 @@ func InterceptorChain(interceptors ...Interceptor) func(oldProcess processFn) pr
 
 	return func(oldProcess processFn) processFn {
 		chain := oldProcess
-		for i := len(interceptors) - 1; i >= 0; i-- {
-			chain = build(interceptors[i], chain)
+		for _, interceptor := range slices.Backward(interceptors) {
+			chain = build(interceptor, chain)
 		}
 		return chain
 	}

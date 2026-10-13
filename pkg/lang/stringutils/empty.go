@@ -1,5 +1,7 @@
 package stringutils
 
+import "slices"
+
 // AllEmpty returns true if all the strings that are passed are empty
 func AllEmpty(strs ...string) bool {
 	for _, s := range strs {
@@ -12,22 +14,12 @@ func AllEmpty(strs ...string) bool {
 
 // AllNotEmpty returns true if all the strings that are passed are not empty.
 func AllNotEmpty(strs ...string) bool {
-	for _, s := range strs {
-		if s == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(strs, "")
 }
 
 // AtLeastOneEmpty returns true if at least one of the strings is empty
 func AtLeastOneEmpty(strs ...string) bool {
-	for _, s := range strs {
-		if s == "" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strs, "")
 }
 
 // FirstNonEmpty returns the first string that is non-empty in the variadic or returns an empty string
@@ -45,9 +37,9 @@ func LastNonEmpty(strs ...string) string {
 	if len(strs) == 0 {
 		return ""
 	}
-	for i := len(strs) - 1; i >= 0; i-- {
-		if strs[i] != "" {
-			return strs[i]
+	for _, str := range slices.Backward(strs) {
+		if str != "" {
+			return str
 		}
 	}
 	return ""

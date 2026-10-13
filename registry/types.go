@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 )
 
 type EventType int
@@ -82,12 +82,10 @@ func (ins *ServiceInstance) Equal(o any) bool {
 		return false
 	}
 
-	sort.Strings(ins.Endpoints)
-	sort.Strings(t.Endpoints)
-	for j := 0; j < len(ins.Endpoints); j++ {
-		if ins.Endpoints[j] != t.Endpoints[j] {
-			return false
-		}
+	slices.Sort(ins.Endpoints)
+	slices.Sort(t.Endpoints)
+	if !slices.Equal(ins.Endpoints, t.Endpoints) {
+		return false
 	}
 
 	if len(ins.Metadata) != len(t.Metadata) {

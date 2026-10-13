@@ -2,17 +2,15 @@ package conv
 
 import (
 	"fmt"
-
-	"github.com/apus-run/gala/pkg/lang/ptr"
 )
 
 func Example() {
-	fmt.Println(To[string](1))                        // "1"
-	fmt.Println(To[int]("1"))                         // 1
-	fmt.Println(To[int]("x"))                         // 0
-	fmt.Println(To[bool]("true"))                     // true
-	fmt.Println(To[bool]("x"))                        // false
-	fmt.Println(To[int](ptr.Of(ptr.Of(ptr.Of("1"))))) // 1
+	fmt.Println(To[string](1))               // "1"
+	fmt.Println(To[int]("1"))                // 1
+	fmt.Println(To[int]("x"))                // 0
+	fmt.Println(To[bool]("true"))            // true
+	fmt.Println(To[bool]("x"))               // false
+	fmt.Println(To[int](new(new(new("1"))))) // 1
 	type myInt int
 	type myString string
 	fmt.Println(To[myInt](myString("1"))) // 1

@@ -611,17 +611,15 @@ func TestConcurrentRequests(t *testing.T) {
 	})
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			rec := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodGet, "/concurrent", http.NoBody)
 			group.ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Errorf("got %d, want %d", rec.Code, http.StatusOK)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

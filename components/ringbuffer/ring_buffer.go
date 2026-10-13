@@ -266,18 +266,12 @@ func (r *RingBuffer) copyFromBuffer(dst []byte) int {
 
 	var n int
 	if r.w > r.r {
-		n = r.w - r.r
-		if n > len(dst) {
-			n = len(dst)
-		}
+		n = min(r.w-r.r, len(dst))
 		copy(dst, r.buf[r.r:r.r+n])
 		return n
 	}
 
-	n = r.size - r.r + r.w
-	if n > len(dst) {
-		n = len(dst)
-	}
+	n = min(r.size-r.r+r.w, len(dst))
 
 	if r.r+n <= r.size {
 		copy(dst, r.buf[r.r:r.r+n])
@@ -598,12 +592,10 @@ func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
 func (r *RingBuffer) Copy(dst io.Writer, src io.Reader) (written int64, err error) {
 	r.SetBlocking(true)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _ = r.ReadFrom(src) //nolint errcheck
 		r.CloseWriter()
-	}()
+	})
 	defer wg.Wait()
 	return r.WriteTo(dst)
 }

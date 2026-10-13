@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"runtime"
 	"strings"
@@ -166,7 +167,7 @@ func (e *Error) Unwrap() error {
 // 它会比较 Error 实例的 Code 和 Status 字段.
 // 如果 Code 和 Status 均相等，则返回 true；否则返回 false.
 func (e *Error) Is(target error) bool {
-	if targetErr := new(Error); errors.As(target, &targetErr) {
+	if targetErr, ok := errors.AsType[*Error](target); ok {
 		return targetErr.Code == e.Code && targetErr.Status == e.Status
 	}
 	return errors.Is(e.cause, target)
@@ -195,15 +196,11 @@ func cloneDetails(details any) any {
 	switch d := details.(type) {
 	case map[string]string:
 		cloned := make(map[string]string, len(d))
-		for k, v := range d {
-			cloned[k] = v
-		}
+		maps.Copy(cloned, d)
 		return cloned
 	case map[string]any:
 		cloned := make(map[string]any, len(d))
-		for k, v := range d {
-			cloned[k] = v
-		}
+		maps.Copy(cloned, d)
 		return cloned
 	case []string:
 		return append([]string(nil), d...)
@@ -235,8 +232,7 @@ func FromError(err error) *Error {
 	}
 
 	// 处理自定义错误类型
-	var target *Error
-	if errors.As(err, &target) {
+	if target, ok := errors.AsType[*Error](err); ok {
 		return target
 	}
 

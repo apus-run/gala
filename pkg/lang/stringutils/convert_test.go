@@ -74,7 +74,6 @@ func Test_ToString(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc // capture range variable
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var res string
@@ -96,7 +95,6 @@ func Test_ToString(t *testing.T) {
 		{&intPtr, "42"},
 	}
 	for _, tc := range testsPtr {
-		tc := tc
 		t.Run("pointer to "+reflect.TypeOf(tc.input).Elem().String(), func(t *testing.T) {
 			t.Parallel()
 			res := ToString(tc.input)

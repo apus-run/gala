@@ -12,8 +12,7 @@ func BenchmarkRingBuffer_Sync(b *testing.B) {
 	data := []byte(strings.Repeat("a", 512))
 	buf := make([]byte, 512)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = rb.Write(data) //nolint errcheck
 		_, _ = rb.Read(buf)   //nolint errcheck
 	}
@@ -31,8 +30,7 @@ func BenchmarkRingBuffer_AsyncRead(b *testing.B) {
 		}
 	}()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = rb.Write(data) //nolint errcheck
 	}
 }
@@ -51,8 +49,7 @@ func BenchmarkRingBuffer_AsyncReadBlocking(b *testing.B) {
 		}
 	}()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = rb.Write(data) //nolint errcheck
 	}
 }
@@ -68,8 +65,7 @@ func BenchmarkRingBuffer_AsyncWrite(b *testing.B) {
 		}
 	}()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = rb.Read(buf) //nolint errcheck
 	}
 }
@@ -88,8 +84,7 @@ func BenchmarkRingBuffer_AsyncWriteBlocking(b *testing.B) {
 		}
 	}()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = rb.Read(buf) //nolint errcheck
 	}
 }
@@ -120,9 +115,8 @@ func BenchmarkRingBuffer_ReadFrom(b *testing.B) {
 		_, _ = rb.ReadFrom(repeatReader{b: data}) //nolint errcheck
 	}()
 
-	b.ResetTimer()
 	b.SetBytes(sz)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = io.ReadFull(rb, buf) //nolint errcheck
 	}
 	rb.CloseWithError(context.Canceled) //nolint errcheck
@@ -139,9 +133,8 @@ func BenchmarkRingBuffer_WriteTo(b *testing.B) {
 		_, _ = rb.WriteTo(io.Discard) //nolint errcheck
 	}()
 
-	b.ResetTimer()
 	b.SetBytes(sz)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := rb.Write(data)
 		if err != nil {
 			b.Fatal(err)
@@ -161,9 +154,8 @@ func BenchmarkIoPipeReader(b *testing.B) {
 		}
 	}()
 
-	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = pr.Read(buf) //nolint errcheck
 	}
 }

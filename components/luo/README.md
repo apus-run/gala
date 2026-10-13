@@ -1,6 +1,6 @@
 # luo
 
-标准库 `http.ServeMux` 的路由分组封装：按路径前缀分组、挂载子组、给一组路由或单条路由叠加中间件。匹配仍由 `http.ServeMux` 完成，组件不启动 goroutine，只依赖标准库。
+标准库 `http.ServeMux` 的路由分组封装：按路径前缀分组、挂载子组、给一组路由或单条路由叠加中间件。匹配仍由 `http.ServeMux` 完成，中间件组合复用 `pkg/chain`，组件不启动 goroutine。
 
 ## 安装
 
@@ -27,12 +27,18 @@ func (g *Group) Use(mw func(http.Handler) http.Handler, more ...func(http.Handle
 func (g *Group) Route(configureFn func(*Group))
 func (g *Group) Handle(pattern string, handler http.Handler)
 func (g *Group) HandleFunc(pattern string, handler http.HandlerFunc)
+func (g *Group) Method(method, pattern string, handler http.HandlerFunc)
+func (g *Group) GET(pattern string, handler http.HandlerFunc) // 同类入口：POST/PUT/PATCH/DELETE/HEAD/OPTIONS/CONNECT/TRACE/ANY
 func (g *Group) HandleFiles(pattern string, root http.FileSystem)
 func (g *Group) HandleRoot(method string, handler http.Handler)
 func (g *Group) HandleRootFunc(method string, handler http.HandlerFunc)
 func (g *Group) NotFoundHandler(handler http.HandlerFunc)
 func (g *Group) Handler(r *http.Request) (http.Handler, string)
 func (g *Group) ServeHTTP(w http.ResponseWriter, r *http.Request)
+
+type HandlerFunc func(http.ResponseWriter, *http.Request) error
+type ErrorHandler func(http.ResponseWriter, *http.Request, error)
+func Adapt(handler HandlerFunc, onError ErrorHandler) http.HandlerFunc
 ```
 
 | 构造入口 | 用途 |
@@ -105,6 +111,32 @@ func main() {
 
 生产用法是 `http.ListenAndServe(":8080", router)`：注册完路由后把组本身当 handler 传进去，它负责套上根组中间件并交给底层 mux。
 
+## 方法快捷入口与错误处理
+
+`GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`HEAD`、`OPTIONS`、`CONNECT`、`TRACE` 均通过现有 `HandleFunc` 注册，保留分组前缀、中间件及根路径精确匹配语义：
+
+```go
+api.GET("/users/{id}", getUser)
+api.Method("PROPFIND", "/files/{path...}", listFiles)
+api.ANY("/fallback", fallback)
+```
+
+上述 handler 都使用标准 `http.HandlerFunc` 签名。`ANY` 注册不带方法约束的模式，支持自定义 HTTP 方法；同路径上更具体的方法路由优先。`GET` 同时匹配 `HEAD`，显式 `HEAD` 路由优先。`Method` 的空方法与 `ANY` 等价，不使用 `"*"` 代表任意方法。
+
+业务函数如果需要返回 `error`，通过 `Adapt` 转换即可，无需改变路由或中间件接口：
+
+```go
+// loadUser 是业务函数，类型为 luo.HandlerFunc。
+api.GET("/users/{id}", luo.Adapt(loadUser,
+    func(w http.ResponseWriter, r *http.Request, err error) {
+        // 在这里记录错误，并按业务约定选择状态码及 JSON/HTML 等响应格式。
+        http.Error(w, "request failed", http.StatusInternalServerError)
+    },
+))
+```
+
+`Adapt` 的两个参数必须非 nil，配置错误会在构造时 panic。业务 handler 返回 nil 时不调用错误处理器；返回非 nil 错误时调用一次。适配器保留原始 `ResponseWriter`，不限制 SSE、Flush 或 Hijack。业务 handler 应在写响应前返回错误；如果已经写出响应，错误处理器应只记录错误，避免再次写入。组件不预设错误类型、状态码映射或编解码格式。
+
 ## 中间件
 
 | 添加位置 | 生效范围 | 执行时机 |
@@ -132,7 +164,7 @@ func main() {
 router.HandleFiles("/static/", http.Dir("assets/static"))
 
 // 不建组，只给一条路由套中间件
-mux.HandleFunc("/hello", luo.Wrap(helloHandler, loggingMiddleware, corsMiddleware))
+mux.Handle("/hello", luo.Wrap(helloHandler, loggingMiddleware, corsMiddleware))
 ```
 
 `Wrap` 至少需要一个中间件：第一个是必填参数，其余为可变参数。

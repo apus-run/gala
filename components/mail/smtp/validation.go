@@ -141,7 +141,7 @@ func validateMessageID(id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: smtp message id must not be empty", mail.ErrInvalidMessage)
 	}
-	for i := 0; i < len(id); i++ {
+	for i := range len(id) {
 		c := id[i]
 		if c < 0x21 || c > 0x7e || c == '<' || c == '>' || c == ',' || c == ';' {
 			return fmt.Errorf("%w: smtp message id contains invalid characters", mail.ErrInvalidMessage)
@@ -156,7 +156,7 @@ func validTagPart(value string) bool {
 	if value == "" || len(value) > maxTagPartLength {
 		return false
 	}
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		c := value[i]
 		if (c < 'a' || c > 'z') &&
 			(c < 'A' || c > 'Z') &&
@@ -168,7 +168,7 @@ func validTagPart(value string) bool {
 }
 
 func validContentID(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		c := value[i]
 		if c < 0x21 || c > 0x7e || c == '<' || c == '>' {
 			return false
@@ -178,7 +178,7 @@ func validContentID(value string) bool {
 }
 
 func isASCII(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		if value[i] > 0x7f {
 			return false
 		}
@@ -190,7 +190,7 @@ func isASCII(value string) bool {
 // 限定 SMTP 自定义头值为可打印 ASCII、空格与 Tab；非 ASCII 文本
 // 应放在 Subject 或正文中，由 go-mail 负责编码。
 func isPrintableASCIIHeaderValue(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		c := value[i]
 		if c == '\t' {
 			continue

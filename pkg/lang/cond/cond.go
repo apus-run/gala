@@ -1,6 +1,8 @@
 // Package cond helps users choose values according to various conditions in one line.
 package cond
 
+import "slices"
+
 // If returns onTrue when cond is true, otherwise returns onFalse.
 // It is used as a replacement of ternary conditional operator (:?) in many other
 // programming languages.
@@ -134,11 +136,8 @@ func (s *switchBuilder[R, T]) When(values ...T) *whenClause[R, T] {
 		matched: false,
 	}
 	if !s.matched {
-		for _, value := range values {
-			if s.variable == value {
-				wc.matched = true
-				break
-			}
+		if slices.Contains(values, s.variable) {
+			wc.matched = true
 		}
 	}
 	return wc

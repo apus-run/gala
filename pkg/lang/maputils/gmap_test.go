@@ -2,12 +2,11 @@ package maputils
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/apus-run/gala/pkg/lang/optional/of"
-	"github.com/apus-run/gala/pkg/lang/ptr"
 	"github.com/apus-run/gala/pkg/lang/result"
 	"github.com/apus-run/gala/pkg/lang/sliceutils"
 	"github.com/apus-run/gala/pkg/lang/value"
@@ -45,7 +44,7 @@ func TestMap(t *testing.T) {
 func TestValues(t *testing.T) {
 	{
 		keys := Values(map[int]string{1: "1", 2: "2", 3: "3", 4: "4"})
-		sort.Strings(keys)
+		slices.Sort(keys)
 		assert.Equal(t, []string{"1", "2", "3", "4"}, keys)
 	}
 	assert.Equal(t, []string{}, Values(map[int]string{}))
@@ -486,7 +485,7 @@ func TestClone(t *testing.T) {
 	assert.Equal(t, "gmap.I2I", fmt.Sprintf("%T", Clone(I2I{})))
 
 	// Test shallow clone.
-	src := map[int]*int{1: ptr.Of(1), 2: ptr.Of(2)}
+	src := map[int]*int{1: new(1), 2: new(2)}
 	dst := Clone(src)
 	assert.Equal(t, src, dst)
 	assert.True(t, src[1] == dst[1])
@@ -611,7 +610,7 @@ func TestPtrOf(t *testing.T) {
 	{
 		m := map[int]string{1: "1", 2: "2"}
 		ptrs := PtrOf(m)
-		assert.Equal(t, map[int]*string{1: ptr.Of("1"), 2: ptr.Of("2")}, ptrs)
+		assert.Equal(t, map[int]*string{1: new("1"), 2: new("2")}, ptrs)
 	}
 
 	// Test modifying pointer.
@@ -627,19 +626,19 @@ func TestPtrOf(t *testing.T) {
 func TestIndirect(t *testing.T) {
 	assert.Equal(t,
 		map[int]string{1: "1", 2: "2"},
-		Indirect(map[int]*string{1: ptr.Of("1"), 2: ptr.Of("2"), 3: nil}))
+		Indirect(map[int]*string{1: new("1"), 2: new("2"), 3: nil}))
 	assert.Equal(t,
 		map[int]string{1: "1", 2: "2"},
-		Indirect(map[int]*string{1: ptr.Of("1"), 2: ptr.Of("2")}))
+		Indirect(map[int]*string{1: new("1"), 2: new("2")}))
 }
 
 func TestIndirectOr(t *testing.T) {
 	assert.Equal(t,
 		map[int]string{1: "1", 2: "2", 3: ""},
-		IndirectOr(map[int]*string{1: ptr.Of("1"), 2: ptr.Of("2"), 3: nil}, ""))
+		IndirectOr(map[int]*string{1: new("1"), 2: new("2"), 3: nil}, ""))
 	assert.Equal(t,
 		map[int]string{1: "1", 2: "2"},
-		IndirectOr(map[int]*string{1: ptr.Of("1"), 2: ptr.Of("2")}, ""))
+		IndirectOr(map[int]*string{1: new("1"), 2: new("2")}, ""))
 }
 
 func TestLen(t *testing.T) {

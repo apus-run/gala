@@ -95,9 +95,12 @@ components/eventbus/
 ├── handler.go                # Handler 适配、链式和过滤处理器
 ├── middleware.go             # 日志、恢复、超时、重试和指标
 ├── manager.go                # named/global bus 管理
+├── history.go                # 可选的有界事件历史与 Publisher 装饰器
 ├── event_test.go             # Event 模型测试
 ├── eventbus_test.go          # 基础订阅与发布测试
 ├── publish_modes_test.go     # 并发、背压、重入和生命周期测试
+├── history_test.go           # 历史覆盖、快照隔离和发布记录测试
+├── history_example_test.go   # 可执行的公开 API 历史记录示例
 ├── api_test.go               # Handler、中间件和 Manager 测试
 ├── example_test.go           # 可执行外部包示例
 ├── README.md                 # API 说明
@@ -170,6 +173,23 @@ event := eventbus.NewEvent(EventOrderCreated, OrderCreated{
 - Data 是泛型载荷，EventBus 无法安全深拷贝，handler 必须将其视为不可变。
 - 需要修改 map、slice 或 pointer Data 时，handler 应自行复制或使用同步机制。
 - handler 必须继续传递收到的 Context，不能随意替换为 `context.Background()`。
+
+## 可选事件历史
+
+```go
+history := eventbus.NewHistoryRecorder(128)
+publisher := history.WrapPublisher(bus)
+err := publisher.Publish(ctx, event)
+recent := history.Snapshot()
+```
+
+- 固定容量环形数组保留最近 N 条记录，满后覆盖最旧记录；容量必须为正。
+- `Record` 可独立使用；`Snapshot` 按记录顺序返回，不消费历史。
+- Publisher 装饰器在派发前记录非空发布尝试，三种发布模式均只记录一次，失败或取消的尝试也保留。
+- 历史不代表处理成功或最终投递；订阅数量不影响记录数量，重复发布同一 ID 仍分别记录。
+- 写入和读取时都复制 Event 与 Metadata；Data 共享且必须保持不可变，容量限制条目数而非载荷字节数。
+- 原 bus 继续管理订阅和 Close；直接调用原 bus 不进入历史。记录器自身不创建 goroutine。
+- 相同记录器直接重复包装自己的 Publisher 装饰器不会产生重复记录。
 
 ## 订阅与取消
 

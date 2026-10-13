@@ -31,14 +31,12 @@ func (c *Consumer) Start() error {
 		for _, msg := range msgs {
 			// 转换消息格式
 			ext := &mq.MessageExt{
-				Message: mq.Message{
-					Topic:        msg.Topic,
-					Body:         msg.Body,
-					Tag:          msg.GetTags(),
-					PartitionKey: msg.GetShardingKey(),
-					Properties:   msg.GetProperties(),
-				},
-				MsgID: msg.MsgId,
+				Topic:        msg.Topic,
+				Body:         msg.Body,
+				Tag:          msg.GetTags(),
+				PartitionKey: msg.GetShardingKey(),
+				Properties:   msg.GetProperties(),
+				MsgID:        msg.MsgId,
 			}
 
 			// 处理业务逻辑

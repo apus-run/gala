@@ -40,8 +40,7 @@ func mapError(err error) error {
 
 	// 429：Resend 未接受请求。429 也可能表示日/月额度耗尽，
 	// RetryAfter 为 0 时不得解释为立即重试。
-	var rateLimitErr *resendgo.RateLimitError
-	if errors.As(err, &rateLimitErr) {
+	if rateLimitErr, ok := errors.AsType[*resendgo.RateLimitError](err); ok {
 		return &mail.DeliveryError{
 			Provider:    Provider,
 			Code:        "rate_limited",
@@ -63,8 +62,7 @@ func mapError(err error) error {
 
 	// 传输超时可能在请求已被接受后丢失响应；其他网络错误
 	// （如永久 DNS 失败）不进入瞬态分类。
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		return &mail.DeliveryError{
 			Provider:    Provider,
 			Code:        "timeout",

@@ -42,10 +42,8 @@ func TestJwtManagerCustomClaimsValidation(t *testing.T) {
 	manager := token.NewJwtManager[sessionClaims](token.WithSecretKey(strings.Repeat("s", 32)))
 	now := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
 	claims := &sessionClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: "hurry", Audience: jwt.ClaimStrings{"hurry-api"}, Subject: "user-1",
-			ExpiresAt: jwt.NewNumericDate(now.Add(-10 * time.Second)),
-		},
+		Issuer: "hurry", Audience: jwt.ClaimStrings{"hurry-api"}, Subject: "user-1",
+		ExpiresAt: jwt.NewNumericDate(now.Add(-10 * time.Second)),
 		SessionID: "session-1",
 	}
 	raw, err := manager.GenerateClaims(claims)
@@ -201,14 +199,12 @@ func TestJwtManagerTokenHeaderAndRegisteredClaims(t *testing.T) {
 
 	now := time.Now()
 	issued := &token.Claims[Payload]{
-		Data: Payload{SessionID: "session-1"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "gala",
-			Subject:   "user-1",
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
-		},
+		Data:      Payload{SessionID: "session-1"},
+		Issuer:    "gala",
+		Subject:   "user-1",
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
 	}
 	raw, err := manager.GenerateClaims(issued)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
@@ -400,17 +401,16 @@ func (c *Collection) DropIndex(ctx context.Context, indexes []string) error {
 
 // generate indexes that store in mongo which may consist more than one index(like []string{"index1","index2"} is stored as "index1_1_index2_1")
 func generateDroppedIndex(index []string) string {
-	var res string
+	var res strings.Builder
 	for _, e := range index {
 		key, sort := SplitSortField(e)
 		n := key + "_" + fmt.Sprint(sort)
-		if len(res) == 0 {
-			res = n
-		} else {
-			res += "_" + n
+		if res.Len() > 0 {
+			res.WriteByte('_')
 		}
+		res.WriteString(n)
 	}
-	return res
+	return res.String()
 }
 
 // interfaceToSliceInterface convert interface to slice interface

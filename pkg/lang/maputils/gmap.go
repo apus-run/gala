@@ -1,6 +1,8 @@
 package maputils
 
 import (
+	"maps"
+
 	"github.com/apus-run/gala/pkg/lang/optional/of"
 	"github.com/apus-run/gala/pkg/lang/ptr"
 	"github.com/apus-run/gala/pkg/lang/result"
@@ -81,9 +83,7 @@ func Concat[K comparable, V any](ms ...map[K]V) map[K]V {
 
 	// Concat all maps.
 	for _, m := range ms {
-		for k, v := range m {
-			ret[k] = v
-		}
+		maps.Copy(ret, m)
 	}
 	return ret
 }
@@ -427,9 +427,7 @@ func Clone[K comparable, V any, M ~map[K]V](m M) M {
 
 func cloneWithoutNilCheck[K comparable, V any, M ~map[K]V](m M) M {
 	r := make(M, len(m))
-	for k, v := range m {
-		r[k] = v
-	}
+	maps.Copy(r, m)
 	return r
 }
 
@@ -509,9 +507,7 @@ func Union[M ~map[K]V, K comparable, V any](ms ...M) M {
 
 	// Union all maps.
 	for _, m := range ms {
-		for k, v := range m {
-			ret[k] = v
-		}
+		maps.Copy(ret, m)
 	}
 	return ret
 }

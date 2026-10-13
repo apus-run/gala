@@ -358,8 +358,8 @@ func TestRateLimit_Concurrent(t *testing.T) {
 	})
 
 	var wg sync.WaitGroup
-	var successCount int32
-	var blockedCount int32
+	var successCount atomic.Int32
+	var blockedCount atomic.Int32
 	concurrency := 20
 	requestsPerGoroutine := 2
 
@@ -371,9 +371,9 @@ func TestRateLimit_Concurrent(t *testing.T) {
 				router.ServeHTTP(w, req)
 
 				if w.Code == http.StatusOK {
-					atomic.AddInt32(&successCount, 1)
+					successCount.Add(1)
 				} else if w.Code == http.StatusTooManyRequests {
-					atomic.AddInt32(&blockedCount, 1)
+					blockedCount.Add(1)
 				}
 			}
 		})
@@ -384,7 +384,7 @@ func TestRateLimit_Concurrent(t *testing.T) {
 	totalRequests := concurrency * requestsPerGoroutine
 	// 由于并发和令牌桶的特性，可能有一些请求会通过
 	// 但应该至少有一些请求被限流
-	assert.Equal(t, int32(totalRequests), atomic.LoadInt32(&successCount)+atomic.LoadInt32(&blockedCount), "所有请求应该有响应")
+	assert.Equal(t, int32(totalRequests), successCount.Load()+blockedCount.Load(), "所有请求应该有响应")
 }
 
 type coldKeyCache struct {
@@ -453,4 +453,134 @@ func TestRateLimitRejectsInvalidConfiguration(t *testing.T) {
 	}{{0, 1}, {-time.Second, 1}, {time.Second, 0}, {time.Second, -1}} {
 		assert.Panics(t, func() { NewRateLimit(tc.window, tc.requests).Build() })
 	}
+}
+
+// TestRateLimit_StandardHeaders 验证 RFC 9581 标准头在成功与被限流时都返回，
+// 且 RateLimit-Reset 为剩余秒数
+func TestRateLimit_StandardHeaders(t *testing.T) {
+	rl := NewRateLimit(time.Second, 1)
+	rl.SetKeyFunc(func(*gin.Context) string { return "std" })
+	rl.store = NewMockCache()
+
+	router := gin.New()
+	router.Use(rl.Build())
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	// 成功请求
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "1", w.Header().Get("RateLimit-Limit"))
+	assert.NotEmpty(t, w.Header().Get("RateLimit-Remaining"))
+	resetSecs, err := strconv.Atoi(w.Header().Get("RateLimit-Reset"))
+	assert.NoError(t, err, "RateLimit-Reset应该是整数秒数")
+	assert.GreaterOrEqual(t, resetSecs, 0)
+
+	// 被限流请求
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	assert.Equal(t, "0", w.Header().Get("RateLimit-Remaining"))
+	retryAfter, err := strconv.Atoi(w.Header().Get("Retry-After"))
+	assert.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(retryAfter), w.Header().Get("RateLimit-Reset"), "被限流时RateLimit-Reset应与Retry-After一致")
+}
+
+// TestRateLimit_RejectedRequestsDoNotExtendLockout 验证被拒请求归还令牌：
+// 连续被限流时 Retry-After 不增长（消融验证 res.Cancel）
+func TestRateLimit_RejectedRequestsDoNotExtendLockout(t *testing.T) {
+	rl := NewRateLimit(10*time.Second, 1)
+	rl.SetKeyFunc(func(*gin.Context) string { return "spam" })
+	rl.store = NewMockCache()
+
+	router := gin.New()
+	router.Use(rl.Build())
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	retryAfter := func() int {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+		ra, err := strconv.Atoi(w.Header().Get("Retry-After"))
+		assert.NoError(t, err)
+		return ra
+	}
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/test", nil)) // 消耗唯一令牌
+	first := retryAfter()
+	for range 3 {
+		retryAfter()
+	}
+	assert.LessOrEqual(t, retryAfter(), first, "被拒请求不应消耗令牌导致 Retry-After 增长")
+}
+
+// TestRateLimit_ResetReflectsRefillNotWindow 验证 Reset 是恢复满桶耗时而非整个窗口：
+// 窗口10s/5个请求，消耗4个后 Reset ≤ 8s（消融验证 refill 计算，旧实现恒为10）
+func TestRateLimit_ResetReflectsRefillNotWindow(t *testing.T) {
+	rl := NewRateLimit(10*time.Second, 5)
+	rl.SetKeyFunc(func(*gin.Context) string { return "refill" })
+	rl.store = NewMockCache()
+
+	router := gin.New()
+	router.Use(rl.Build())
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	for range 4 {
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+	reset, err := strconv.Atoi(w.Header().Get("RateLimit-Reset"))
+	assert.NoError(t, err)
+	// 剩余 ≥ 1 个令牌，缺口 ≤ 4 个 × 2s/个
+	assert.LessOrEqual(t, reset, 8, "Reset应为恢复满桶耗时，而非整个窗口长度")
+}
+
+// TestRateLimit_SetMessage 验证自定义限流提示信息
+func TestRateLimit_SetMessage(t *testing.T) {
+	rl := NewRateLimit(time.Second, 1)
+	rl.SetKeyFunc(func(*gin.Context) string { return "msg" })
+	rl.SetMessage("too many requests")
+	rl.store = NewMockCache()
+
+	router := gin.New()
+	router.Use(rl.Build())
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	for range 2 {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+		if w.Code == http.StatusTooManyRequests {
+			var response map[string]any
+			assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			assert.Equal(t, "too many requests", response["message"])
+			return
+		}
+	}
+	t.Fatal("第二个请求应该被限流")
+}
+
+// TestRateLimit_SetOnLimitReached 验证完全自定义的限流响应
+func TestRateLimit_SetOnLimitReached(t *testing.T) {
+	rl := NewRateLimit(time.Second, 1)
+	rl.SetKeyFunc(func(*gin.Context) string { return "custom" })
+	rl.SetOnLimitReached(func(c *gin.Context) {
+		c.String(http.StatusTooManyRequests, "slow down")
+	})
+	rl.store = NewMockCache()
+
+	router := gin.New()
+	router.Use(rl.Build())
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	for range 2 {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+		if w.Code == http.StatusTooManyRequests {
+			assert.Equal(t, "slow down", w.Body.String(), "应使用自定义响应而非默认JSON")
+			assert.True(t, w.Body.Len() > 0)
+			return
+		}
+	}
+	t.Fatal("第二个请求应该被限流")
 }

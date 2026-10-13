@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -24,26 +24,19 @@ func NewDB(opts ...Option) (Provider, error) {
 
 	u, err := dburl.Parse(o.dsn)
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse database URL: %v", err)
+		return nil, fmt.Errorf("unable to parse database URL: %w", err)
 	}
 
 	sdb, err := Connect(u.Driver, u.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("unable to connect to database: %v", err)
+		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
 
-	if o.maxOpenConns > 0 {
-		sdb.SetMaxOpenConns(o.maxOpenConns)
-	}
-	if o.maxIdleConns > 0 {
-		sdb.SetMaxIdleConns(o.maxIdleConns)
-	}
-	if o.connMaxLifetime > 0 {
-		sdb.SetConnMaxLifetime(o.connMaxLifetime)
-	}
-	if o.connMaxIdleTime > 0 {
-		sdb.SetConnMaxIdleTime(o.connMaxIdleTime)
-	}
+	// Apply supplies defaults; pass explicit non-positive values through to database/sql.
+	sdb.SetMaxOpenConns(o.maxOpenConns)
+	sdb.SetMaxIdleConns(o.maxIdleConns)
+	sdb.SetConnMaxLifetime(o.connMaxLifetime)
+	sdb.SetConnMaxIdleTime(o.connMaxIdleTime)
 
 	return &provider{
 		db: sdb,
@@ -219,6 +212,10 @@ func insert(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 		break
 	}
 
+	if len(names) == 0 {
+		return nil, fmt.Errorf("model %T has only zero key %q: no column to insert", m, keyName)
+	}
+
 	query := "INSERT INTO " + m.TableName() + "(" + strings.Join(names, ",") + ") VALUES (" + strings.Repeat(",?", len(names))[1:] + ")"
 	query = db.Rebind(query)
 	return db.ExecContext(ctx, query, args...)
@@ -244,46 +241,71 @@ func update(ctx context.Context, db mapExecer, m Modeler) (sql.Result, error) {
 		setArgs = append(setArgs, args[i])
 	}
 
+	if len(setClauses) == 0 {
+		return nil, fmt.Errorf("model %T has no non-key column to update", m)
+	}
+
 	query := "UPDATE " + m.TableName() + " SET " + strings.Join(setClauses, ",") + " WHERE " + keyName + " = ?"
 	setArgs = append(setArgs, idArg)
 	query = db.Rebind(query)
 	return db.ExecContext(ctx, query, setArgs...)
 }
 
-func bindModeler(arg any, m *reflectx.Mapper) ([]string, []any, error) {
-	t := reflect.TypeOf(arg)
+func bindModeler(mod Modeler, m *reflectx.Mapper) ([]string, []any, error) {
+	if mod == nil {
+		return nil, nil, fmt.Errorf("nil model")
+	}
+
+	// Validate before calling model methods or asking the mapper to inspect the type.
+	v := reflect.ValueOf(mod)
+	for v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil, nil, fmt.Errorf("nil modeler %T", mod)
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil, nil, fmt.Errorf("model %T must be a struct or pointer to struct", mod)
+	}
+
 	names := []string{}
-	for k := range m.TypeMap(t).Names {
+	for k := range m.TypeMap(v.Type()).Names {
 		names = append(names, k)
 	}
-	sort.Stable(sort.StringSlice(names))
-	args, err := bindArgs(names, arg, m)
+	slices.Sort(names)
+
+	for _, name := range names {
+		if strings.Contains(name, ".") {
+			return nil, nil, fmt.Errorf("nested struct field %q of %T not supported, use embedded (flattened) fields", name, mod)
+		}
+	}
+	args, err := bindArgs(names, v, m)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !slices.Contains(names, mod.KeyName()) {
+		return nil, nil, fmt.Errorf("key column %q not found in %T", mod.KeyName(), mod)
 	}
 
 	return names, args, nil
 }
 
-func bindArgs(names []string, arg any, m *reflectx.Mapper) ([]any, error) {
+func bindArgs(names []string, v reflect.Value, m *reflectx.Mapper) ([]any, error) {
 	arglist := make([]any, 0, len(names))
-
-	// 解引用指针，获取实际值
-	v := reflect.ValueOf(arg)
-	for v.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return nil, fmt.Errorf("nil modeler %T", arg)
-		}
-		v = v.Elem()
-	}
 
 	err := m.TraversalsByNameFunc(v.Type(), names, func(i int, t []int) error {
 		if len(t) == 0 {
-			// fix: 使用 %T 替代 %#v，避免大型结构体导致错误信息过于冗长
-			return fmt.Errorf("could not find field %q in type %T", names[i], arg)
+			return fmt.Errorf("could not find field %q in type %s", names[i], v.Type())
 		}
 
-		val := reflectx.FieldByIndexesReadOnly(v, t)
+		val := v
+		for _, index := range t {
+			val = reflect.Indirect(val)
+			if !val.IsValid() {
+				return fmt.Errorf("nil embedded pointer for field %q in %s", names[i], v.Type())
+			}
+			val = val.Field(index)
+		}
 		arglist = append(arglist, val.Interface())
 
 		return nil

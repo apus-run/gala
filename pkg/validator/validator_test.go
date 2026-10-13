@@ -94,7 +94,7 @@ func TestValidateErr(t *testing.T) {
 	}
 	validate := validator.New()
 	validate.RegisterTagNameFunc(func(field reflect.StructField) string {
-		name := strings.SplitN(field.Tag.Get("json"), ",", 2)[0]
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if name == "-" {
 			return ""
 		}

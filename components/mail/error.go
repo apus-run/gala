@@ -51,15 +51,15 @@ func (e *DeliveryError) Unwrap() error { return e.Err }
 // IsTransient 报告 err 是否为瞬态投递故障。
 // 瞬态只表示同类故障之后可能恢复，不构成安全重试的充分条件。
 func IsTransient(err error) bool {
-	var deliveryErr *DeliveryError
-	return errors.As(err, &deliveryErr) && deliveryErr.IsTransient
+	deliveryErr, ok := errors.AsType[*DeliveryError](err)
+	return ok && deliveryErr.IsTransient
 }
 
 // MayHaveBeenAccepted 报告 Provider 是否可能已接受本次请求。
 // 对任何 DeliveryError 采用保守判断；非 DeliveryError
 // （公共校验失败、调用 Client 前取消）没有发起 Provider 请求。
 func MayHaveBeenAccepted(err error) bool {
-	var deliveryErr *DeliveryError
-	return errors.As(err, &deliveryErr) &&
+	deliveryErr, ok := errors.AsType[*DeliveryError](err)
+	return ok &&
 		deliveryErr.Outcome != SendOutcomeNotAccepted
 }

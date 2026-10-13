@@ -8,13 +8,13 @@ import (
 
 var (
 	timestampTimer sync.Once
-	timestamp      int64
+	timestamp      atomic.Int64
 )
 
 // Timestamp returns the current time.
 // Make sure to start the updater once using StartTimeStampUpdater() before calling.
 func Timestamp() int64 {
-	return atomic.LoadInt64(&timestamp)
+	return timestamp.Load()
 }
 
 // StartTimeStampUpdater starts a concurrent function which stores the timestamp to an atomic value per second,
@@ -22,14 +22,14 @@ func Timestamp() int64 {
 func StartTimeStampUpdater() {
 	timestampTimer.Do(func() {
 		// set initial value
-		atomic.StoreInt64(&timestamp, int64(time.Now().Unix()))
+		timestamp.Store(int64(time.Now().Unix()))
 		go func(sleep time.Duration) {
 			ticker := time.NewTicker(sleep)
 			defer ticker.Stop()
 
 			for t := range ticker.C {
 				// update timestamp
-				atomic.StoreInt64(&timestamp, int64(t.Unix()))
+				timestamp.Store(int64(t.Unix()))
 			}
 		}(1 * time.Second) // duration
 	})

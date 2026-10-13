@@ -37,8 +37,7 @@ func mapDialError(err error) error {
 	// 瞬态白名单：传输超时与连接被拒（服务器重启中）。TLS 配置、
 	// 认证失败、永久 DNS 错误等保持非瞬态。
 	transient := false
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		transient = true
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
@@ -97,8 +96,7 @@ func mapSendError(err error) error {
 		}
 	}
 
-	var sendErr *gomail.SendError
-	if errors.As(err, &sendErr) {
+	if sendErr, ok := errors.AsType[*gomail.SendError](err); ok {
 		if code, ok := notAcceptedReasons[sendErr.Reason]; ok {
 			return &mail.DeliveryError{
 				Provider:    Provider,
@@ -122,8 +120,7 @@ func mapSendError(err error) error {
 		}
 	}
 
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		return &mail.DeliveryError{
 			Provider:    Provider,
 			Code:        "timeout",

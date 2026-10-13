@@ -48,8 +48,7 @@ func mapError(err error) error {
 	}
 
 	code := ""
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
 		code = apiErr.ErrorCode()
 	}
 

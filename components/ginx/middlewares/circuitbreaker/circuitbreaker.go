@@ -89,10 +89,10 @@ var DefaultConfig = Config{
 // CircuitBreaker implements the circuit breaker pattern. Requests normally reach it
 // through Middleware. Do not copy an instance after use.
 type CircuitBreaker struct {
-	failureCount     int64 // Count of failures (atomic)
-	successCount     int64 // Count of successes in half-open state (atomic)
-	totalRequests    int64 // Count of total requests (atomic)
-	rejectedRequests int64 // Count of rejected requests (atomic)
+	failureCount     atomic.Int64 // Count of failures (atomic)
+	successCount     atomic.Int64 // Count of successes in half-open state (atomic)
+	totalRequests    atomic.Int64 // Count of total requests (atomic)
+	rejectedRequests atomic.Int64 // Count of rejected requests (atomic)
 
 	mutex sync.RWMutex // Protects every field below
 
@@ -249,7 +249,7 @@ func (cb *CircuitBreaker) serve(c *gin.Context, next func()) {
 // traffic share the read lock rather than serializing every request. Only
 // crossing a transition or taking a probe slot needs exclusive access.
 func (cb *CircuitBreaker) admit(now time.Time) (bool, admission, func()) {
-	atomic.AddInt64(&cb.totalRequests, 1)
+	cb.totalRequests.Add(1)
 
 	cb.mutex.RLock()
 	state, gen := cb.state, cb.gen
@@ -275,7 +275,7 @@ func (cb *CircuitBreaker) admit(now time.Time) (bool, admission, func()) {
 // open circuit needs, so the caller may have read that state under either lock.
 func (cb *CircuitBreaker) admitOnState(state State, gen uint64) (bool, admission, func()) {
 	if state == StateOpen {
-		atomic.AddInt64(&cb.rejectedRequests, 1)
+		cb.rejectedRequests.Add(1)
 		return false, admission{state: StateOpen, gen: gen}, func() {}
 	}
 	return true, admission{state: StateClosed, gen: gen}, func() {}
@@ -285,7 +285,7 @@ func (cb *CircuitBreaker) admitOnState(state State, gen uint64) (bool, admission
 // tagged with that window so a probe outliving it cannot free a later slot.
 func (cb *CircuitBreaker) admitProbeLocked() (bool, admission, func()) {
 	if cb.halfOpenInFlight >= cb.halfOpenMaxConcurrent {
-		atomic.AddInt64(&cb.rejectedRequests, 1)
+		cb.rejectedRequests.Add(1)
 		return false, admission{state: StateHalfOpen}, func() {}
 	}
 
@@ -323,8 +323,8 @@ func (cb *CircuitBreaker) recoverLocked(now time.Time) {
 
 	cb.state = StateHalfOpen
 	cb.lastStateChange = now
-	atomic.StoreInt64(&cb.failureCount, 0)
-	atomic.StoreInt64(&cb.successCount, 0)
+	cb.failureCount.Store(0)
+	cb.successCount.Store(0)
 	cb.nextGenLocked()
 }
 
@@ -342,7 +342,7 @@ func (cb *CircuitBreaker) openLocked(now time.Time, forced bool) {
 	cb.openedAt = now
 	cb.lastStateChange = now
 	cb.forced = forced
-	atomic.StoreInt64(&cb.failureCount, 0)
+	cb.failureCount.Store(0)
 	cb.nextGenLocked()
 }
 
@@ -352,8 +352,8 @@ func (cb *CircuitBreaker) closeLocked(now time.Time) {
 	cb.lastStateChange = now
 	cb.forced = false
 	cb.openedAt = time.Time{}
-	atomic.StoreInt64(&cb.failureCount, 0)
-	atomic.StoreInt64(&cb.successCount, 0)
+	cb.failureCount.Store(0)
+	cb.successCount.Store(0)
 	if cb.interval > 0 {
 		cb.expiry = now.Add(cb.interval)
 	}
@@ -384,7 +384,7 @@ func (cb *CircuitBreaker) recordFailure(now time.Time, adm admission) {
 		cb.openLocked(now, false)
 	case StateClosed:
 		cb.dropExpiredFailuresLocked(now)
-		if int(atomic.AddInt64(&cb.failureCount, 1)) >= cb.failureThreshold {
+		if int(cb.failureCount.Add(1)) >= cb.failureThreshold {
 			cb.openLocked(now, false)
 		}
 	}
@@ -415,7 +415,7 @@ func (cb *CircuitBreaker) recordSuccess(now time.Time, adm admission) bool {
 	if cb.state != StateHalfOpen || !adm.current(cb.gen) {
 		return false
 	}
-	if int(atomic.AddInt64(&cb.successCount, 1)) < cb.successThreshold {
+	if int(cb.successCount.Add(1)) < cb.successThreshold {
 		return false
 	}
 
@@ -429,7 +429,7 @@ func (cb *CircuitBreaker) dropExpiredFailuresLocked(now time.Time) {
 	if cb.interval <= 0 || cb.expiry.After(now) {
 		return
 	}
-	atomic.StoreInt64(&cb.failureCount, 0)
+	cb.failureCount.Store(0)
 	cb.expiry = now.Add(cb.interval)
 }
 
@@ -548,10 +548,10 @@ func (cb *CircuitBreaker) ReportFailure() {
 func (cb *CircuitBreaker) Metrics() gin.H {
 	return gin.H{
 		"state":            cb.GetState(),
-		"failures":         atomic.LoadInt64(&cb.failureCount),
-		"successes":        atomic.LoadInt64(&cb.successCount),
-		"totalRequests":    atomic.LoadInt64(&cb.totalRequests),
-		"rejectedRequests": atomic.LoadInt64(&cb.rejectedRequests),
+		"failures":         cb.failureCount.Load(),
+		"successes":        cb.successCount.Load(),
+		"totalRequests":    cb.totalRequests.Load(),
+		"rejectedRequests": cb.rejectedRequests.Load(),
 	}
 }
 
@@ -581,10 +581,10 @@ func (cb *CircuitBreaker) GetStateStats() gin.H {
 func (cb *CircuitBreaker) statsLocked() gin.H {
 	return gin.H{
 		"state":            cb.state,
-		"failures":         atomic.LoadInt64(&cb.failureCount),
-		"successes":        atomic.LoadInt64(&cb.successCount),
-		"totalRequests":    atomic.LoadInt64(&cb.totalRequests),
-		"rejectedRequests": atomic.LoadInt64(&cb.rejectedRequests),
+		"failures":         cb.failureCount.Load(),
+		"successes":        cb.successCount.Load(),
+		"totalRequests":    cb.totalRequests.Load(),
+		"rejectedRequests": cb.rejectedRequests.Load(),
 		"lastStateChange":  cb.lastStateChange,
 		"openDuration":     cb.timeout,
 		"failureThreshold": cb.failureThreshold,

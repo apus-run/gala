@@ -22,8 +22,8 @@ func keyFunc(*jwt.Token) (any, error) {
 
 func Example() {
 	claims := &Claims{
-		UserID:           42,
-		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+		UserID:    42,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}
 
 	tokenStr, err := jwtx.GenerateToken(keyFunc, jwtx.WithClaims(func() jwt.Claims { return claims }))
@@ -33,9 +33,8 @@ func Example() {
 	fmt.Println("uid:", tok.Claims.(*Claims).UserID, err)
 
 	// 过期的 token 照样返回 ErrTokenInvalid，但原因可以从错误链上认出来
-	expired := &Claims{UserID: 42, RegisteredClaims: jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour)),
-	}}
+	expired := &Claims{UserID: 42,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))}
 	pastStr, _ := jwtx.GenerateToken(keyFunc, jwtx.WithClaims(func() jwt.Claims { return expired }))
 	_, err = jwtx.ParseToken(pastStr, keyFunc, jwtx.WithClaims(func() jwt.Claims { return &Claims{} }))
 	fmt.Println("expired:", errors.Is(err, jwtx.ErrTokenInvalid), errors.Is(err, jwt.ErrTokenExpired))

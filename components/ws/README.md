@@ -2,6 +2,8 @@
 
 `ws` is a websocket library based on [gorilla/websocket](https://github.com/gorilla/websocket), support automatic client reconnection.
 
+> Hub（userID → 多设备连接管理 + 推送）等 IM 语义属于业务层，不进组件库，完整可运行示例见 [examples/hub](examples/hub)。
+
 <br>
 
 ### Example of use

@@ -33,11 +33,9 @@ func claimsWith(exp time.Time) func() jwt.Claims {
 		return &CustomClaims{
 			UserID:    123,
 			UserAgent: "test-agent",
-			RegisteredClaims: jwt.RegisteredClaims{
-				Subject:   "user-1",
-				Issuer:    "gala",
-				ExpiresAt: jwt.NewNumericDate(exp),
-			},
+			Subject:   "user-1",
+			Issuer:    "gala",
+			ExpiresAt: jwt.NewNumericDate(exp),
 		}
 	}
 }
@@ -131,11 +129,10 @@ func TestParseClaimsEnforcesTokenConfig(t *testing.T) {
 	ctx := context.Background()
 
 	mint := NewJwtAuth(nil, WithClaims(func() jwt.Claims {
-		return &CustomClaims{RegisteredClaims: jwt.RegisteredClaims{
+		return &CustomClaims{
 			Issuer:    "gala",
 			Audience:  jwt.ClaimStrings{"api-b"},
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		}}
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}
 	}), WithJWTOptions(token.WithSecretKey(testSecret)))
 	raw, err := mint.GenerateToken(ctx)
 	require.NoError(t, err)
@@ -186,9 +183,8 @@ func TestSignRejectsExpiredClaims(t *testing.T) {
 // 这条把"共享不安全"钉住 —— 返回值就是工厂那个指针，不是副本。
 func TestParseClaimsWritesIntoFactoryObject(t *testing.T) {
 	ctx := context.Background()
-	shared := &CustomClaims{RegisteredClaims: jwt.RegisteredClaims{
-		Subject: "user-1", Issuer: "gala", ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}}
+	shared := &CustomClaims{
+		Subject: "user-1", Issuer: "gala", ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}
 	j := NewJwtAuth(nil, WithClaims(func() jwt.Claims { return shared }),
 		WithJWTOptions(token.WithSecretKey(testSecret), token.WithIssuer("gala")))
 

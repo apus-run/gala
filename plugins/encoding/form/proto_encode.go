@@ -199,7 +199,7 @@ func jsonCamelCase(s string) string {
 	builder.Grow(len(s))
 
 	wasUnderscore := false
-	for i := 0; i < len(s); i++ { // proto identifiers are always ASCIIS
+	for i := range len(s) { // proto identifiers are always ASCIIS
 		c := s[i]
 		if c != '_' {
 			if wasUnderscore && isASCIILower(c) {

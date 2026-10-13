@@ -272,7 +272,7 @@ func Find[T any](s []T, f func(T) bool) of.O[T] {
 //	FindRev(s, func(v int) bool { return v > 0 }) ⏩ of.OK(4)
 //	FindRev(s, func(v int) bool { return v < 0 }) ⏩ of.Nil[int]()
 func FindRev[T any](s []T, f func(T) bool) of.O[T] {
-	for i := len(s) - 1; i >= 0; i-- {
+	for i := range slices.Backward(s) {
 		if f(s[i]) {
 			return of.OK(s[i])
 		}

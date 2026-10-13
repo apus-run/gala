@@ -12,6 +12,7 @@ Original author: [tx7do](https://github.com/tx7do)
 - **Multiple Event Buses**: Manage multiple isolated event buses
 - **Once Handlers**: Subscribe handlers that execute only once
 - **Thread-Safe**: Safe for concurrent use
+- **Optional Event History**: Retain recent publish attempts with isolated snapshots
 
 ## Installation
 
@@ -103,6 +104,39 @@ emailBus.Subscribe("email.received", handler)
 ```
 
 ## Advanced Usage
+
+### Recording Recent Events
+
+Wrap the publisher when recent event history is needed for diagnostics:
+
+```go
+history := eventbus.NewHistoryRecorder(128)
+publisher := history.WrapPublisher(bus)
+
+if err := publisher.Publish(ctx, event); err != nil {
+    slog.Error("Failed to publish event", "error", err)
+}
+recent := history.Snapshot() // Oldest to newest; does not consume entries.
+```
+
+`NewHistoryRecorder` requires a positive capacity. A fixed-size ring replaces
+the oldest entry when full. `Record(event)` also supports explicit recording
+without a publisher wrapper; nil events are ignored.
+
+All three publish modes record once per non-nil attempt, before forwarding,
+including attempts that return errors or use a canceled context. Subscriber
+count does not affect recording count. History does not indicate successful
+delivery or handler completion. Ordering follows recording order, not timestamps
+or completion order; concurrent attempts have no predetermined ordering.
+
+Both recording and snapshot retrieval copy the Event and its Metadata. Data is
+shared and must remain immutable; capacity limits entry count, not payload bytes.
+Recorded Data references remain retained until overwritten, and returned snapshots
+may retain them longer. Do not concurrently modify an Event while recording it.
+
+Use the original bus for subscriptions and Close. Calls made directly to the bus
+bypass history. Wrapping the same recorder's immediate wrapper again is a no-op;
+repeated publish calls still create separate entries even when Event IDs match.
 
 ### Using Middlewares
 

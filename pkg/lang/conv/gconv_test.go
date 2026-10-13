@@ -13,7 +13,6 @@ import (
 
 	"github.com/apus-run/gala/pkg/lang/cond"
 	"github.com/apus-run/gala/pkg/lang/constraints"
-	"github.com/apus-run/gala/pkg/lang/ptr"
 	"github.com/apus-run/gala/pkg/lang/result"
 	"github.com/apus-run/gala/pkg/lang/value"
 )
@@ -166,9 +165,9 @@ func testToBool[T ~bool](t *testing.T) {
 			{name: "MyBytes false -> bool", input: MyBytes("false"), want: false, wantErr: false},
 			{name: "MyBytes true -> bool", input: MyBytes("true"), want: true, wantErr: false},
 			{name: "other -> bool", input: []int{}, want: false, wantErr: true},
-			{name: "*string true -> bool", input: ptr.Of("true"), want: true, wantErr: false},
-			{name: "**string true -> bool", input: ptr.Of(ptr.Of("true")), want: true, wantErr: false},
-			{name: "***string true -> bool", input: ptr.Of(ptr.Of(ptr.Of("true"))), want: true, wantErr: false},
+			{name: "*string true -> bool", input: new("true"), want: true, wantErr: false},
+			{name: "**string true -> bool", input: new(new("true")), want: true, wantErr: false},
+			{name: "***string true -> bool", input: new(new(new("true"))), want: true, wantErr: false},
 			{name: "array -> bool", input: [2]int{}, want: false, wantErr: true},
 			{name: "unbuffered chan -> bool", input: make(chan int), want: false, wantErr: true},
 			{name: "buffered chan -> bool", input: make(chan int, 1), want: false, wantErr: true},
@@ -176,7 +175,7 @@ func testToBool[T ~bool](t *testing.T) {
 			{name: "map -> bool", input: map[int]int{}, want: false, wantErr: true},
 			{name: "slice -> bool", input: []int{}, want: false, wantErr: true},
 			{name: "struct -> bool", input: strings.Builder{}, want: false, wantErr: true},
-			{name: "unsafe pointer -> bool", input: unsafe.Pointer(ptr.Of(1)), want: false, wantErr: true},
+			{name: "unsafe pointer -> bool", input: unsafe.Pointer(new(1)), want: false, wantErr: true},
 		}
 		for _, tt := range tests {
 			if got := To[T](tt.input); !reflect.DeepEqual(got, tt.want) {
@@ -287,9 +286,9 @@ func testToNumber[T constraints.Number](t *testing.T) {
 			{name: "MyBytes 0.0 -> %T", input: MyBytes("0.0"), want: T(0), wantErr: false},
 			{name: "MyBytes 1.0 -> %T", input: MyBytes("1.0"), want: T(1), wantErr: false},
 			{name: "other -> %T", input: []int{}, want: T(0), wantErr: true},
-			{name: "*string 1.0 -> %T", input: ptr.Of("1.0"), want: T(1), wantErr: false},
-			{name: "**string 1.0 -> %T", input: ptr.Of(ptr.Of("1.0")), want: T(1), wantErr: false},
-			{name: "***string 1.0 -> %T", input: ptr.Of(ptr.Of(ptr.Of("1.0"))), want: T(1), wantErr: false},
+			{name: "*string 1.0 -> %T", input: new("1.0"), want: T(1), wantErr: false},
+			{name: "**string 1.0 -> %T", input: new(new("1.0")), want: T(1), wantErr: false},
+			{name: "***string 1.0 -> %T", input: new(new(new("1.0"))), want: T(1), wantErr: false},
 		}
 		for _, tt := range tests {
 			if got := To[T](tt.input); !reflect.DeepEqual(got, tt.want) {
@@ -392,9 +391,9 @@ func testToString[T ~string](t *testing.T) {
 			{name: "fmt.Stringer -> string", input: net.IPv4(8, 8, 8, 8), want: T("8.8.8.8"), wantErr: false},
 			{name: "error -> string", input: errors.New("zzz"), want: T("zzz"), wantErr: false},
 			{name: "other -> string", input: []int{}, want: T(""), wantErr: true},
-			{name: "*bool true -> string", input: ptr.Of(true), want: T("true"), wantErr: false},
-			{name: "**bool true -> string", input: ptr.Of(ptr.Of(true)), want: T("true"), wantErr: false},
-			{name: "***bool true -> string", input: ptr.Of(ptr.Of(ptr.Of(true))), want: T("true"), wantErr: false},
+			{name: "*bool true -> string", input: new(true), want: T("true"), wantErr: false},
+			{name: "**bool true -> string", input: new(new(true)), want: T("true"), wantErr: false},
+			{name: "***bool true -> string", input: new(new(new(true))), want: T("true"), wantErr: false},
 		}
 		for _, tt := range tests {
 			if got := To[T](tt.input); !reflect.DeepEqual(got, tt.want) {

@@ -12,16 +12,14 @@ const (
 )
 
 func IsMySQLDuplicatedRecordErr(err error) bool {
-	var mErr *mysql.MySQLError
-	if errors.As(err, &mErr) {
+	if mErr, ok := errors.AsType[*mysql.MySQLError](err); ok {
 		return mErr.Number == errMySQLDuplicatedRecord
 	}
 	return false
 }
 
 func IsMySQLForeignKeyConstraintFailsError(err error) bool {
-	var mErr *mysql.MySQLError
-	if errors.As(err, &mErr) {
+	if mErr, ok := errors.AsType[*mysql.MySQLError](err); ok {
 		return mErr.Number == errMySQLForeignKeyConstraintFails
 	}
 	return false

@@ -10,12 +10,12 @@ import (
 var _ Strategy = (*AdaptiveTimeoutRetryStrategy)(nil)
 
 type AdaptiveTimeoutRetryStrategy struct {
-	strategy   Strategy // 基础重试策略
-	threshold  int      // 超时比率阈值 (单位：比特数量)
-	ringBuffer []uint64 // 比特环（滑动窗口存储超时信息）
-	reqCount   uint64   // 请求数量
-	bufferLen  int      // 滑动窗口长度
-	bitCnt     uint64   // 比特位总数
+	strategy   Strategy        // 基础重试策略
+	threshold  int             // 超时比率阈值 (单位：比特数量)
+	ringBuffer []atomic.Uint64 // 比特环（滑动窗口存储超时信息）
+	reqCount   atomic.Uint64   // 请求数量
+	bufferLen  int             // 滑动窗口长度
+	bitCnt     uint64          // 比特位总数
 }
 
 // NextWithRetries implements Strategy.
@@ -57,7 +57,7 @@ func (s *AdaptiveTimeoutRetryStrategy) Report(err error) Strategy {
 }
 
 func (s *AdaptiveTimeoutRetryStrategy) markSuccess() {
-	count := atomic.AddUint64(&s.reqCount, 1) - 1
+	count := s.reqCount.Add(1) - 1
 	count = count % s.bitCnt
 	// 对2^x进行取模或者整除运算时可以用位运算代替除法和取模
 	// count / 64 可以转换成 count >> 6。 位运算会更高效。
@@ -66,23 +66,23 @@ func (s *AdaptiveTimeoutRetryStrategy) markSuccess() {
 	bitPos := count & 63
 	mask := uint64(1) << bitPos
 	for {
-		old := atomic.LoadUint64(&s.ringBuffer[idx])
-		if atomic.CompareAndSwapUint64(&s.ringBuffer[idx], old, old&^mask) {
+		old := s.ringBuffer[idx].Load()
+		if s.ringBuffer[idx].CompareAndSwap(old, old&^mask) {
 			return
 		}
 	}
 }
 
 func (s *AdaptiveTimeoutRetryStrategy) markFail() {
-	count := atomic.AddUint64(&s.reqCount, 1) - 1
+	count := s.reqCount.Add(1) - 1
 	count = count % s.bitCnt
 	idx := count >> 6
 	bitPos := count & 63
 	// (uint64(1)<<bitPos) 将目标位设置为1
 	mask := uint64(1) << bitPos
 	for {
-		old := atomic.LoadUint64(&s.ringBuffer[idx])
-		if atomic.CompareAndSwapUint64(&s.ringBuffer[idx], old, old|mask) {
+		old := s.ringBuffer[idx].Load()
+		if s.ringBuffer[idx].CompareAndSwap(old, old|mask) {
 			return
 		}
 	}
@@ -91,7 +91,7 @@ func (s *AdaptiveTimeoutRetryStrategy) markFail() {
 func (s *AdaptiveTimeoutRetryStrategy) getFailed() int {
 	var failCount int
 	for i := range len(s.ringBuffer) {
-		v := atomic.LoadUint64(&s.ringBuffer[i])
+		v := s.ringBuffer[i].Load()
 		failCount += bits.OnesCount64(v)
 	}
 	return failCount
@@ -102,7 +102,7 @@ func NewAdaptiveTimeoutRetryStrategy(strategy Strategy, bufferLen, threshold int
 		strategy:   strategy,
 		threshold:  threshold,
 		bufferLen:  bufferLen,
-		ringBuffer: make([]uint64, bufferLen),
+		ringBuffer: make([]atomic.Uint64, bufferLen),
 		bitCnt:     uint64(64) * uint64(bufferLen),
 	}
 }

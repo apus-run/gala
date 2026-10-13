@@ -152,6 +152,18 @@ func TestSelect(t *testing.T) {
 
 type testType string
 
+func TestFindRevReadsElementAfterPredicate(t *testing.T) {
+	values := []int{1, 2, 3}
+	got := sliceutils.FindRev(values, func(v int) bool {
+		if v == 3 {
+			values[2] = 30
+			return true
+		}
+		return false
+	})
+	assert.Equal(t, 30, got.Val())
+}
+
 func (t testType) String() string {
 	return string(t)
 }

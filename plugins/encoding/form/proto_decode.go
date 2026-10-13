@@ -315,7 +315,7 @@ func parseMessage(md protoreflect.MessageDescriptor, value string) (protoreflect
 		msg = wrapperspb.Bytes(v)
 	case "google.protobuf.FieldMask":
 		fm := &fieldmaskpb.FieldMask{}
-		for _, fv := range strings.Split(value, ",") {
+		for fv := range strings.SplitSeq(value, ",") {
 			fm.Paths = append(fm.Paths, jsonSnakeCase(fv))
 		}
 		msg = fm
@@ -352,7 +352,7 @@ func jsonSnakeCase(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s))
 
-	for i := 0; i < len(s); i++ { // proto identifiers are always ASCII
+	for i := range len(s) { // proto identifiers are always ASCII
 		c := s[i]
 		if isASCIIUpper(c) {
 			builder.WriteByte('_')

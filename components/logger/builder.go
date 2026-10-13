@@ -12,6 +12,8 @@ type Format int
 const (
 	FormatText Format = iota
 	FormatJSON
+	// FormatPretty expands attribute values with github.com/k0kubun/pp/v3.
+	FormatPretty
 )
 
 type HandlerOption func(*handlerConfig)
@@ -24,6 +26,7 @@ type handlerConfig struct {
 	format      Format
 	level       Leveler
 	addSource   bool
+	color       bool
 	replaceAttr func(groups []string, attr slog.Attr) slog.Attr
 }
 
@@ -53,6 +56,9 @@ func NewLogger(handler slog.Handler, opts ...WrapperOption) *slog.Logger {
 
 func WrapHandler(handler slog.Handler, opts ...WrapperOption) slog.Handler {
 	cfg := &wrapperConfig{extractors: []Extractor{AttrsFromContext}}
+	if _, wrapped := handler.(*contextHandler); wrapped {
+		cfg.extractors = nil // The existing wrapper already extracts stored attrs.
+	}
 	for _, opt := range opts {
 		opt(cfg)
 	}
@@ -65,6 +71,12 @@ func WithWriter(w io.Writer) HandlerOption {
 
 func WithFormat(format Format) HandlerOption {
 	return func(c *handlerConfig) { c.format = format }
+}
+
+// WithColor enables ANSI colors for attribute values in FormatPretty.
+// Colors are disabled by default. Other formats ignore this option.
+func WithColor(enabled bool) HandlerOption {
+	return func(c *handlerConfig) { c.color = enabled }
 }
 
 func WithLevel(level Leveler) HandlerOption {
@@ -102,8 +114,11 @@ func newBaseHandler(cfg *handlerConfig) slog.Handler {
 		AddSource:   cfg.addSource,
 		ReplaceAttr: cfg.replaceAttr,
 	}
-	if cfg.format == FormatJSON {
+	switch cfg.format {
+	case FormatJSON:
 		return slog.NewJSONHandler(cfg.writer, opts)
+	case FormatPretty:
+		return newPrettyHandler(cfg.writer, *opts, cfg.color)
 	}
 	return slog.NewTextHandler(cfg.writer, opts)
 }

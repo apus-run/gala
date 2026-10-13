@@ -44,8 +44,7 @@ func (v *Validator) valid(obj any) error {
 
 	e := v.validate.Struct(obj)
 	if e != nil {
-		var err validator.ValidationErrors
-		ok := errors.As(e, &err)
+		err, ok := errors.AsType[validator.ValidationErrors](e)
 		if !ok {
 			return e
 		}
@@ -61,8 +60,7 @@ func (v *Validator) validCtx(ctx context.Context, obj any) error {
 
 	e := v.validate.StructCtx(ctx, obj)
 	if e != nil {
-		var err validator.ValidationErrors
-		ok := errors.As(e, &err)
+		err, ok := errors.AsType[validator.ValidationErrors](e)
 		if !ok {
 			return e
 		}
@@ -72,10 +70,7 @@ func (v *Validator) validCtx(ctx context.Context, obj any) error {
 }
 
 func removeStructName(fields map[string]string) error {
-	errs := make([]string, 0, len(fields))
-	for _, err := range fields {
-		errs = append(errs, err)
-	}
+	errs := slices.Collect(maps.Values(fields))
 	return errors.New(strings.Join(errs, ";"))
 }
 

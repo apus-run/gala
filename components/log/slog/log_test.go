@@ -48,7 +48,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestNewLogger(t *testing.T) {
-	var called int32
+	var called atomic.Int32
 	ctx := context.WithValue(context.Background(), "foobar", "helloworld")
 
 	logger := NewLogger(
@@ -57,7 +57,7 @@ func TestNewLogger(t *testing.T) {
 	)
 	ApplyHandlerOption(WithHandleFunc(func(ctx context.Context, r *slog.Record) {
 		r.AddAttrs(String("value", ctx.Value("foobar").(string)))
-		atomic.AddInt32(&called, 1)
+		called.Add(1)
 	}))
 
 	// logger = With(String("sub_logger", "true"))
@@ -70,7 +70,7 @@ func TestNewLogger(t *testing.T) {
 	t.Logf("%#v", logger)
 	logger.InfoContext(ctx, "print something")
 
-	if atomic.LoadInt32(&called) != 1 {
+	if called.Load() != 1 {
 		t.FailNow()
 	}
 }

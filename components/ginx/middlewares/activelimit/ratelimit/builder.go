@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 
-	"github.com/hashicorp/golang-lru/v2/expirable"
+	"github.com/apus-run/gala/components/ecache"
 )
 
 var (
@@ -35,6 +35,10 @@ type RateLimit struct {
 	requests int
 	// 生成限流键的函数
 	keyFunc func(*gin.Context) string
+	// 被限流时 JSON 响应中的自定义 message
+	message string
+	// 被限流时的完全自定义响应，设置后忽略默认 JSON 响应与 message
+	onLimitReached func(*gin.Context)
 
 	store Cache
 	mu    sync.Mutex // Serializes cache misses across handlers built from this instance.
@@ -51,7 +55,7 @@ func NewRateLimit(window time.Duration, requests int) *RateLimit {
 			// 默认使用客户端IP作为限流键
 			return ctx.ClientIP()
 		},
-		store: expirable.NewLRU[string, *rate.Limiter](DefaultCacheSize, nil, DefaultTTL),
+		store: ecache.New[string, *rate.Limiter](ecache.WithLRU(), ecache.WithMaxKeys(DefaultCacheSize), ecache.WithTTL(DefaultTTL)),
 	}
 }
 
@@ -73,6 +77,19 @@ func (r *RateLimit) SetRequests(requests int) *RateLimit {
 	return r
 }
 
+// SetMessage 自定义被限流时 JSON 响应中的 message 字段
+func (r *RateLimit) SetMessage(message string) *RateLimit {
+	r.message = message
+	return r
+}
+
+// SetOnLimitReached 自定义被限流时的完整响应，设置后忽略默认 JSON 响应与 SetMessage。
+// 函数内应自行写入状态码/响应体；Build 会在其返回后调用 c.Abort 终止链。
+func (r *RateLimit) SetOnLimitReached(fn func(*gin.Context)) *RateLimit {
+	r.onLimitReached = fn
+	return r
+}
+
 // Build 构建 gin.HandlerFunc
 // R = requests / window (req/s). Burst = requests (allows short spikes up to N).
 func (r *RateLimit) Build() gin.HandlerFunc {
@@ -90,6 +107,11 @@ func (r *RateLimit) Build() gin.HandlerFunc {
 	}
 	rateLimit := rate.Limit(float64(requests) / window.Seconds())
 	burst := requests
+	message := r.message
+	if message == "" {
+		message = "请求过于频繁，请稍后再试"
+	}
+	onLimitReached := r.onLimitReached
 
 	return func(c *gin.Context) {
 		key := keyFunc(c)
@@ -115,13 +137,21 @@ func (r *RateLimit) Build() gin.HandlerFunc {
 			resetAt := time.Now().Add(time.Duration(ra) * time.Second).Unix()
 
 			c.Header("Retry-After", strconv.Itoa(ra))
+			c.Header("RateLimit-Limit", strconv.Itoa(requests))
+			c.Header("RateLimit-Remaining", "0")
+			c.Header("RateLimit-Reset", strconv.Itoa(ra))
 			c.Header("X-RateLimit-Limit", strconv.Itoa(requests))
 			c.Header("X-RateLimit-Remaining", "0")
 			c.Header("X-RateLimit-Reset", strconv.FormatInt(resetAt, 10))
 
+			if onLimitReached != nil {
+				onLimitReached(c)
+				c.Abort()
+				return
+			}
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"code":    http.StatusTooManyRequests,
-				"message": "请求过于频繁，请稍后再试",
+				"message": message,
 				"data": gin.H{
 					"retry_after": ra,
 				},
@@ -130,8 +160,14 @@ func (r *RateLimit) Build() gin.HandlerFunc {
 		}
 
 		remaining := lim.Tokens()
-		resetAt := time.Now().Add(window).Unix()
+		// 令牌桶按速率连续补充而非窗口结束一次性重置，Reset 取恢复满桶的耗时。
+		refillIn := max(time.Duration((float64(requests)-remaining)*float64(window/time.Duration(requests))), 0)
+		refillSecs := int(math.Ceil(refillIn.Seconds()))
+		resetAt := time.Now().Add(time.Duration(refillSecs) * time.Second).Unix()
 
+		c.Header("RateLimit-Limit", strconv.Itoa(requests))
+		c.Header("RateLimit-Remaining", strconv.Itoa(int(remaining)))
+		c.Header("RateLimit-Reset", strconv.Itoa(refillSecs))
 		c.Header("X-RateLimit-Limit", strconv.Itoa(requests))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(int(remaining)))
 		c.Header("X-RateLimit-Reset", strconv.FormatInt(resetAt, 10))

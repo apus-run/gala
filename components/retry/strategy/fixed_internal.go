@@ -11,7 +11,7 @@ var _ Strategy = (*FixedIntervalRetryStrategy)(nil)
 type FixedIntervalRetryStrategy struct {
 	maxRetries int32         // 最大重试次数，如果是 0 或负数，表示无限重试
 	interval   time.Duration // 重试间隔时间
-	retries    int32         // 当前重试次数
+	retries    atomic.Int32  // 当前重试次数
 }
 
 func NewFixedIntervalRetryStrategy(interval time.Duration, maxRetries int32) *FixedIntervalRetryStrategy {
@@ -33,7 +33,7 @@ func (s *FixedIntervalRetryStrategy) nextWithRetries(retries int32) (time.Durati
 }
 
 func (s *FixedIntervalRetryStrategy) Next() (time.Duration, bool) {
-	retries := atomic.AddInt32(&s.retries, 1)
+	retries := s.retries.Add(1)
 	return s.nextWithRetries(retries)
 }
 

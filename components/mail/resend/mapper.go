@@ -148,7 +148,7 @@ func validResendTagPart(value string) bool {
 	if value == "" || len(value) > maxResendTagLength {
 		return false
 	}
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		c := value[i]
 		if (c < 'a' || c > 'z') &&
 			(c < 'A' || c > 'Z') &&

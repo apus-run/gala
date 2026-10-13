@@ -170,8 +170,7 @@ type httpStatusError interface {
 }
 
 func httpStatusFromError(err error) int {
-	var statusErr httpStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[httpStatusError](err); ok {
 		code := statusErr.HTTPStatus()
 		if code >= 100 && code <= 599 {
 			return code
@@ -179,8 +178,7 @@ func httpStatusFromError(err error) int {
 	}
 	// Published errorsx v0.8.1 exposes Code but does not yet implement
 	// HTTPStatus. Preserve its status when this module is used without go.work.
-	var legacyErr *errorsx.Error
-	if errors.As(err, &legacyErr) && legacyErr != nil && legacyErr.Code >= 100 && legacyErr.Code <= 599 {
+	if legacyErr, ok := errors.AsType[*errorsx.Error](err); ok && legacyErr != nil && legacyErr.Code >= 100 && legacyErr.Code <= 599 {
 		return legacyErr.Code
 	}
 	return http.StatusInternalServerError

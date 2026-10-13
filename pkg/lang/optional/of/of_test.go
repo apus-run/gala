@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apus-run/gala/pkg/lang/optional/of" // Assuming utils package contains necessary utility functions
-	"github.com/apus-run/gala/pkg/lang/ptr"
 )
 
 /*
@@ -450,7 +449,7 @@ func TestOf(t *testing.T) {
 		t.Logf("%v", o.Val())
 	})
 	t.Run("OfPtr", func(t *testing.T) {
-		o := of.OfPtr(ptr.Of(123))
+		o := of.OfPtr(new(123))
 		t.Logf("%v", o.Val())
 	})
 }
@@ -470,7 +469,7 @@ func TestOValue(t *testing.T) {
 	assert.Equal(t, 10, of.Of(10, false).Val()) // 💡 NOTE: not recommend
 	assert.Equal(t, 0, of.Of(0, false).Val())
 
-	assert.Equal(t, 1, of.OfPtr(ptr.Of(1)).Val())
+	assert.Equal(t, 1, of.OfPtr(new(1)).Val())
 	assert.Equal(t, 0, of.OfPtr((*int)(nil)).Val())
 }
 
@@ -530,13 +529,13 @@ func TestJSON(t *testing.T) {
 		assert.Equal(t, string(expect), string(actual))
 	}
 	{
-		v := ptr.Of(1)
+		v := new(1)
 		expect, _ := json.Marshal(v)
 		actual, _ := json.Marshal(of.OfPtr(v))
 		assert.Equal(t, string(expect), string(actual))
 	}
 	{
-		v := ptr.Of("test")
+		v := new("test")
 		expect, _ := json.Marshal(v)
 		actual, _ := json.Marshal(of.OfPtr(v))
 		assert.Equal(t, string(expect), string(actual))
@@ -678,7 +677,7 @@ func TestOThen(t *testing.T) {
 }
 
 func TestOPtr(t *testing.T) {
-	assert.Equal(t, ptr.Of(10), of.OK(10).Ptr())
+	assert.Equal(t, new(10), of.OK(10).Ptr())
 	assert.Equal(t, true, of.Nil[int]().IsNil())
 
 	// Test modify.

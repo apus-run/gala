@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -35,9 +36,7 @@ func (q *MongoQuery[T]) WhereOperator(field string, operator string, value any) 
 	filter := toBSONFilter(field, operator, value)
 
 	// Merge with existing filter
-	for k, v := range filter {
-		q.filter[k] = v
-	}
+	maps.Copy(q.filter, filter)
 
 	return q
 }
@@ -219,9 +218,7 @@ func (r *MongoRepository[T]) GroupBy(ctx context.Context, groupFields []string, 
 	}
 
 	// Add aggregations
-	for k, v := range aggregations {
-		groupStage[k] = v
-	}
+	maps.Copy(groupStage, aggregations)
 
 	pipeline := []bson.M{
 		{"$group": groupStage},

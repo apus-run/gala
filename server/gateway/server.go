@@ -10,7 +10,6 @@ import (
 	"net/url"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apus-run/gala/server"
 	"github.com/apus-run/gala/server/internal/endpoint"
@@ -36,11 +35,9 @@ func NewServer(ctx context.Context, opts ...ServerOption) (*Server, error) {
 
 	serveMuxOpts := []runtime.ServeMuxOption{
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
-			MarshalOptions: protojson.MarshalOptions{
-				// 设置序列化 protobuf 数据时，枚举类型的字段以数字格式输出.
-				// 否则，默认会以字符串格式输出，跟枚举类型定义不一致，带来理解成本.
-				UseEnumNumbers: true,
-			},
+			// 设置序列化 protobuf 数据时，枚举类型的字段以数字格式输出.
+			// 否则，默认会以字符串格式输出，跟枚举类型定义不一致，带来理解成本.
+			UseEnumNumbers: true,
 		}), runtime.WithErrorHandler(runtime.DefaultHTTPErrorHandler),
 	}
 

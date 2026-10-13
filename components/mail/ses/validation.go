@@ -200,7 +200,7 @@ func validateConfigurationSetName(name string) error {
 }
 
 func isASCII(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		if value[i] > 0x7f {
 			return false
 		}
@@ -209,7 +209,7 @@ func isASCII(value string) bool {
 }
 
 func isSESHeaderName(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		if value[i] < 33 || value[i] > 126 || value[i] == ':' {
 			return false
 		}
@@ -218,7 +218,7 @@ func isSESHeaderName(value string) bool {
 }
 
 func isSESHeaderValue(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		if value[i] < 32 || value[i] > 126 {
 			return false
 		}
@@ -227,7 +227,7 @@ func isSESHeaderValue(value string) bool {
 }
 
 func isSESTagText(value string) bool {
-	for i := 0; i < len(value); i++ {
+	for i := range len(value) {
 		c := value[i]
 		if (c < 'a' || c > 'z') &&
 			(c < 'A' || c > 'Z') &&

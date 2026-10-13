@@ -6,13 +6,13 @@ replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/apus-run/gala/components/ecache v0.12.0
 	github.com/apus-run/gala/pkg/errorsx v0.8.1
 	github.com/apus-run/gala/pkg/lang v0.8.1
 	github.com/gavv/httpexpect/v2 v2.17.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/stretchr/testify v1.11.1

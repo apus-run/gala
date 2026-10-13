@@ -95,8 +95,7 @@ func (c *Config) Load() error {
 			v.SetConfigFile(kv.Path)
 
 			if err := v.ReadInConfig(); err != nil {
-				var configFileNotFoundError viper.ConfigFileNotFoundError
-				if errors.As(err, &configFileNotFoundError) {
+				if _, ok := errors.AsType[viper.ConfigFileNotFoundError](err); ok {
 					return ErrConfigFileNotFound
 				}
 				return err

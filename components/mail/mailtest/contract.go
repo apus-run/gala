@@ -67,8 +67,7 @@ func RunSenderContract(t *testing.T, factory SenderFactory) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("want context.Canceled, got %v", err)
 		}
-		var deliveryErr *mail.DeliveryError
-		if errors.As(err, &deliveryErr) {
+		if _, ok := errors.AsType[*mail.DeliveryError](err); ok {
 			t.Fatalf("pre-call context error must not be a DeliveryError: %v", err)
 		}
 		if mail.MayHaveBeenAccepted(err) {
@@ -90,8 +89,7 @@ func RunSenderContract(t *testing.T, factory SenderFactory) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("want context.DeadlineExceeded, got %v", err)
 		}
-		var deliveryErr *mail.DeliveryError
-		if errors.As(err, &deliveryErr) {
+		if _, ok := errors.AsType[*mail.DeliveryError](err); ok {
 			t.Fatalf("pre-call context error must not be a DeliveryError: %v", err)
 		}
 		if mail.MayHaveBeenAccepted(err) {
@@ -110,8 +108,7 @@ func RunSenderContract(t *testing.T, factory SenderFactory) {
 		if !errors.Is(err, mail.ErrInvalidMessage) {
 			t.Fatalf("want ErrInvalidMessage, got %v", err)
 		}
-		var deliveryErr *mail.DeliveryError
-		if errors.As(err, &deliveryErr) {
+		if _, ok := errors.AsType[*mail.DeliveryError](err); ok {
 			t.Fatalf("pre-call validation error must not be a DeliveryError: %v", err)
 		}
 		if mail.MayHaveBeenAccepted(err) {
@@ -205,8 +202,7 @@ func RunSenderContract(t *testing.T, factory SenderFactory) {
 		sender := factory.New(t, ClientSpec{Err: sentinel})
 
 		_, err := sender.Send(context.Background(), ValidMessage())
-		var deliveryErr *mail.DeliveryError
-		if !errors.As(err, &deliveryErr) {
+		if _, ok := errors.AsType[*mail.DeliveryError](err); !ok {
 			t.Fatalf("want *mail.DeliveryError, got %T: %v", err, err)
 		}
 		if !errors.Is(err, sentinel) {
@@ -231,8 +227,8 @@ func RunSenderContract(t *testing.T, factory SenderFactory) {
 func assertDeliveryError(t *testing.T, err error, provider string, transient bool) {
 	t.Helper()
 
-	var deliveryErr *mail.DeliveryError
-	if !errors.As(err, &deliveryErr) {
+	deliveryErr, ok := errors.AsType[*mail.DeliveryError](err)
+	if !ok {
 		t.Fatalf("want *mail.DeliveryError, got %T: %v", err, err)
 	}
 	if deliveryErr.Provider != provider {

@@ -19,6 +19,7 @@ func TestFixedIntervalRetryStrategy_Next(t *testing.T) {
 		ctx      context.Context
 		s        *FixedIntervalRetryStrategy
 		interval time.Duration
+		retries  int32
 
 		isContinue bool
 	}{
@@ -38,8 +39,8 @@ func TestFixedIntervalRetryStrategy_Next(t *testing.T) {
 			s: &FixedIntervalRetryStrategy{
 				maxRetries: 3,
 				interval:   time.Second,
-				retries:    2,
 			},
+			retries:    2,
 			interval:   time.Second,
 			isContinue: true,
 		},
@@ -49,8 +50,8 @@ func TestFixedIntervalRetryStrategy_Next(t *testing.T) {
 			s: &FixedIntervalRetryStrategy{
 				maxRetries: 3,
 				interval:   time.Second,
-				retries:    3,
 			},
+			retries:    3,
 			interval:   0,
 			isContinue: false,
 		},
@@ -70,7 +71,6 @@ func TestFixedIntervalRetryStrategy_Next(t *testing.T) {
 			s: &FixedIntervalRetryStrategy{
 				maxRetries: -1,
 				interval:   time.Second,
-				retries:    0,
 			},
 			interval:   time.Second,
 			isContinue: true,
@@ -79,6 +79,7 @@ func TestFixedIntervalRetryStrategy_Next(t *testing.T) {
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			tt.s.retries.Store(tt.retries)
 			interval, isContinue := tt.s.Next()
 			assert.Equal(t, tt.interval, interval)
 			assert.Equal(t, tt.isContinue, isContinue)

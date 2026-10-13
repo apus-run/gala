@@ -9,14 +9,14 @@ import (
 )
 
 func TestNewHandler(t *testing.T) {
-	var called int64
+	var called atomic.Int64
 	ctx := context.WithValue(context.Background(), "foo", "bar")
 	hdl := slog.NewJSONHandler(os.Stdout, nil)
 	ch := NewHandler(
 		hdl,
 		WithDisableStackTrace(true),
 		WithHandleFunc(func(ctx context.Context, r *slog.Record) {
-			r.AddAttrs(slog.Int64("called", atomic.AddInt64(&called, 1)))
+			r.AddAttrs(slog.Int64("called", called.Add(1)))
 		}))
 	logger := slog.New(ch)
 	logger.ErrorContext(ctx, "world peace")
@@ -26,7 +26,7 @@ func TestNewHandler(t *testing.T) {
 	logger2 := slog.New(ch2)
 	logger2.WarnContext(ctx, "hello world")
 
-	if atomic.LoadInt64(&called) != 3 {
+	if called.Load() != 3 {
 		t.FailNow()
 	}
 }
