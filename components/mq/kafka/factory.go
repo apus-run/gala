@@ -1,21 +1,76 @@
 package kafka
 
 import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/twmb/franz-go/pkg/kgo"
+
 	"github.com/apus-run/gala/components/mq"
 )
 
 type Factory struct{}
 
-func NewFactory() mq.Factory {
-	return &Factory{}
+func NewFactory() mq.Factory { return &Factory{} }
+
+func (f *Factory) NewProducer(cfg mq.ProducerConfig) (mq.Producer, error) {
+	if len(cfg.Addr) == 0 {
+		return nil, errors.New("kafka: addr is empty")
+	}
+	if cfg.RetryTimes < 0 || cfg.ProduceTimeout < 0 {
+		return nil, errors.New("kafka: negative retry count or timeout")
+	}
+	codec := kgo.NoCompression()
+	switch cfg.Compression {
+	case mq.CompressionNone:
+	case mq.CompressionZSTD:
+		codec = kgo.ZstdCompression()
+	default:
+		return nil, fmt.Errorf("kafka: compression: %w", mq.ErrUnsupported)
+	}
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(cfg.Addr...),
+		kgo.RecordRetries(cfg.RetryTimes),
+		kgo.ProducerBatchCompression(codec),
+	}
+	if cfg.ProduceTimeout > 0 {
+		opts = append(opts, kgo.RecordDeliveryTimeout(cfg.ProduceTimeout))
+	}
+	if cfg.ProducerGroup != nil {
+		opts = append(opts, kgo.ClientID(*cfg.ProducerGroup))
+	}
+	client, err := kgo.NewClient(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &Producer{client: client}, nil
 }
 
-// NewConsumer implements mq.Factory.
-func (f *Factory) NewConsumer(mq.ConsumerConfig) (mq.Consumer, error) {
-	panic("unimplemented")
-}
-
-// NewProducer implements mq.Factory.
-func (f *Factory) NewProducer(mq.ProducerConfig) (mq.Producer, error) {
-	panic("unimplemented")
+func (f *Factory) NewConsumer(cfg mq.ConsumerConfig) (mq.Consumer, error) {
+	if len(cfg.Addr) == 0 || cfg.Topic == "" || cfg.ConsumerGroup == "" {
+		return nil, errors.New("kafka: addr, topic and consumer group are required")
+	}
+	if cfg.ConsumeTimeout < 0 || cfg.ConsumeGoroutineNums < 0 {
+		return nil, errors.New("kafka: negative consume timeout or concurrency")
+	}
+	// Serial processing keeps commit ordering explicit; scale with group members.
+	if cfg.ConsumeGoroutineNums > 1 || cfg.TagExpression != "" {
+		return nil, fmt.Errorf("kafka: concurrent handlers or tag filtering: %w", mq.ErrUnsupported)
+	}
+	timeout := cfg.ConsumeTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	client, err := kgo.NewClient(
+		kgo.SeedBrokers(cfg.Addr...),
+		kgo.ConsumerGroup(cfg.ConsumerGroup),
+		kgo.ConsumeTopics(cfg.Topic),
+		kgo.DisableAutoCommit(),
+		kgo.BlockRebalanceOnPoll(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &Consumer{client: client, timeout: timeout}, nil
 }

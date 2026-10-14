@@ -41,6 +41,20 @@ func (m *MockConsumerRegistry) EXPECT() *MockConsumerRegistryMockRecorder {
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockConsumerRegistry) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockConsumerRegistryMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockConsumerRegistry)(nil).Close))
+}
+
 // Register mocks base method.
 func (m *MockConsumerRegistry) Register(worker []mq.ConsumerWorker) mq.ConsumerRegistry {
 	m.ctrl.T.Helper()

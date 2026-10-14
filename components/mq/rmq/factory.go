@@ -20,18 +20,31 @@ func NewFactory() mq.Factory {
 }
 
 func (f *Factory) NewProducer(config mq.ProducerConfig) (mq.Producer, error) {
+	opts, err := producerOptions(config)
+	if err != nil {
+		return nil, err
+	}
+	p, err := rocketmq.NewProducer(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &Producer{producer: p}, nil
+}
+
+func producerOptions(config mq.ProducerConfig) ([]producer.Option, error) {
 	if len(config.Addr) == 0 {
 		return nil, errors.New("addr is empty")
+	}
+	if config.RetryTimes < 0 || config.ProduceTimeout < 0 {
+		return nil, errors.New("negative retry count or produce timeout")
 	}
 	opts := []producer.Option{
 		producer.WithNsResolver(NewCustomResolver(config.Addr)),
 		producer.WithRetry(config.RetryTimes),
+		producer.WithQueueSelector(producer.NewHashQueueSelector()),
 	}
 	if config.ProduceTimeout > 0 {
 		opts = append(opts, producer.WithSendMsgTimeout(config.ProduceTimeout))
-	}
-	if config.RetryTimes > 0 {
-		opts = append(opts, producer.WithRetry(config.RetryTimes))
 	}
 	if config.Compression != mq.CompressionNone {
 		return nil, errors.New("compression not supported")
@@ -40,11 +53,7 @@ func (f *Factory) NewProducer(config mq.ProducerConfig) (mq.Producer, error) {
 		opts = append(opts, producer.WithGroupName(*config.ProducerGroup))
 	}
 
-	p, err := rocketmq.NewProducer(opts...)
-	if err != nil {
-		return nil, err
-	}
-	return &Producer{producer: p}, nil
+	return opts, nil
 }
 
 func (f *Factory) NewConsumer(config mq.ConsumerConfig) (mq.Consumer, error) {
@@ -69,9 +78,9 @@ func (f *Factory) NewConsumer(config mq.ConsumerConfig) (mq.Consumer, error) {
 	if config.ConsumeTimeout > 0 {
 		opts = append(opts, consumer.WithConsumeTimeout(config.ConsumeTimeout))
 	}
-	var selector *consumer.MessageSelector
+	var selector consumer.MessageSelector
 	if config.TagExpression != "" {
-		selector = &consumer.MessageSelector{
+		selector = consumer.MessageSelector{
 			Type:       consumer.TAG,
 			Expression: config.TagExpression,
 		}
@@ -89,7 +98,7 @@ func (f *Factory) NewConsumer(config mq.ConsumerConfig) (mq.Consumer, error) {
 }
 
 func NewCustomResolver(addrs []string) primitive.NsResolver {
-	return &customResolver{addrs: addrs}
+	return &customResolver{addrs: append([]string(nil), addrs...)}
 }
 
 type customResolver struct {

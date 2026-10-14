@@ -57,8 +57,8 @@ func TestCustomNsResolver(t *testing.T) {
 			OutputAddrs: []string{"a.b.c"},
 		},
 		{
-			InputAddrs:  []string{"a.b.c:8000"},
-			OutputAddrs: []string{"a.b.c:8000"},
+			InputAddrs:  []string{"invalid:port:address"},
+			OutputAddrs: []string{"invalid:port:address"},
 		},
 	}
 	for _, tc := range testCases {

@@ -1,7 +1,11 @@
 package rmq
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"maps"
 	"time"
 
 	"github.com/apache/rocketmq-client-go/v2"
@@ -23,58 +27,104 @@ func (p *Producer) Close() error {
 }
 
 func (p *Producer) Send(ctx context.Context, message *mq.Message) (mq.SendResponse, error) {
-	msg := p.convertMessage(message)
-	result, err := p.producer.SendSync(ctx, msg)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return mq.SendResponse{}, err
 	}
-	return mq.SendResponse{
-		MessageID: result.MsgID,
-		Offset:    result.QueueOffset,
-	}, nil
+	if err := validateMessage(message); err != nil {
+		return mq.SendResponse{}, err
+	}
+	return sendResponse(p.producer.SendSync(ctx, p.convertMessage(message)))
 }
 
 func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.SendResponse, error) {
-	msgs := make([]*primitive.Message, 0, len(messages))
-	for _, message := range messages {
-		msgs = append(msgs, p.convertMessage(message))
-	}
-	result, err := p.producer.SendSync(ctx, msgs...)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return mq.SendResponse{}, err
 	}
-	return mq.SendResponse{
-		MessageID: result.MsgID,
-		Offset:    result.QueueOffset,
-	}, nil
+	if len(messages) == 0 {
+		return mq.SendResponse{}, errors.New("rmq: empty batch")
+	}
+	msgs := make([]*primitive.Message, 0, len(messages))
+	for i, message := range messages {
+		if err := validateMessage(message); err != nil {
+			return mq.SendResponse{}, fmt.Errorf("rmq: message %d: %w", i, err)
+		}
+		if message.Topic != messages[0].Topic {
+			return mq.SendResponse{}, errors.New("rmq: batch messages must share a topic")
+		}
+		// The SDK drops the outer batch's delay and sharding properties.
+		if len(messages) > 1 && (message.DeferDuration > 0 || message.PartitionKey != "" ||
+			message.Properties[primitive.PropertyDelayTimeLevel] != "" ||
+			message.Properties[primitive.PropertyShardingKey] != "") {
+			return mq.SendResponse{}, fmt.Errorf("rmq: delayed or orderly batch: %w", mq.ErrUnsupported)
+		}
+		msgs = append(msgs, p.convertMessage(message))
+	}
+	return sendResponse(p.producer.SendSync(ctx, msgs...))
 }
 
 func (p *Producer) SendAsync(ctx context.Context, callback mq.AsyncSendCallback, message *mq.Message) error {
-	msg := p.convertMessage(message)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if callback == nil {
+		return errors.New("rmq: callback is nil")
+	}
+	if err := validateMessage(message); err != nil {
+		return err
+	}
 	return p.producer.SendAsync(ctx, func(ctx context.Context, result *primitive.SendResult, err error) {
-		var resp mq.SendResponse
-		if result != nil {
-			resp = mq.SendResponse{
-				MessageID: result.MsgID,
-				Offset:    result.QueueOffset,
-			}
-		}
+		resp, err := sendResponse(result, err)
 		callback(ctx, resp, err)
-	}, msg)
+	}, p.convertMessage(message))
+}
+
+func validateMessage(message *mq.Message) error {
+	if message == nil {
+		return errors.New("rmq: message is nil")
+	}
+	if message.Topic == "" {
+		return errors.New("rmq: topic is empty")
+	}
+	if message.DeferDuration < 0 {
+		return errors.New("rmq: negative delay")
+	}
+	return nil
+}
+
+// A non-OK result can still have a message ID; preserve it for reconciliation.
+func sendResponse(result *primitive.SendResult, err error) (mq.SendResponse, error) {
+	var resp mq.SendResponse
+	if result != nil {
+		resp.MessageID = result.MsgID
+		resp.Offset = result.QueueOffset
+	}
+	if err != nil {
+		return resp, err
+	}
+	if result == nil {
+		return resp, errors.New("rmq: missing send result")
+	}
+	if result.Status != primitive.SendOK {
+		return resp, fmt.Errorf("rmq: send status %d", result.Status)
+	}
+	return resp, nil
 }
 
 func (p *Producer) convertMessage(message *mq.Message) *primitive.Message {
-	msg := primitive.NewMessage(message.Topic, message.Body).
-		WithTag(message.Tag).
-		WithShardingKey(message.PartitionKey)
+	msg := primitive.NewMessage(message.Topic, bytes.Clone(message.Body))
 	if len(message.Properties) > 0 {
-		msg.WithProperties(message.Properties)
+		msg.WithProperties(maps.Clone(message.Properties))
+	}
+	// Explicit fields take precedence over conflicting transport properties.
+	if message.Tag != "" {
+		msg.WithTag(message.Tag)
+	}
+	if message.PartitionKey != "" {
+		msg.WithShardingKey(message.PartitionKey)
 	}
 	if message.DeferDuration > 0 {
-		// rocketmq 老版本无法准确设置延迟时间，通过DelayLevel来实现
 		msg.WithDelayTimeLevel(p.toDelayLevel(message.DeferDuration))
 	}
-
 	return msg
 }
 
@@ -101,11 +151,9 @@ var delayLevels = [...]int{
 }
 
 func (p *Producer) toDelayLevel(d time.Duration) int {
-	seconds := int(d.Seconds())
-
 	// 找到第一个大于等于目标值的级别
 	for i, level := range delayLevels {
-		if seconds <= level {
+		if d <= time.Duration(level)*time.Second {
 			return i + 1 // 级别从1开始
 		}
 	}

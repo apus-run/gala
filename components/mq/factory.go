@@ -1,8 +1,12 @@
 package mq
 
 import (
+	"errors"
 	"time"
 )
+
+// ErrUnsupported indicates that a backend or operation is not implemented.
+var ErrUnsupported = errors.New("mq: unsupported operation")
 
 //go:generate mockgen -destination=mocks/factory.go -package=mocks . Factory
 type Factory interface {
