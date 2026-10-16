@@ -5,7 +5,6 @@ import (
 )
 
 //go:generate mockgen -destination=mocks/registry.go -package=mocks . ConsumerRegistry,ConsumerWorker
-
 type ConsumerRegistry interface {
 	// Register adds workers for the next startup attempt. Register before StartAll.
 	Register(worker []ConsumerWorker) ConsumerRegistry
