@@ -236,6 +236,31 @@ level := logger.ParseLevel("debug")
 
 无法识别的字符串会回退为 `LevelInfo`。
 
+### 安全、并发与资源边界
+
+包级函数使用标准库的默认 logger；`logger.SetDefault` 会替换它。`slog.Logger` 和标准
+Text/JSON handler 支持并发调用；本包 Pretty handler 会用共享锁串行写完整条目，派生的
+`With` / `WithGroup` logger 也共用这把锁。`slog.LevelVar` 可用于并发调整级别。
+
+自定义 `slog.Handler`、`ReplaceAttr`、上下文 `Extractor`、`LogValuer` 和格式化方法可能被
+多个 goroutine 同时调用，必须自行保证并发安全。把一个 Writer 交给多个独立 handler 时，
+也要确认 Writer 能并发写入，或在 Writer 外层加锁。
+
+`ContextWithAttrs` 会复制传入属性；`AttrsFromContext` 返回上下文中保存的切片本身，请把它当作
+只读数据。不要在另一个 goroutine 正在记录该 context 时修改返回的切片或属性中引用的 map、slice。
+
+logger 默认不会识别或屏蔽密码、令牌等秘密。使用 `WithReplaceAttr` 按属性键脱敏，或让敏感类型
+实现 `slog.LogValuer`；后者只在该类型作为 slog 属性时生效。`ReplaceAttr` 不会递归处理任意
+`Any` 值内部的 Go struct 或 map 字段。不要直接记录完整请求、凭证或大型业务对象；Pretty 格式还会
+调用值的 `String`、`Error`、`Format` 或 `MarshalText` 方法，并展开导出字段。
+
+本包没有异步日志队列，因此不会因内部队列积压而持续占用内存。每条 Pretty 日志会先写入临时缓冲区，
+缓冲区大小随输出内容增长且没有内置上限；超大或深层属性会造成明显的临时内存分配。对外部输入
+记录前应先截断或筛选字段。上下文中附加的属性会随 context 一起保留，避免长期持有大对象。
+
+`SetDefault` 替换默认 logger 不会自动关闭旧 Writer。切换使用文件或其他有生命周期的 Writer 时，
+应用应自行 flush / close 旧资源；正在执行的日志调用也可能暂时继续持有旧 logger。
+
 ### 测试
 
 ```sh

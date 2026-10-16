@@ -108,17 +108,102 @@ Close 禁止新的处理，取消并等待活跃 handler，再关闭 SDK。handl
 
 ## 验证
 
-在仓库根目录运行：
+`components/mq` 是独立 Go module。单元测试、Kafka 内存协议测试、生命周期测试和消融从该目录运行：
 
 ```sh
-go test -race -tags=integration ./components/mq/... -count=1 -timeout=90s
-go vet ./components/mq/...
-python3 components/mq/ablation.py
+cd components/mq
+go test -race -tags=integration ./... -count=1 -timeout=90s
+go vet ./...
+python3 ablation.py
 ```
 
-协议测试使用 franz-go 的 `kfake` 内存集群，通过真实 Kafka 协议验证 ZSTD、批量/异步发送、元数据、
-三分区上的同键路由、panic 后重试和位点提交，不依赖 Docker。它不替代生产 Kafka/RocketMQ 集群的故障测试。
-NSQ 的真实 nsqd 测试与消融复现方法见 [nsq/README.md](nsq/README.md)。
+Kafka 协议测试使用 franz-go `kfake` 内存集群，验证 ZSTD、批量/异步发送、元数据、三分区同键路由、
+handler panic 后重试和位点提交。它不依赖 Docker。NSQ 的测试细节和消融复现方法见 [NSQ 说明](nsq/README.md)。
+
+### 真实 broker 集成测试
+
+`integration,realbroker` 会连接一次性真实 broker，覆盖如下流程：
+
+| 后端 | 真实服务测试覆盖 |
+| --- | --- |
+| Kafka | 三分区 topic、同步/批量/异步发送、ZSTD、key/tag/property 元数据、handler panic 后重投 |
+| NSQ | PUB/MPUB/DPUB、异步发送、并发消费、消息 ID、失败重入队及成功确认 |
+| RocketMQ | 同步/批量/异步发送、Tag/分片键/属性、延迟投递、消费失败后的 broker 重投 |
+
+以下示例从仓库根目录运行，使用隔离 Docker 网络和 Go 测试容器。先启动三个 broker：
+
+```sh
+docker network create --subnet 172.31.240.0/24 gala-mq-real
+
+docker run -d --rm --name gala-mq-nsq --network gala-mq-real --network-alias nsqd \
+  nsqio/nsq:v1.3.0 /nsqd --broadcast-address=nsqd --max-req-timeout=100ms
+
+docker run -d --rm --name gala-mq-kafka --network gala-mq-real --network-alias kafka \
+  -e KAFKA_NODE_ID=1 \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka:19092 \
+  -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:29093 \
+  -e KAFKA_LISTENERS=CONTROLLER://:29093,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092 \
+  -e KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e CLUSTER_ID=4L6g3nShT-eMCtK--X86sw \
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+  -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+  apache/kafka:4.1.2
+
+docker run -d --rm --name gala-mq-namesrv --network gala-mq-real --network-alias namesrv \
+  apache/rocketmq:5.3.2 sh mqnamesrv
+
+cat > /tmp/gala-mq-broker.conf <<'EOF'
+brokerClusterName=DefaultCluster
+brokerName=broker-a
+brokerId=0
+brokerIP1=172.31.240.11
+autoCreateTopicEnable=true
+autoCreateSubscriptionGroup=true
+listenPort=10911
+brokerRole=ASYNC_MASTER
+flushDiskType=ASYNC_FLUSH
+EOF
+
+docker run -d --rm --name gala-mq-broker --network gala-mq-real --network-alias rmqbroker \
+  --ip 172.31.240.11 \
+  -v /tmp/gala-mq-broker.conf:/home/rocketmq/rocketmq-5.3.2/conf/broker.conf \
+  -e NAMESRV_ADDR=namesrv:9876 \
+  apache/rocketmq:5.3.2 sh mqbroker -n namesrv:9876 \
+  -c /home/rocketmq/rocketmq-5.3.2/conf/broker.conf
+```
+
+等待三个服务 ready 后，运行真实测试和 race 测试：
+
+```sh
+until docker logs gala-mq-nsq 2>&1 | grep -q 'TCP: listening'; do sleep 1; done
+until docker logs gala-mq-kafka 2>&1 | grep -q 'Kafka Server started'; do sleep 2; done
+until docker logs gala-mq-broker 2>&1 | grep -q 'boot success'; do sleep 2; done
+
+docker run --rm --network gala-mq-real -v "$PWD:/workspace" \
+  -w /workspace/components/mq \
+  -e NSQD_TCP_ADDR=nsqd:4150 \
+  -e KAFKA_BROKERS=kafka:19092 \
+  -e ROCKETMQ_NAMESRV_ADDR=namesrv:9876 \
+  -e ROCKETMQ_BROKER_ADDR=172.31.240.11:10911 \
+  golang:1.27.2 sh -c \
+  'go test -tags=integration,realbroker ./... -count=1 -timeout=120s && \
+   go test -race -tags=integration ./... -count=1 -timeout=90s'
+
+docker rm -f gala-mq-broker gala-mq-namesrv gala-mq-kafka gala-mq-nsq
+docker network rm gala-mq-real
+rm -f /tmp/gala-mq-broker.conf
+```
+
+race 测试仍连接真实 Kafka 和 NSQ，也会运行 Kafka 的 `kfake` 测试。RocketMQ 真实 broker 用例由
+`realbroker` tag 单独启用，并在不带 `-race` 的第一条命令中执行。锁定的
+`rocketmq-client-go/v2 v2.1.2` 在 broker 心跳清理与消费拉取间对 SDK 内部 `processQueue` treemap 有数据竞争，
+race detector 栈位于 `cleanExpiredMsg` / `putMessage`，因此该版本不能视为 race-clean。上述测试是单节点投递验证，
+不覆盖生产集群的高可用、磁盘故障或网络分区。
 
 消融入口为 [ablation.py](ablation.py)，使用临时 Go overlay，不改动工作区。每个后端先运行完整基线，
 再逐项退化机制；指定测试失败且出现预期断言才算检出。编译失败、跳过、超时和死锁不算有效结果。
