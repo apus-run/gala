@@ -2,12 +2,14 @@ package zlog
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -37,30 +39,29 @@ func TestLog(t *testing.T) {
 	logger.Error("This is an error message")
 }
 
-/*
-// InitZapLogger 日志
-func InitZapLogger(mode string) logger.Logger {
-	var cfg zap.Config
-	// 这里我们用一个小技巧，
-	// 就是直接使用 zap 本身的配置结构体来处理
-	if mode == "prod" {
-		cfg = zap.NewProductionConfig()
-		cfg.InitialFields = map[string]any{"version": "1.0.0"}
-	} else {
-		cfg = zap.NewDevelopmentConfig()
-		cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+func TestZapLoggerPreservesFieldTypes(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	logger := &ZapLogger{zap.New(core)}
+	fields := []Field{
+		zap.Int("count", 2),
+		zap.Bool("ready", true),
+		zap.Error(errors.New("boom")),
+		zap.String("key", "value"),
 	}
-	err := viper.UnmarshalKey("log", &cfg)
-	if err != nil {
-		panic(err)
+	logger.Info("direct", fields...)
+	logger.With(fields...).Info("child")
+
+	entries := logs.All()
+	if len(entries) != 2 {
+		t.Fatalf("expected two entries, got %d", len(entries))
 	}
-	l, err := cfg.Build()
-	if err != nil {
-		panic(err)
+	for _, entry := range entries {
+		values := entry.ContextMap()
+		if values["count"] != int64(2) || values["ready"] != true || values["error"] != "boom" || values["key"] != "value" {
+			t.Fatalf("logger changed field types or values: %+v", entry)
+		}
 	}
-	return logger.NewZapLogger(l)
 }
-*/
 
 // 性能测试用例
 func BenchmarkZapLoggerW(b *testing.B) {

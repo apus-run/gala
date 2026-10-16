@@ -1,0 +1,94 @@
+package form
+
+import (
+	"errors"
+	"net/url"
+	"reflect"
+
+	"github.com/go-playground/form/v4"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/apus-run/gala/pkg/encoding"
+)
+
+const (
+	// Name is form codec name
+	Name = "x-www-form-urlencoded"
+	// Null value string
+	nullStr = "null"
+)
+
+var (
+	encoder = form.NewEncoder()
+	decoder = form.NewDecoder()
+)
+
+// This variable can be replaced with -ldflags like below:
+// go build "-ldflags=-X github.com/apus-run/gala/pkg/encoding/form.tagName=form"
+var tagName = "json"
+
+func init() {
+	decoder.SetTagName(tagName)
+	encoder.SetTagName(tagName)
+	encoding.RegisterCodec(codec{encoder: encoder, decoder: decoder})
+}
+
+type codec struct {
+	encoder *form.Encoder
+	decoder *form.Decoder
+}
+
+func (c codec) Marshal(v any) ([]byte, error) {
+	var vs url.Values
+	var err error
+	if m, ok := v.(proto.Message); ok {
+		vs, err = EncodeValues(m)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		vs, err = c.encoder.Encode(v)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for k, v := range vs {
+		if len(v) == 0 {
+			delete(vs, k)
+		}
+	}
+	return []byte(vs.Encode()), nil
+}
+
+func (c codec) Unmarshal(data []byte, v any) error {
+	vs, err := url.ParseQuery(string(data))
+	if err != nil {
+		return err
+	}
+
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return errors.New("form: unmarshal target is nil")
+	}
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			if !rv.CanSet() {
+				return errors.New("form: unmarshal target is nil pointer")
+			}
+			rv.Set(reflect.New(rv.Type().Elem()))
+		}
+		rv = rv.Elem()
+	}
+	if m, ok := v.(proto.Message); ok {
+		return DecodeValues(m, vs)
+	}
+	if m, ok := rv.Interface().(proto.Message); ok {
+		return DecodeValues(m, vs)
+	}
+
+	return c.decoder.Decode(v, vs)
+}
+
+func (codec) Name() string {
+	return Name
+}

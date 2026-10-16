@@ -2,131 +2,118 @@ package slog
 
 import (
 	"context"
-	"sync"
+	"fmt"
+	"os"
+	"sync/atomic"
 )
 
-// globalLogger is designed as a global logger in current process.
-var global = &loggerAppliance{}
-
-// loggerAppliance is the proxy of `Logger` to
-// make logger change will affect all sub-logger.
-type loggerAppliance struct {
-	lock sync.RWMutex
-	Logger
-}
+var global atomic.Value // *SlogLogger
 
 func init() {
-	logger := NewLogger()
-
-	global.SetLogger(logger)
+	SetLogger(NewLogger())
 }
 
-func (a *loggerAppliance) SetLogger(in Logger) {
-	if in == nil {
-		in = NewLogger()
-	}
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	a.Logger = in
-}
-
-func (a *loggerAppliance) GetLogger() Logger {
-	a.lock.RLock()
-	defer a.lock.RUnlock()
-	return a.Logger
-}
-
-// SetLogger should be called before any other log call.
-// And it is NOT THREAD SAFE.
+// SetLogger replaces the global logger. It is safe for concurrent use.
+// Passing nil installs a new default logger. The concrete type must remain
+// *SlogLogger, as installed during initialization and required by atomic.Value.
 func SetLogger(logger Logger) {
-	global.SetLogger(logger)
+	if logger == nil {
+		logger = NewLogger()
+	}
+	global.Store(logger)
 }
 
-// GetLogger returns global logger appliance as logger in current process.
+// GetLogger returns the current global logger. It is safe for concurrent use.
 func GetLogger() Logger {
-	return global.GetLogger()
+	return L()
 }
 
 // L 是 GetLogger 简写
 func L() Logger {
-	return GetLogger()
+	return global.Load().(Logger)
 }
 
 // Default 是 GetLogger
 func Default() Logger {
-	return GetLogger()
+	return L()
 }
 
 func Info(msg string, args ...Attr) {
-	L().Info(msg, args...)
+	logAttrs(L(), context.Background(), LevelInfo, msg, args...)
 }
 
 func Infof(format string, args ...any) {
-	L().Infof(format, args...)
+	logAttrs(L(), context.Background(), LevelInfo, sprintf(format, args...))
 }
 
 func InfoContext(ctx context.Context, msg string, args ...Attr) {
-	L().InfoContext(ctx, msg, args...)
+	logAttrs(L(), ctx, LevelInfo, msg, args...)
 }
 
 func Error(msg string, args ...Attr) {
-	L().Error(msg, args...)
+	logAttrs(L(), context.Background(), LevelError, msg, args...)
 }
 
 func Errorf(format string, args ...any) {
-	L().Errorf(format, args...)
+	logAttrs(L(), context.Background(), LevelError, sprintf(format, args...))
 }
 
 func ErrorContext(ctx context.Context, msg string, args ...Attr) {
-	L().ErrorContext(ctx, msg, args...)
+	logAttrs(L(), ctx, LevelError, msg, args...)
 }
 
 func Debug(msg string, args ...Attr) {
-	L().Debug(msg, args...)
+	logAttrs(L(), context.Background(), LevelDebug, msg, args...)
 }
 
 func Debugf(format string, args ...any) {
-	L().Debugf(format, args...)
+	logAttrs(L(), context.Background(), LevelDebug, sprintf(format, args...))
 }
 
 func DebugContext(ctx context.Context, msg string, args ...Attr) {
-	L().DebugContext(ctx, msg, args...)
+	logAttrs(L(), ctx, LevelDebug, msg, args...)
 }
 
 func Warn(msg string, args ...Attr) {
-	L().Warn(msg, args...)
+	logAttrs(L(), context.Background(), LevelWarn, msg, args...)
 }
 
 func Warnf(format string, args ...any) {
-	L().Warnf(format, args...)
+	logAttrs(L(), context.Background(), LevelWarn, sprintf(format, args...))
 }
 
 func WarnContext(ctx context.Context, msg string, args ...Attr) {
-	L().WarnContext(ctx, msg, args...)
+	logAttrs(L(), ctx, LevelWarn, msg, args...)
 }
 
 func Fatal(msg string, args ...Attr) {
-	L().Fatal(msg, args...)
+	logAttrs(L(), context.Background(), LevelFatal, msg, args...)
+	os.Exit(1)
 }
 
 func Fatalf(format string, args ...any) {
-	L().Fatalf(format, args...)
+	logAttrs(L(), context.Background(), LevelFatal, sprintf(format, args...))
+	os.Exit(1)
 }
 
 func FatalContext(ctx context.Context, msg string, args ...Attr) {
-	L().FatalContext(ctx, msg, args...)
+	logAttrs(L(), ctx, LevelFatal, msg, args...)
+	os.Exit(1)
 }
 
 func Panic(msg string, args ...Attr) {
-	L().Panic(msg, args...)
+	logAttrs(L(), context.Background(), LevelPanic, msg, args...)
+	panic(SprintfWithAttrs(msg, args...))
 }
 
 func Panicf(format string, args ...any) {
-	L().Panicf(format, args...)
+	logAttrs(L(), context.Background(), LevelPanic, sprintf(format, args...))
+	panic(fmt.Sprintf(format, args...))
 }
 
 func PanicContext(ctx context.Context, msg string, args ...Attr) {
-	L().PanicContext(ctx, msg, args...)
+	logAttrs(L(), ctx, LevelPanic, msg, args...)
+	panic(SprintfWithAttrs(msg, args...))
 }
 
 func With(args ...any) *SlogLogger {

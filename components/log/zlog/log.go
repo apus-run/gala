@@ -24,6 +24,11 @@ func NewZapLogger(l *zap.Logger) Logger {
 	}
 }
 
+// Zap returns the underlying zap logger without changing its options.
+func (l *ZapLogger) Zap() *zap.Logger {
+	return l.Logger
+}
+
 func ZapDevConfig() zap.Config {
 	return zap.NewDevelopmentConfig()
 }
@@ -128,40 +133,42 @@ func getLogLevel(logLevel string) zapcore.Level {
 	return zapLevel
 }
 
+// Logging methods retain one wrapper frame to match buildZapLogger's caller skip.
+// Sugar and Sync need no wrappers because their native methods are promoted.
 func (l *ZapLogger) Info(msg string, tags ...Field) {
-	l.Logger.Info(msg, l.toZapFields(tags)...)
+	l.Logger.Info(msg, tags...)
 }
 
 func (l *ZapLogger) Error(msg string, tags ...Field) {
-	l.Logger.Error(msg, l.toZapFields(tags)...)
+	l.Logger.Error(msg, tags...)
 }
 
 func (l *ZapLogger) Debug(msg string, tags ...Field) {
-	l.Logger.Debug(msg, l.toZapFields(tags)...)
+	l.Logger.Debug(msg, tags...)
 }
 
 func (l *ZapLogger) Warn(msg string, tags ...Field) {
-	l.Logger.Warn(msg, l.toZapFields(tags)...)
+	l.Logger.Warn(msg, tags...)
 }
 
 func (l *ZapLogger) Fatal(msg string, tags ...Field) {
-	l.Logger.Fatal(msg, l.toZapFields(tags)...)
+	l.Logger.Fatal(msg, tags...)
 }
 
 func (l *ZapLogger) Panic(msg string, tags ...Field) {
-	l.Logger.Panic(msg, l.toZapFields(tags)...)
+	l.Logger.Panic(msg, tags...)
 }
 
 func (l *ZapLogger) Slow(msg string, tags ...Field) {
-	l.Logger.Warn(msg, l.toZapFields(tags)...)
+	l.Logger.Warn(msg, tags...)
 }
 
 func (l *ZapLogger) Stack(msg string) {
-	l.Logger.Error(fmt.Sprint(msg), zap.Stack("stack"))
+	l.Logger.Error(msg, zap.Stack("stack"))
 }
 
 func (l *ZapLogger) Stat(msg string, tags ...Field) {
-	l.Logger.Info(msg, l.toZapFields(tags)...)
+	l.Logger.Info(msg, tags...)
 }
 
 func (l *ZapLogger) Debugf(format string, args ...any) {
@@ -196,11 +203,6 @@ func (l *ZapLogger) Printf(format string, args ...any) {
 	l.Logger.Sugar().Infof(format, args...)
 }
 
-// Sync 刷新缓冲 (注: 文件同步可能报错)
-func (l *ZapLogger) Sync() error {
-	return l.Logger.Sync()
-}
-
 // Close 兼容关闭接口
 func (l *ZapLogger) Close() error {
 	return l.Sync()
@@ -214,7 +216,7 @@ func (l *ZapLogger) With(fields ...Field) Logger {
 	}
 
 	lc := l.clone()
-	lc.Logger = lc.Logger.With(l.toZapFields(fields)...)
+	lc.Logger = lc.Logger.With(fields...)
 	return lc
 }
 
@@ -228,18 +230,10 @@ func (l *ZapLogger) AddCallerSkip(skip int) Logger {
 	return lc
 }
 
-// clone 深度拷贝 zapLogger.
+// clone 浅拷贝包装器；底层 zap logger 通过 With/WithOptions 派生。
 func (l *ZapLogger) clone() *ZapLogger {
 	copied := *l
 	return &copied
-}
-
-func (l *ZapLogger) toZapFields(fields []Field) []zap.Field {
-	zapFields := make([]zap.Field, 0, len(fields))
-	for _, arg := range fields {
-		zapFields = append(zapFields, zap.Any(arg.Key, arg.String))
-	}
-	return zapFields
 }
 
 func (l *ZapLogger) W(ctx context.Context) Logger {

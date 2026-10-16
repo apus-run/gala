@@ -26,6 +26,8 @@ type Logger interface {
 	FatalContext(ctx context.Context, msg string, attrs ...Attr)
 	With(args ...any) *SlogLogger
 	WithGroup(name string) *SlogLogger
+
+	Handler() slog.Handler
 }
 
 type Attr = slog.Attr

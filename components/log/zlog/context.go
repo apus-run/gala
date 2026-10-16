@@ -12,10 +12,7 @@ type contextLogKey struct{}
 
 // WithContext returns a copy of context in which the log value is set.
 func WithContext(ctx context.Context, keyvals ...any) context.Context {
-	if l := FromContext(ctx); l != nil {
-		return l.(*ZapLogger).WithContext(ctx, keyvals...)
-	}
-	return L().WithContext(ctx, keyvals...)
+	return FromContext(ctx).WithContext(ctx, keyvals...)
 }
 
 func (l *ZapLogger) WithContext(ctx context.Context, keyvals ...any) context.Context {
@@ -60,7 +57,7 @@ func FromContext(ctx context.Context, keyvals ...any) Logger {
 
 // C represents for `FromContext` with empty keyvals.
 func C(ctx context.Context) Logger {
-	return FromContext(ctx).AddCallerSkip(-1)
+	return FromContext(ctx)
 }
 
 // 定义用于上下文的键.

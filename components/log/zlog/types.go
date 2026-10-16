@@ -3,6 +3,7 @@ package zlog
 import (
 	"context"
 
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -38,6 +39,9 @@ type Logger interface {
 	WC(ctx context.Context, contextExtractors map[string]func(context.Context) string) Logger
 
 	WithContext(ctx context.Context, keyvals ...any) context.Context
+
+	Zap() *zap.Logger
+	Sugar() *zap.SugaredLogger
 }
 
 type Field = zapcore.Field

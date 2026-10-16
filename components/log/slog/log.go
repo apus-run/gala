@@ -12,10 +12,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
 )
+
+var _ Logger = (*SlogLogger)(nil)
+
+var defaultHandler atomic.Pointer[Handler]
 
 const LOGGER_KEY = "slogLogger"
 
@@ -40,8 +45,6 @@ var LevelNames = map[slog.Leveler]string{
 type SlogLogger struct {
 	*slog.Logger
 }
-
-var defaultHandler *Handler
 
 // NewSlogLogger 只包装了 slog
 func NewSlogLogger(l *slog.Logger) Logger {
@@ -88,9 +91,9 @@ func createHandler(options *Options) slog.Handler {
 	if len(options.LogAttrs) > 0 {
 		handler = handler.WithAttrs(options.LogAttrs)
 	}
-	defaultHandler = NewHandler(handler).(*Handler)
-
-	return defaultHandler
+	wrapped := NewHandler(handler).(*Handler)
+	defaultHandler.Store(wrapped)
+	return wrapped
 }
 
 // NewNop returns a no-op logger
@@ -119,7 +122,7 @@ func getLogLevel(logLevel string) slog.Level {
 }
 
 func ApplyHandlerOption(opt HandlerOption) {
-	defaultHandler.Apply(opt)
+	defaultHandler.Load().Apply(opt)
 }
 
 const AttrErrorKey = "error"
@@ -179,89 +182,100 @@ func (l *SlogLogger) Log(ctx context.Context, depth int, err error, level slog.L
 	l.Logger.Log(ctx, level, msg, attrs...)
 }
 
-func (l *SlogLogger) LogAttrs(ctx context.Context, level slog.Level, msg string, attrs ...Attr) {
-	if !l.Enabled(ctx, level) {
+// logAttrs is called directly by one public logging method or package function.
+// Both paths have the same depth, so caller lookup needs no stack-name detection.
+func logAttrs(logger Logger, ctx context.Context, level slog.Level, msg string, attrs ...Attr) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	handler := logger.Handler()
+	if !handler.Enabled(ctx, level) {
 		return
 	}
-	l.Logger.LogAttrs(ctx, level, msg, attrs...)
+	var pcs [1]uintptr
+	// Skip runtime.Callers, logAttrs, and the public logging entry point.
+	runtime.Callers(3, pcs[:])
+	record := slog.NewRecord(time.Now(), level, msg, pcs[0])
+	record.AddAttrs(attrs...)
+	_ = handler.Handle(ctx, record)
 }
 
 // 实现 Logger 接口的方法
 func (l *SlogLogger) Info(msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(context.Background(), LevelInfo, msg, attrs...)
+	logAttrs(l, context.Background(), LevelInfo, msg, attrs...)
 }
 
 func (l *SlogLogger) Infof(msg string, args ...any) {
-	l.Logger.Log(context.Background(), LevelInfo, sprintf(msg, args...))
+	logAttrs(l, context.Background(), LevelInfo, sprintf(msg, args...))
 }
 
 func (l *SlogLogger) InfoContext(ctx context.Context, msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(ctx, LevelInfo, msg, attrs...)
+	logAttrs(l, ctx, LevelInfo, msg, attrs...)
 }
 
 func (l *SlogLogger) Error(msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(context.Background(), LevelError, msg, attrs...)
+	logAttrs(l, context.Background(), LevelError, msg, attrs...)
 }
 
 func (l *SlogLogger) Errorf(msg string, args ...any) {
-	l.Logger.Log(context.Background(), LevelError, sprintf(msg, args...))
+	logAttrs(l, context.Background(), LevelError, sprintf(msg, args...))
 }
 
 func (l *SlogLogger) ErrorContext(ctx context.Context, msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(ctx, LevelError, msg, attrs...)
+	logAttrs(l, ctx, LevelError, msg, attrs...)
 }
 
 func (l *SlogLogger) Debug(msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(context.Background(), LevelDebug, msg, attrs...)
+	logAttrs(l, context.Background(), LevelDebug, msg, attrs...)
 }
 
 func (l *SlogLogger) Debugf(msg string, args ...any) {
-	l.Logger.Log(context.Background(), LevelDebug, sprintf(msg, args...))
+	logAttrs(l, context.Background(), LevelDebug, sprintf(msg, args...))
 }
 
 func (l *SlogLogger) DebugContext(ctx context.Context, msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(ctx, LevelDebug, msg, attrs...)
+	logAttrs(l, ctx, LevelDebug, msg, attrs...)
 }
 
 func (l *SlogLogger) Warn(msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(context.Background(), LevelWarn, msg, attrs...)
+	logAttrs(l, context.Background(), LevelWarn, msg, attrs...)
 }
 
 func (l *SlogLogger) Warnf(msg string, args ...any) {
-	l.Logger.Log(context.Background(), LevelWarn, sprintf(msg, args...))
+	logAttrs(l, context.Background(), LevelWarn, sprintf(msg, args...))
 }
 
 func (l *SlogLogger) WarnContext(ctx context.Context, msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(ctx, LevelWarn, msg, attrs...)
+	logAttrs(l, ctx, LevelWarn, msg, attrs...)
 }
 
 func (l *SlogLogger) Fatal(msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(context.Background(), LevelFatal, msg, attrs...)
+	logAttrs(l, context.Background(), LevelFatal, msg, attrs...)
 	os.Exit(1)
 }
 
 func (l *SlogLogger) FatalContext(ctx context.Context, msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(ctx, LevelFatal, msg, attrs...)
+	logAttrs(l, ctx, LevelFatal, msg, attrs...)
 	os.Exit(1)
 }
 
 func (l *SlogLogger) Fatalf(msg string, args ...any) {
-	l.Logger.Log(context.Background(), LevelFatal, sprintf(msg, args...))
+	logAttrs(l, context.Background(), LevelFatal, sprintf(msg, args...))
 	os.Exit(1)
 }
 
 func (l *SlogLogger) Panic(msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(context.Background(), LevelPanic, msg, attrs...)
+	logAttrs(l, context.Background(), LevelPanic, msg, attrs...)
 	panic(SprintfWithAttrs(msg, attrs...))
 }
 
 func (l *SlogLogger) PanicContext(ctx context.Context, msg string, attrs ...Attr) {
-	l.Logger.LogAttrs(ctx, LevelPanic, msg, attrs...)
+	logAttrs(l, ctx, LevelPanic, msg, attrs...)
 	panic(SprintfWithAttrs(msg, attrs...))
 }
 
 func (l *SlogLogger) Panicf(msg string, args ...any) {
-	l.Logger.Log(context.Background(), LevelPanic, sprintf(msg, args...))
+	logAttrs(l, context.Background(), LevelPanic, sprintf(msg, args...))
 	panic(fmt.Sprintf(msg, args...))
 }
 

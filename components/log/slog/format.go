@@ -44,10 +44,5 @@ func sprintf(template string, args ...any) string {
 		return fmt.Sprintf(template, args...)
 	}
 
-	if len(args) == 1 {
-		if str, ok := args[0].(string); ok {
-			return str
-		}
-	}
 	return sprint(args...)
 }
