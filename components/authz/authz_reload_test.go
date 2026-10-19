@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
+	gormadapter "github.com/apus-run/gala/components/authz/adapter/gorm"
 	"github.com/casbin/casbin/v3/model"
 	"github.com/casbin/casbin/v3/persist"
 	fileadapter "github.com/casbin/casbin/v3/persist/file-adapter"
 	stringadapter "github.com/casbin/casbin/v3/persist/string-adapter"
-	gormadapter "github.com/casbin/gorm-adapter/v3"
 	"gorm.io/gorm"
 )
 

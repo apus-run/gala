@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/utils"
@@ -53,6 +54,20 @@ func NewMySQLFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
 	})
 
 	db, err := gorm.Open(mysql.Open(dsn), opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &provider{db: db}, nil
+}
+
+// NewPostgresFromConfig 从 PostgreSQL DSN 创建一个 db 实例
+func NewPostgresFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
+	opts = append(opts, &gorm.Config{
+		TranslateError: true,
+	})
+
+	db, err := gorm.Open(postgres.Open(dsn), opts...)
 	if err != nil {
 		return nil, err
 	}

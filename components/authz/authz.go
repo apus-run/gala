@@ -6,12 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	gormadapter "github.com/apus-run/gala/components/authz/adapter/gorm"
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
 	"github.com/casbin/casbin/v3/persist"
-	gormadapter "github.com/casbin/gorm-adapter/v3"
 
 	"gorm.io/gorm"
 )
@@ -19,8 +20,11 @@ import (
 // Authorizer provides synchronized authorization and serialized policy reloads.
 // Do not copy an instance after use.
 type Authorizer struct {
-	engine *casbin.SyncedEnforcer
-	mu     sync.Mutex
+	engine       *casbin.SyncedEnforcer
+	mu           sync.Mutex
+	watcher      persist.Watcher
+	maxPolicyAge time.Duration
+	lastLoad     atomic.Pointer[time.Time]
 }
 
 // timedAdapter bounds the database part of each policy load, including the
@@ -62,6 +66,9 @@ func (a *Authorizer) Authorize(sub, obj, act string) (bool, error) {
 
 // Enforce checks model-specific request values using the synchronized enforcer.
 func (a *Authorizer) Enforce(rvals ...any) (bool, error) {
+	if err := a.policyFresh(); err != nil {
+		return false, err
+	}
 	allowed, err := a.engine.Enforce(rvals...)
 	if err != nil {
 		return false, fmt.Errorf("authz: enforce: %w", err)
@@ -73,9 +80,11 @@ func (a *Authorizer) Enforce(rvals ...any) (bool, error) {
 func (a *Authorizer) LoadPolicy() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	started := time.Now()
 	if err := a.engine.LoadPolicy(); err != nil {
 		return fmt.Errorf("authz: reload policy: %w", err)
 	}
+	a.lastLoad.Store(&started)
 	return nil
 }
 
@@ -101,6 +110,7 @@ func buildAuthorizer(db *gorm.DB, opts ...Option) (*Authorizer, error) {
 	if filtered, ok := adapter.(persist.FilteredAdapter); ok && filtered.IsFiltered() {
 		return nil, errors.New("authz: initial policy load: already filtered policy adapter is not supported")
 	}
+	started := time.Now()
 	engine, err := casbin.NewSyncedEnforcer(m, adapter)
 	if err != nil {
 		return nil, fmt.Errorf("authz: initial policy load: %w", err)
@@ -111,7 +121,24 @@ func buildAuthorizer(db *gorm.DB, opts ...Option) (*Authorizer, error) {
 	// policy edits cannot bypass the application's policy management path.
 	// Explicit SavePolicy and the adapter's schema migration are not affected.
 	engine.EnableAutoSave(false)
-	return &Authorizer{engine: engine}, nil
+	a := &Authorizer{engine: engine, watcher: options.watcher, maxPolicyAge: options.maxPolicyAge}
+	a.lastLoad.Store(&started)
+	if a.watcher != nil {
+		onError := options.watcherErrorHandler
+		if err := a.watcher.SetUpdateCallback(func(string) {
+			if err := a.LoadPolicy(); err != nil {
+				onError(err)
+			}
+		}); err != nil {
+			return nil, fmt.Errorf("authz: register watcher: %w", err)
+		}
+		// Catch changes committed after the first snapshot but before registration.
+		if err := a.LoadPolicy(); err != nil {
+			// The caller still owns the watcher and must close it on construction failure.
+			return nil, fmt.Errorf("authz: watcher catch-up: %w", err)
+		}
+	}
+	return a, nil
 }
 
 func newGORMAdapter(db *gorm.DB, timeout time.Duration) (*timedAdapter, error) {

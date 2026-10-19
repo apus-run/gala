@@ -6,6 +6,9 @@ import "slices"
 // read lock. It does not expand role inheritance. Optional domain semantics are
 // Casbin's.
 func (a *Authorizer) GetRolesForUser(name string, domain ...string) ([]string, error) {
+	if err := a.policyFresh(); err != nil {
+		return nil, err
+	}
 	e := a.engine
 	// v3.10.0 inherits this method from Enforcer rather than wrapping it with
 	// SyncedEnforcer's lock. Synchronize with policy and role updates.

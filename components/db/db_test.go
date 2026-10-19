@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -33,7 +34,10 @@ func TestUnwrap(t *testing.T) {
 }
 
 func TestNewMySQLFromConfig(t *testing.T) {
-	dsn := "root:123456@tcp(localhost:13306)/test_db?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := os.Getenv("GALA_DB_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("set GALA_DB_MYSQL_DSN to run the MySQL connection test")
+	}
 	prov, err := NewMySQLFromConfig(dsn)
 	if err != nil {
 		t.Fatalf("NewMySQLFromConfig failed: %v", err)
@@ -41,6 +45,11 @@ func TestNewMySQLFromConfig(t *testing.T) {
 	if prov == nil {
 		t.Fatal("NewMySQLFromConfig returned nil provider")
 	}
+	t.Cleanup(func() {
+		if err := prov.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 }
 
 func TestProvider_NewSession(t *testing.T) {

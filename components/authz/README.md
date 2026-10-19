@@ -17,20 +17,24 @@ go get github.com/apus-run/gala/components/authz
 ```go
 func New(opts ...Option) (*Authorizer, error)
 func NewAuthz(db *gorm.DB, opts ...Option) (*Authorizer, error)
+func NewRedis(client redis.Cmdable, opts ...Option) (*Authorizer, error)
 
 func (a *Authorizer) Authorize(sub, obj, act string) (bool, error)
 func (a *Authorizer) Enforce(rvals ...any) (bool, error)
 func (a *Authorizer) GetRolesForUser(name string, domain ...string) ([]string, error)
 
 func (a *Authorizer) LoadPolicy() error
+func (a *Authorizer) SyncPolicy() error
+func (a *Authorizer) RunPolicyReload(ctx context.Context, interval time.Duration, onError func(error)) error
 ```
 
 | 构造入口 | 用途 |
 | --- | --- |
 | `New(opts...)` | 使用配置中的 PolicyAdapter；未设置时从 `./policy.csv` 加载 |
-| `NewAuthz(db, opts...)` | 从传入的非 nil GORM 数据库创建 Adapter，覆盖配置中的 PolicyAdapter |
+| `NewAuthz(db, opts...)` | 从传入的非 nil GORM 数据库创建本地 `adapter/gorm`，覆盖配置中的 PolicyAdapter |
+| `NewRedis(client, opts...)` | 从传入的非 nil go-redis 客户端创建本地 `adapter/redis`，默认键 `casbin_rules`，不关闭客户端 |
 
-两个入口都在返回实例前完成一次初始策略加载。New 不接受 IsFiltered() 已为 true 的 Adapter，因为 Casbin 会跳过它的初始加载；支持过滤但当前未过滤的 Adapter 可以正常使用。NewAuthz 不自动迁移，应用必须提前创建策略表。构造可能返回模型文件、策略加载或数据库初始化错误，应先检查错误再使用实例。错误包含阶段信息，原始原因通过 `%w` 保留，可用 errors.Is / errors.As 检查。
+三个入口都在返回实例前完成初始策略加载；配置 Watcher 后还会在回调注册完成后补一次加载。New 不接受 IsFiltered() 已为 true 的 Adapter，因为 Casbin 会跳过它的初始加载；支持过滤但当前未过滤的 Adapter 可以正常使用。NewAuthz 不自动迁移，应用必须提前创建策略表。构造可能返回模型文件、策略加载或数据库初始化错误，应先检查错误再使用实例。错误包含阶段信息，原始原因通过 `%w` 保留，可用 errors.Is / errors.As 检查。
 
 ## Option
 
@@ -39,6 +43,9 @@ func (a *Authorizer) LoadPolicy() error
 | `WithModelFilePath(string)` | 设置模型文件路径，不能显式设置为空 | `./model.conf` |
 | `WithPolicyAdapter(persist.Adapter)` | 设置 New 使用的策略 Adapter，不能显式设置为 nil | `./policy.csv` 的文件 Adapter |
 | `WithPolicyLoadTimeout(time.Duration)` | 限制 NewAuthz 的每次 GORM 策略读取耗时，必须大于零 | 5 秒 |
+| `WithWatcher(persist.Watcher)` | 注入已订阅就绪、当前实例独占的 Watcher | 无 |
+| `WithWatcherErrorHandler(func(error))` | 回调重载失败处理，与 Watcher 成对配置 | 无 |
+| `WithMaxPolicyAge(time.Duration)` | 成功重载的最大年龄，超时拒绝授权与角色查询 | 0，禁用 |
 
 选项按传入顺序应用，后面的同类设置覆盖前面的设置。NewOptions 从独立默认值开始组装；Validate 只检查最终状态，不补默认值或创建资源。组件不启动后台任务。
 
@@ -157,7 +164,7 @@ import (
     "log"
 
     "github.com/apus-run/gala/components/authz"
-    gormadapter "github.com/casbin/gorm-adapter/v3"
+    gormadapter "github.com/apus-run/gala/components/authz/adapter/gorm"
     "github.com/glebarez/sqlite"
     "gorm.io/gorm"
 )
@@ -233,7 +240,7 @@ AutoSave 设置不影响 Enforce / Authorize，也不会阻止显式 SavePolicy�
 
 ## 策略重载与生命周期
 
-组件只负责初次加载、鉴权与 LoadPolicy，不创建 goroutine，不拥有刷新调度器，也不关闭调用方的数据库。
+Authorizer 负责初次加载、鉴权、重载与通知；不会自动启动 goroutine，也不关闭调用方的数据库。RunPolicyReload 阻塞运行，应用负责启动和等待。Redis Watcher 自己拥有订阅 goroutine，由应用 Close。
 
 策略变更提交后，由应用的事件消费者或受管理同步任务调用：
 
@@ -268,4 +275,68 @@ func WithPolicyFiles(modelPath, policyPath string) authz.Option {
 }
 ```
 
-Authorizer 仅保存初始化完成的 Enforcer 和重载锁，不保留构造用的 Options。构造后修改保留的 Options 不会改变授权器。显式传入的 Adapter 仍由调用方管理。选项应为有效值，配置组装期间不应并发修改同一个 Options。
+Authorizer 保存初始化完成的 Enforcer、重载锁、Watcher 和新鲜度状态，不保留构造用的 Options。构造后修改保留的 Options 不会改变授权器。显式传入的 Adapter 仍由调用方管理。选项应为有效值，配置组装期间不应并发修改同一个 Options。
+
+## 多实例同步与撤权期限
+
+PRD、Midway 对照与消融证据见 [prd-authz-upgrade.md](prd-authz-upgrade.md)。
+
+- `SyncPolicy` 必须在策略写入提交之后调用。它独立尝试本地重载和锁外通知，用 `errors.Join` 返回两侧错误；本地失败也会尝试通知健康实例。成功只表示本地加载与发布没有报错，不代表所有实例已经同步。
+- `WithWatcher` 要求订阅已经就绪。构造时直接注册回调并补载一次，覆盖初次加载到注册之间的变更。不要再次修改 Watcher 回调，也不要在多个 Authorizer 之间共享同一 Watcher。构造失败时应用仍须关闭该 Watcher。
+- Pub/Sub 会丢消息；每个实例都应运行 `RunPolicyReload`。重载失败保留旧策略并在下一周期重试；错误处理函数必须及时返回、并发安全，不同步重入重载、通知或关闭。
+- 有撤权时间要求时启用 `WithMaxPolicyAge`。年龄大于等于配置值时返回 `ErrPolicyStale`，调用方必须拒绝请求；失败不会延长有效期。成功加载从读取开始计算年龄；若加载耗时已不小于最大年龄，且其后没有更新的成功加载，下一次鉴权即拒绝。RunPolicyReload 只校验 ticker 间隔小于最大年龄，不检查单次加载耗时。默认 0 仅用于兼容，不保证陈旧权限的寿命。
+- 读取必须指向权威存储。该机制不能识别成功读到的滞后副本，也不撤销已进入业务 Handler 的操作。严格业务写权限仍应由事务约束。
+
+```go
+watcher, err := redisadapter.NewWatcher(ctx, client, "authz:tenant-a:changed")
+if err != nil { return err }
+defer watcher.Close()
+adapter, err := redisadapter.NewAdapter(&redisadapter.Config{
+    Client: client, Key: "authz:tenant-a:rules",
+})
+if err != nil { return err }
+az, err := authz.New(
+    authz.WithModelFilePath("./model.conf"),
+    authz.WithPolicyAdapter(adapter),
+    authz.WithWatcher(watcher),
+    authz.WithWatcherErrorHandler(func(err error) { log.Print(err) }),
+    authz.WithMaxPolicyAge(30*time.Second),
+)
+if err != nil { return err }
+runCtx, cancel := context.WithCancel(ctx)
+defer cancel()
+results := make(chan error, 2)
+go func() {
+    results <- az.RunPolicyReload(runCtx, 5*time.Second,
+        func(err error) { log.Print(err) })
+}()
+// serve 收到取消后须停止接收并排空请求、写入及 SyncPolicy，再返回。
+go func() { results <- serve(runCtx, az) }()
+first := <-results // 运行期间观察任一任务退出
+cancel()
+second := <-results // 只等待另一个任务一次，不能再 defer 读取
+var failures []error
+for _, err := range []error{first, second} {
+    if err != nil && !errors.Is(err, context.Canceled) {
+        failures = append(failures, err)
+    }
+}
+return errors.Join(failures...)
+```
+
+`redisadapter` 的导入路径是 `github.com/apus-run/gala/components/authz/adapter/redis`。Redis 客户端必须配置有限读写/拨号超时；`persist.Adapter.LoadPolicy` 没有 Context，因此取消周期任务不能中断已开始的加载。
+
+不需要快速通知时，省略 Watcher，仅保留周期重载与最大策略年龄即可。NewAuthz 使用本地 `github.com/apus-run/gala/components/authz/adapter/gorm`；NewRedis 是兼容便利入口，因此当前模块仍包含 GORM/Redis 依赖。新集成优先使用显式 Adapter 注入，不继续扩充存储专用构造函数。
+
+可编译且带生命周期测试的完整示例见 [examples/supervision](examples/supervision/supervision.go)。本地 GORM 模块来源于上游 v3.41.0，保留上游许可证和版本记录；Casbin 依赖统一为 v3.10.0。
+
+Redis Adapter 与 `NewRedis` 仅要求 `redis.Cmdable`；命令能力不包含资源所有权。Watcher 使用 `redisadapter.WatcherClient`，只要求 `Publish` 和 `Subscribe`。注入客户端由应用关闭，自建 Adapter 客户端通过单独保存的关闭函数释放。
+
+## Docker 集成验证
+
+```sh
+# 从仓库根目录执行；需要本地已存在 Redis/MySQL/PostgreSQL 镜像。
+python3 components/authz/integration/run.py
+```
+
+已通过 Redis 7.4.11 单机/三主节点 Cluster、MySQL 8.4.11 和 PostgreSQL 16.15 的 race 集成测试。验证完整快照、真实 ACL 失败、订阅重连、周期恢复、过期拒绝、事务可见性及读取超时。脚本使用隔离容器和随机回环端口，结束后自动清理。详见 [环境、覆盖范围与结果日志](integration/README.md)。

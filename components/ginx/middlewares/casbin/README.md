@@ -338,3 +338,25 @@ combined := casbinmw.OptionFunc(func(o *casbinmw.Options) {
 ```
 
 这些选项用于 Handler 构造，不应保留 Options 用于运行时修改。回调在请求 goroutine 上执行，不应保留 gin.Context 供异步使用。
+
+## 资源归属权限
+
+`RequiresAccess([]Access, ...Option)` 支持 `PossessionAny`、`PossessionOwn`、`PossessionOwnOrAny`，策略动作分别为 `read:any`、`read:own`（以及自定义动作）。
+
+- any：只检查 `action:any`，不得配置 IsOwn。
+- own：必须同时满足 `action:own` 策略和 IsOwn；策略拒绝时不调用 IsOwn。
+- own-or-any：优先 any，允许即短路，否则执行 own 两步。
+
+```go
+h, err := builder.RequiresAccess([]casbinmw.Access{{
+    Resource: "documents", Action: casbinmw.ActionRead,
+    Possession: casbinmw.PossessionOwnOrAny,
+    IsOwn: func(c *gin.Context) (bool, error) {
+        return repository.IsOwner(c.Request.Context(), trustedSubject(c), c.Param("id"))
+    },
+}})
+```
+
+IsOwn 必须检查与后续 Handler 相同的认证主体、租户和资源；可变归属的写操作仍须在事务或 WHERE owner_id 中约束。这个中间件不会让“属于自己”替代策略授权。
+
+默认所有 Access 必须满足，可使用 WithValidationRule(AtLeastOneRule)；空列表跳过身份查询，认证仍由前置中间件负责。构造时校验资源、动作、Possession、IsOwn 组合；动作不能含冒号。沿用 Option 校验，PermissionParser 不参与 Access 求值。401/403/500 与现有中间件一致，包含策略过期在内的 Enforce 错误默认返回 500；应用可自定义错误处理映射为 503。
