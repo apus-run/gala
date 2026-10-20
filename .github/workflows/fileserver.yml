@@ -1,0 +1,39 @@
+name: Fileserver
+on:
+  push:
+    paths:
+      - 'components/fileserver/**'
+      - 'scripts/test-fileserver.sh'
+      - 'Makefile'
+      - '.github/workflows/fileserver.yml'
+  pull_request:
+    paths:
+      - 'components/fileserver/**'
+      - 'scripts/test-fileserver.sh'
+      - 'Makefile'
+      - '.github/workflows/fileserver.yml'
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: components/fileserver/objectstore/s3/go.sum
+      - name: 测试（Windows 上跳过需要 POSIX 语义的用例）
+        if: runner.os == 'Windows'
+        run: |
+          cd components/fileserver
+          go vet ./...
+          go test -count=1 ./...
+          cd objectstore/s3
+          go vet ./...
+          go test -count=1 ./...
+      - name: 测试
+        if: runner.os != 'Windows'
+        run: make test-fileserver

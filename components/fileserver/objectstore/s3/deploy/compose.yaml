@@ -1,0 +1,54 @@
+# Single-instance Docker baseline. This profile has a single host/storage failure domain.
+# Pre-provision the external data and configuration volumes; see README.md.
+services:
+  rustfs:
+    image: ${RUSTFS_IMAGE:?set an architecture-compatible immutable image digest}
+    user: "10001:10001"
+    command: ["/data"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    cpus: ${RUSTFS_CPU_LIMIT:-2.0}
+    mem_limit: ${RUSTFS_MEMORY_LIMIT:-1536m}
+    stop_grace_period: 30s
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,uid=10001,gid=10001,mode=1777
+    environment:
+      RUSTFS_ACCESS_KEY_FILE: /etc/rustfs/access.key
+      RUSTFS_SECRET_KEY_FILE: /etc/rustfs/secret.key
+      RUSTFS_TLS_PATH: /etc/rustfs/tls
+      RUSTFS_TLS_SERVER_NAME: ${RUSTFS_TLS_SERVER_NAME:?set a DNS name in the server certificate}
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+    ports:
+      - "${RUSTFS_BIND_ADDRESS:-127.0.0.1}:${RUSTFS_PORT:-9443}:9000"
+    volumes:
+      - data:/data
+      - config:/etc/rustfs:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error --noproxy '*'
+          --cacert /etc/rustfs/tls/ca.pem
+          --resolve "$${RUSTFS_TLS_SERVER_NAME}:9000:127.0.0.1"
+          "https://$${RUSTFS_TLS_SERVER_NAME}:9000/health/ready" >/dev/null
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  data:
+    external: true
+    name: ${RUSTFS_DATA_VOLUME:?set the persistent data volume name}
+  config:
+    external: true
+    name: ${RUSTFS_CONFIG_VOLUME:?set the read-only TLS and credential volume name}

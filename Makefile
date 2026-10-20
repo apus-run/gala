@@ -33,7 +33,3 @@ lint:
 .PHONY: gen
 gen:
 	@go generate ./...
-
-.PHONY: test-authz
-test-authz:
-	@./scripts/test-authz.sh

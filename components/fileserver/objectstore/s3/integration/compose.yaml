@@ -1,0 +1,18 @@
+# Local validation only: single disk, loopback HTTP, no redundancy.
+services:
+  rustfs:
+    image: ${RUSTFS_IMAGE:-rustfs/rustfs:1.0.3}
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set a unique test access key}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set a unique test secret key}
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+    ports:
+      - "127.0.0.1::9000"
+    volumes:
+      - data:/data
+    mem_limit: 1536m
+    cpus: 2
+volumes:
+  data:

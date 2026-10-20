@@ -1,0 +1,32 @@
+# Quorum validation on one Docker VM; not independent physical failure domains.
+x-node: &node
+  image: ${RUSTFS_IMAGE:-rustfs/rustfs:1.0.3}
+  environment:
+    # Required for this disposable CI topology: all logical drives share one VM disk.
+    RUSTFS_UNSAFE_BYPASS_DISK_CHECK: "true"
+    RUSTFS_VOLUMES: "http://rustfs{1...4}:9000/data/disk{1...4}"
+    RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?required}
+    RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?required}
+    RUSTFS_CONSOLE_ENABLE: "false"
+    RUSTFS_OBS_LOGGER_LEVEL: warn
+  ports: ["127.0.0.1::9000"]
+  mem_limit: 768m
+  cpus: 1
+services:
+  rustfs1:
+    <<: *node
+    volumes: ["n1:/data"]
+  rustfs2:
+    <<: *node
+    volumes: ["n2:/data"]
+  rustfs3:
+    <<: *node
+    volumes: ["n3:/data"]
+  rustfs4:
+    <<: *node
+    volumes: ["n4:/data"]
+volumes:
+  n1:
+  n2:
+  n3:
+  n4:
