@@ -1,6 +1,6 @@
 # MQ
 
-统一生产者、消费者和消费者注册器；目前支持 RocketMQ、Kafka 和 NSQ。Kafka 使用
+统一生产者、消费者和消费者注册器；目前支持 RocketMQ、Kafka、NSQ 和 Redis Streams。Kafka 使用
 `github.com/twmb/franz-go v1.22.2`，NSQ 使用官方 `github.com/nsqio/go-nsq v1.1.0`。
 
 ## 设计约束
@@ -86,6 +86,18 @@ Tag 表达式过滤、延迟投递、单实例多个处理协程均明确返回 
 使用 nsqd TCP 地址，ConsumerGroup 映射为 channel，支持配置处理并发数。
 不支持的元数据、顺序或压缩能力明确返回错误。生命周期、取消边界、配置和真实 broker
 消融结果见 [NSQ 说明](nsq/README.md)。
+
+## Redis Streams
+
+`rds.NewFactory(client, opts...)` 复用公共 MQ 接口，Redis 客户端由应用持有。
+导入路径为 `github.com/apus-run/gala/components/mq/rds`。这是独立模块，
+从仓库根目录执行 `cd components/mq/rds` 后运行 `go test -race ./...`。
+生产者要求客户端开启 `ContextTimeoutEnabled`；监控通过 `Consumer.Stats(ctx)`
+按需接入应用自身的指标系统，不内置采集器或定时上报。
+支持即时/延迟投递、消费者组并发、pending 接管、有限重试和每组独立死信队列。
+失败任务留在所属组的 pending 中，避免重投干扰其他组；延迟搬迁与死信确认使用 Lua。
+默认初次处理后最多重试 3 次；业务处理仍须幂等。无自动 Stream 修剪或死信重放。
+配置、生命周期、统计和真实 Redis 验证方式见 [Redis Streams 说明](rds/README.md)。
 
 ## RocketMQ
 

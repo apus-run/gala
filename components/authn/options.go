@@ -1,6 +1,8 @@
 package authn
 
 import (
+	"time"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/apus-run/gala/components/token"
@@ -13,13 +15,14 @@ type Option func(*Options)
 
 // Options is authn options.
 type Options struct {
-	claims  func() jwt.Claims
-	jwtOpts []option.Option[token.JwtConfig]
+	accessTTL, refreshTTL time.Duration
+	claims                func() jwt.Claims
+	jwtOpts               []option.Option[token.JwtConfig]
 }
 
 // DefaultOptions .
 func DefaultOptions() *Options {
-	return &Options{}
+	return &Options{accessTTL: AccessTokenTTL, refreshTTL: RefreshTokenTTL}
 }
 
 func Apply(opts ...Option) *Options {
@@ -49,4 +52,10 @@ func WithJWTOptions(opts ...option.Option[token.JwtConfig]) Option {
 	return func(o *Options) {
 		o.jwtOpts = append(o.jwtOpts, opts...)
 	}
+}
+
+// WithSessionTTL configures pair lifetimes; NewSessionAuth validates the values.
+// It does not affect the legacy JwtAuth or components/token configuration.
+func WithSessionTTL(access, refresh time.Duration) Option {
+	return func(o *Options) { o.accessTTL, o.refreshTTL = access, refresh }
 }
