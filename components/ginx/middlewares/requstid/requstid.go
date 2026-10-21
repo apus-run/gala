@@ -29,11 +29,12 @@ func RequestID() gin.HandlerFunc {
 
 		// Create request id
 		if requestID == "" {
-			requestID := uuid.New().String()
+			requestID = uuid.New().String() // assign, not shadow: the response header below must carry it
 			c.Request.Header.Set(HeaderXRequestIDKey, requestID)
-			// Expose it for use in the application
-			c.Set(ContextRequestIDKey, requestID)
 		}
+
+		// Expose it for use in the application, honored or generated alike
+		c.Set(ContextRequestIDKey, requestID)
 
 		// Set X-Request-ID header
 		c.Writer.Header().Set(HeaderXRequestIDKey, requestID)

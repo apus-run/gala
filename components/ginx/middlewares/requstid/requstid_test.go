@@ -101,8 +101,9 @@ func TestRequestId(t *testing.T) {
 				req, _ := http.NewRequest("GET", "/test", nil)
 				return req
 			},
+			// no incoming ID: one is generated and echoed back in the response
 			validFunc: func(value string) bool {
-				return value == ""
+				return value != ""
 			},
 		},
 		{
@@ -134,4 +135,19 @@ func TestRequestId(t *testing.T) {
 			assert.True(t, tc.validFunc(w.Header().Get(HeaderXRequestIDKey)))
 		})
 	}
+}
+
+func TestIncomingIDLandsInContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(RequestID())
+	var seen string
+	engine.GET("/ctx", func(c *gin.Context) {
+		seen = GetCtxRequestID(c)
+		c.Status(200)
+	})
+	req, _ := http.NewRequest("GET", "/ctx", nil)
+	req.Header.Set(HeaderXRequestIDKey, "trace-42")
+	engine.ServeHTTP(httptest.NewRecorder(), req)
+	assert.Equal(t, "trace-42", seen)
 }

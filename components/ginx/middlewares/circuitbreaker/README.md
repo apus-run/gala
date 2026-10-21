@@ -101,6 +101,19 @@ HealthHandler 报告熔断状态，不主动调用下游。在半开时返回 20
 
 后续片段假定应用已有 `router := gin.New()` 并安装 `gin.Recovery()`，按示例使用的标识符补充相应 import。示例均以当前包接口编译验证。
 
+### 0. Builder 链式写法
+
+`Config` 构造器之外，也可以用与 ginx 其它中间件一致的 Builder 链式风格。`Set*` 与 `Config` 字段一一对应；未设置的项同样落到 `DefaultConfig`。
+
+```go
+builder := circuitbreaker.NewBuilder().
+    SetFailureThreshold(5).
+    SetTimeout(30 * time.Second)
+router.Use(builder.Build()) // gin.HandlerFunc；内部即 New(Config)
+
+builder.Breaker() // *CircuitBreaker：ForceOpen / ForceClose / Reset / Metrics
+```
+
 ### 1. 基础设置：保护所有业务路由
 
 下面是可运行的程序。通过根路由组给所有业务接口挂载同一个实例，健康和状态接口独立注册，熔断打开后仍能查看状态。

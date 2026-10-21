@@ -102,3 +102,23 @@ func TestRequest(t *testing.T) {
 		Expect().
 		Status(http.StatusOK).JSON().Object().HasValue("msg", "hello world")
 }
+
+func TestPortlessHostDoesNotPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var got *AccessLog
+	r := gin.New()
+	r.Use(NewBuilder(func(_ context.Context, al *AccessLog) { got = al }).Build())
+	r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	// Host without an explicit port used to panic the logger (index out of range).
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if got == nil || got.IP != "example.com" || got.Port != "" {
+		t.Fatalf("unexpected AccessLog: %+v", got)
+	}
+}

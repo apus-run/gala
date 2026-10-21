@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -83,7 +83,12 @@ func (b *Builder) Build() gin.HandlerFunc {
 		}
 
 		host := c.Request.Host
-		split := strings.Split(host, ":")
+		// A Host without an explicit port (example.com) or an IPv6 literal must
+		// not panic; net.SplitHostPort reports the missing port as an error.
+		ip, port := host, ""
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			ip, port = h, p
+		}
 
 		// URL 有可能会很长, 保护起来
 		url := c.Request.URL
@@ -96,8 +101,8 @@ func (b *Builder) Build() gin.HandlerFunc {
 			PID:      pid,
 			Referer:  c.Request.Header.Get("Referer"),
 			Protocol: url.Scheme,
-			Port:     split[1],
-			IP:       split[0],
+			Port:     port,
+			IP:       ip,
 			IPs:      c.Request.Header.Get("X-Forwarded-For"),
 			Host:     host,
 			URL:      urlStr,

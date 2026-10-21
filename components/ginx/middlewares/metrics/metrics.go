@@ -5,6 +5,7 @@ package metrics
 import (
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -58,10 +59,16 @@ var (
 	)
 )
 
-// init registers the prometheus metrics
+// init registers the prometheus metrics once per process: a second Metrics()
+// call (a second engine) must neither panic on duplicate registration nor leak
+// another uptime goroutine.
+var registerOnce sync.Once
+
 func initPrometheus() {
-	prometheus.MustRegister(uptime, reqCount, reqDuration, reqSizeBytes, respSizeBytes)
-	go recordUptime()
+	registerOnce.Do(func() {
+		prometheus.MustRegister(uptime, reqCount, reqDuration, reqSizeBytes, respSizeBytes)
+		go recordUptime()
+	})
 }
 
 // recordUptime increases service uptime per 1 minute.

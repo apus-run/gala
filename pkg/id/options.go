@@ -4,16 +4,20 @@ import "time"
 
 type CodeOptions struct {
 	chars []rune
-	n1    int
-	n2    int
-	l     int
-	salt  uint64
+	// Checked construction preserves invalid values for validation; legacy
+	// construction keeps ignoring empty alphabets and nonpositive lengths.
+	strict bool
+	n1     int
+	n2     int
+	l      int
+	salt   uint64
 }
 
 func WithCodeChars(arr []rune) func(*CodeOptions) {
 	return func(options *CodeOptions) {
-		if len(arr) > 0 {
-			getCodeOptionsOrSetDefault(options).chars = arr
+		opts := getCodeOptionsOrSetDefault(options)
+		if opts.strict || len(arr) > 0 {
+			opts.chars = arr
 		}
 	}
 }
@@ -32,8 +36,9 @@ func WithCodeN2(n int) func(*CodeOptions) {
 
 func WithCodeL(l int) func(*CodeOptions) {
 	return func(options *CodeOptions) {
-		if l > 0 {
-			getCodeOptionsOrSetDefault(options).l = l
+		opts := getCodeOptionsOrSetDefault(options)
+		if opts.strict || l > 0 {
+			opts.l = l
 		}
 	}
 }
@@ -74,12 +79,17 @@ func getCodeOptionsOrSetDefault(options *CodeOptions) *CodeOptions {
 type SonyflakeOptions struct {
 	machineId int
 	startTime time.Time
+	// Preserve all supplied machine IDs for the checked constructor's validation.
+	strict bool
 }
 
+// WithSonyflakeMachineId ignores nonpositive IDs in NewSonyflake for compatibility.
+// NewSonyflakeChecked uses the last supplied value, including zero and negatives.
 func WithSonyflakeMachineId(id int) func(*SonyflakeOptions) {
 	return func(options *SonyflakeOptions) {
-		if id > 0 {
-			getSonyflakeOptionsOrSetDefault(options).machineId = id
+		opts := getSonyflakeOptionsOrSetDefault(options)
+		if opts.strict || id > 0 {
+			opts.machineId = id
 		}
 	}
 }
