@@ -3,6 +3,7 @@ package s3
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -55,22 +56,10 @@ func (s *Store) Upload(ctx context.Context, key string, r io.Reader, opts ...fil
 		total = size
 	}
 	prog := newProgress(ctx, uo.Progress(), key, total)
-	written, err := s.upload(ctx, objKey, r, uo, meta, prog)
-	if err != nil {
-		return opErr(op, key, err)
-	}
-	prog.finish(written, written)
-	return nil
-}
-
-// upload 写入对象并返回写入的字节数。已开始的分片上传在失败时会被 Abort。
-func (s *Store) upload(ctx context.Context, objKey string, r io.Reader, uo fileserver.UploadOptions, meta putMeta, prog *progress) (int64, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	size, hasSize := uo.Size()
-	u := &uploadRun{
+	u := uploadRun{
 		s:           s,
-		parent:      ctx,
 		ctx:         runCtx,
 		cancel:      cancel,
 		objKey:      objKey,
@@ -80,13 +69,17 @@ func (s *Store) upload(ctx context.Context, objKey string, r io.Reader, uo files
 		ifNotExists: uo.IfNotExists(),
 		prog:        prog,
 	}
-	return u.run(r)
+	written, err := u.run(r)
+	if err != nil {
+		return opErr(op, key, err)
+	}
+	prog.finish(written, written)
+	return nil
 }
 
 // uploadRun 保存一次 Upload 的状态。主协程负责读取与派发，每个分片由一个 worker 上传。
 type uploadRun struct {
 	s           *Store
-	parent      context.Context // 调用方的 Context，用于派生不会被取消的清理上下文
 	ctx         context.Context // 本次调用的内部 Context，出错时取消
 	cancel      context.CancelFunc
 	objKey      string
@@ -100,7 +93,7 @@ type uploadRun struct {
 	wg   sync.WaitGroup
 	mu   sync.Mutex
 	err  error
-	done []partDone
+	done []types.CompletedPart
 }
 
 func (u *uploadRun) run(r io.Reader) (int64, error) {
@@ -178,8 +171,9 @@ func (u *uploadRun) checkTotal(total int64) error {
 
 // conclude 在所有分片结束后提交对象。任何失败都会放弃已开始的分片上传。
 func (u *uploadRun) conclude(total int64) (int64, error) {
-	if err := u.firstErr(); err != nil {
-		return 0, u.abortWith(err)
+	// 所有 worker 已退出，直接读取最终错误。
+	if u.err != nil {
+		return 0, u.abortWith(u.err)
 	}
 	if u.hasSize && total != u.size {
 		return 0, u.abortWith(shortInput(u.size, total))
@@ -236,23 +230,25 @@ func (u *uploadRun) dispatch(part int, buf []byte, n int, free chan<- []byte) {
 
 func (u *uploadRun) record(part int, etag, sum string, n int64) {
 	u.mu.Lock()
-	u.done = append(u.done, partDone{number: int32(part), etag: etag, sum: sum})
+	u.done = append(u.done, types.CompletedPart{
+		PartNumber:     aws.Int32(int32(part)),
+		ETag:           aws.String(etag),
+		ChecksumSHA256: aws.String(sum),
+	})
 	u.mu.Unlock()
 	u.prog.add(n)
 }
 
 func (u *uploadRun) complete() error {
 	parts := u.done // 所有 worker 已退出；无需复制即可排序。
-	slices.SortFunc(parts, func(a, b partDone) int { return int(a.number - b.number) })
-	completed := make([]types.CompletedPart, len(parts))
-	for i, p := range parts {
-		completed[i] = completedPart(p)
-	}
+	slices.SortFunc(parts, func(a, b types.CompletedPart) int {
+		return int(aws.ToInt32(a.PartNumber) - aws.ToInt32(b.PartNumber))
+	})
 	in := &awss3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(u.s.bucket),
 		Key:             aws.String(u.objKey),
 		UploadId:        aws.String(u.uploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
 	}
 	if u.ifNotExists {
 		in.IfNoneMatch = aws.String("*")
@@ -283,18 +279,12 @@ func (u *uploadRun) fail(err error) {
 	}
 }
 
-func (u *uploadRun) firstErr() error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.err
-}
-
 // abortWith 在存在分片上传时放弃它。Abort 的失败会附加到返回的错误上，残留由生命周期规则兜底。
 func (u *uploadRun) abortWith(err error) error {
 	if u.uploadID == "" {
 		return err
 	}
-	if aerr := u.s.abortUpload(u.parent, u.objKey, u.uploadID); aerr != nil {
+	if aerr := u.s.abortUpload(u.ctx, u.objKey, u.uploadID); aerr != nil {
 		return errors.Join(err, fmt.Errorf("abort multipart upload: %w", aerr))
 	}
 	return err
@@ -331,7 +321,7 @@ func (s *Store) putObject(ctx context.Context, objKey string, data []byte, meta 
 		Body:              bytes.NewReader(data),
 		ContentLength:     aws.Int64(int64(len(data))),
 		ChecksumAlgorithm: checksumAlgorithm,
-		ChecksumSHA256:    aws.String(encodeSHA256(sha256Sum(data))),
+		ChecksumSHA256:    aws.String(encodeSHA256(sha256.Sum256(data))),
 	}
 	meta.applyPut(in)
 	if ifNotExists {
@@ -346,7 +336,7 @@ func (s *Store) putObject(ctx context.Context, objKey string, data []byte, meta 
 // uploadPart 上传一片。返回后端确认的 ETag 与 SHA-256（标准 base64）。
 // 响应若回显摘要，必须与本地计算一致；不要求兼容后端回显。
 func (s *Store) uploadPart(ctx context.Context, objKey, uploadID string, partNumber int, data []byte) (string, string, error) {
-	sum := encodeSHA256(sha256Sum(data))
+	sum := encodeSHA256(sha256.Sum256(data))
 	out, err := s.api.UploadPart(ctx, &awss3.UploadPartInput{
 		Bucket:            aws.String(s.bucket),
 		Key:               aws.String(objKey),
@@ -367,7 +357,7 @@ func (s *Store) uploadPart(ctx context.Context, objKey, uploadID string, partNum
 	}
 	got := aws.ToString(out.ChecksumSHA256)
 	if got != "" && got != sum {
-		return "", "", fmt.Errorf("%w: backend checksum does not match the part", fileserver.ErrConflict)
+		return "", "", fmt.Errorf("%w: backend checksum does not match the part", fileserver.ErrIntegrity)
 	}
 	return etag, sum, nil
 }

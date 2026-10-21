@@ -118,11 +118,8 @@ type Store struct {
 	// 条带足够把不同 Key 分开；冲突时只是多等一次发布，不会把两个 Key 的内容混在一起。
 	keyMu [lockStripes]sync.Mutex
 
-	// dirLocks 按条带串行化目录上的创建与父目录同步；dirMu 保护 dirSynced。
-	// dirSynced 记录本进程已同步过的目录，超过 maxSyncedDirs 时整体清空。
-	dirLocks  [lockStripes]sync.Mutex
-	dirMu     sync.Mutex
-	dirSynced map[string]struct{}
+	// dirLocks 串行化目录创建、同步与失败回滚，防止其他上传使用尚未准备好的目录。
+	dirLocks [lockStripes]sync.Mutex
 }
 
 // linkMode 是构造时对硬链接的探测结果。
@@ -155,7 +152,7 @@ func New(root string, opts ...Option) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: r, cfg: cfg, dirSynced: make(map[string]struct{})}
+	s := &Store{root: r, cfg: cfg}
 	if err := s.prepare(); err != nil {
 		_ = r.Close()
 		return nil, err
@@ -367,22 +364,6 @@ func (s *Store) lockDir(dir string) func() {
 	mu := &s.dirLocks[stripeOf(dir)]
 	mu.Lock()
 	return mu.Unlock
-}
-
-func (s *Store) dirKnownSynced(dir string) bool {
-	s.dirMu.Lock()
-	defer s.dirMu.Unlock()
-	_, ok := s.dirSynced[dir]
-	return ok
-}
-
-func (s *Store) markDirSynced(dir string) {
-	s.dirMu.Lock()
-	defer s.dirMu.Unlock()
-	if len(s.dirSynced) >= maxSyncedDirs {
-		clear(s.dirSynced)
-	}
-	s.dirSynced[dir] = struct{}{}
 }
 
 // at 在命名步骤处执行测试钩子。生产配置中钩子为 nil，返回 nil。

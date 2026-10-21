@@ -41,6 +41,7 @@ func (s *Store) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, e
 		FModTime:     aws.ToTime(out.LastModified),
 		FContentType: aws.ToString(out.ContentType),
 		FMetadata:    normalizeMetadata(out.Metadata),
+		FETag:        aws.ToString(out.ETag),
 	}, nil
 }
 
@@ -119,11 +120,7 @@ func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt
 	if size < 0 && out.ContentLength != nil {
 		size = aws.ToInt64(out.ContentLength)
 	}
-	body := out.Body
-	if size >= 0 {
-		body = &sizedBody{ReadCloser: out.Body, left: size}
-	}
-	return &objectStream{ReadCloser: body, cancel: cancel, op: op, key: key}, nil
+	return &objectStream{ReadCloser: out.Body, cancel: cancel, key: key, left: size}, nil
 }
 
 // getDetached 发起 GET，并在它进行期间把调用方 Context 的取消桥接到请求上。GET 成功返回且
@@ -146,36 +143,13 @@ func (s *Store) getDetached(ctx context.Context, in *awss3.GetObjectInput) (*aws
 	return nil, nil, err
 }
 
-// sizedBody 在已知长度时把提前结束的响应体变成 ErrConflict。
-// 长度未知时原样传递，调用方看到的 EOF 就是流的结尾。
-type sizedBody struct {
-	io.ReadCloser
-	left int64
-}
-
-func (b *sizedBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	if int64(n) > b.left {
-		b.left = 0
-	} else {
-		b.left -= int64(n)
-	}
-	if (err == io.EOF || err == io.ErrUnexpectedEOF) && b.left > 0 {
-		return n, fmt.Errorf("%w: response ended with %d bytes still expected", fileserver.ErrConflict, b.left)
-	}
-	if err == io.ErrUnexpectedEOF {
-		return n, io.EOF
-	}
-	return n, err
-}
-
 // objectStream 把响应体与请求的取消函数绑定在一起：Close 同时关闭响应体并释放请求。
 // 它让 Read 的生命周期由调用方的 Close 决定，而不是由调用方的 Context 决定。
 type objectStream struct {
 	io.ReadCloser
 	cancel context.CancelFunc
-	op     string
 	key    string
+	left   int64 // 剩余预期字节；-1 表示长度未知
 }
 
 // Close 关闭响应体并取消请求。重复调用是安全的。
@@ -185,13 +159,21 @@ func (s *objectStream) Close() error {
 	return err
 }
 
-// Read 传递响应体，并把截断错误包进 *fileserver.Error。io.EOF 保持原样。
+// Read 校验已知长度，并把读取错误包进 *fileserver.Error。io.EOF 保持原样。
 func (s *objectStream) Read(p []byte) (int, error) {
 	n, err := s.ReadCloser.Read(p)
+	if s.left >= 0 {
+		s.left = max(0, s.left-int64(n))
+		if (err == io.EOF || err == io.ErrUnexpectedEOF) && s.left > 0 {
+			err = fmt.Errorf("%w: response ended with %d bytes still expected", io.ErrUnexpectedEOF, s.left)
+		} else if err == io.ErrUnexpectedEOF {
+			err = io.EOF
+		}
+	}
 	if err == nil || err == io.EOF {
 		return n, err
 	}
-	return n, &fileserver.Error{Op: s.op, Key: s.key, Err: err}
+	return n, &fileserver.Error{Op: "Read", Key: s.key, Err: err}
 }
 
 // Download 实现 fileserver.Downloader。对象第 i 个字节写到 w 的偏移 i 处。
@@ -274,7 +256,8 @@ func (s *Store) downloadWhole(ctx context.Context, objKey, key string, w io.Writ
 		return err
 	}
 	if total >= 0 && n != total {
-		return fmt.Errorf("%w: object changed during download", fileserver.ErrConflict)
+		// 单次 GET 的响应是某一版本的原子视图；短于 ContentLength 只能是传输截断。
+		return fmt.Errorf("%w: response ended with %d of %d bytes", io.ErrUnexpectedEOF, n, total)
 	}
 	prog.finish(n, total)
 	return nil
@@ -383,7 +366,8 @@ func (s *Store) fetchSpan(ctx context.Context, objKey string, w io.WriterAt, eta
 		return 0, err
 	}
 	if n != sp.n {
-		return 0, fmt.Errorf("%w: object changed during download", fileserver.ErrConflict)
+		// If-Match 已保证版本一致；短于请求范围只能是传输截断。
+		return 0, fmt.Errorf("%w: response ended with %d of %d bytes", io.ErrUnexpectedEOF, n, sp.n)
 	}
 	return n, nil
 }

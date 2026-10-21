@@ -8,89 +8,43 @@ import (
 
 // UploadOpt 是 Upload 的选项。方法私有，只能由本包构造。
 type UploadOpt interface {
-	applyUpload(*uploadConfig)
+	applyUpload(*UploadOptions)
 }
 
 // DownloadOpt 是 Download 的选项。
 type DownloadOpt interface {
-	applyDownload(*downloadConfig)
+	applyDownload(*DownloadOptions)
 }
 
 // ReadOpt 是 Read 的选项。
 type ReadOpt interface {
-	applyRead(*readConfig)
+	applyRead(*ReadOptions)
 }
 
-type uploadConfig struct {
-	size        int64
-	hasSize     bool
-	contentType string
-	metadata    map[string]string
-	ifNotExists bool
-	progress    Progress
-}
+type uploadOptFunc func(*UploadOptions)
 
-type downloadConfig struct {
-	rng      rangeConfig
-	progress Progress
-}
-
-type readConfig struct {
-	rng rangeConfig
-}
-
-// rangeConfig 的零值表示整个对象。
-type rangeConfig struct {
-	set    bool
-	off    int64
-	length int64 // -1 表示到末尾
-}
-
-func (r rangeConfig) validate() error {
-	if !r.set {
-		return nil
-	}
-	if r.off < 0 {
-		return invalidArgument("range offset must not be negative")
-	}
-	if r.length < -1 {
-		return invalidArgument("range length must be -1 or non-negative")
-	}
-	return nil
-}
-
-// bounds 返回范围；未指定时为 (0, -1)，即整个对象。
-func (r rangeConfig) bounds() (int64, int64) {
-	if !r.set {
-		return 0, -1
-	}
-	return r.off, r.length
-}
-
-type uploadOptFunc func(*uploadConfig)
-
-func (f uploadOptFunc) applyUpload(c *uploadConfig) { f(c) }
+func (f uploadOptFunc) applyUpload(c *UploadOptions) { f(c) }
 
 // WithSize 声明对象的准确长度。提交前严格校验：短输入与超长输入都返回 ErrSizeMismatch。
 // 负数与 MaxInt64 在 NewUploadOptions 中以 ErrInvalidArgument 拒绝（后者会使 size+1 溢出）。
 func WithSize(n int64) UploadOpt {
-	return uploadOptFunc(func(c *uploadConfig) { c.size, c.hasSize = n, true })
+	return uploadOptFunc(func(c *UploadOptions) { c.size, c.hasSize = n, true })
 }
 
 // WithContentType 设置持久化的内容类型。后端不持久化时返回 ErrUnsupported。
 func WithContentType(s string) UploadOpt {
-	return uploadOptFunc(func(c *uploadConfig) { c.contentType = s })
+	return uploadOptFunc(func(c *UploadOptions) { c.contentType = s })
 }
 
 // WithMetadata 设置持久化的自定义元数据。调用时复制 m；后端不持久化时返回 ErrUnsupported。
 func WithMetadata(m map[string]string) UploadOpt {
 	meta := maps.Clone(m)
-	return uploadOptFunc(func(c *uploadConfig) { c.metadata = meta })
+	return uploadOptFunc(func(c *UploadOptions) { c.metadata = meta })
 }
 
 // WithIfNotExists 要求目标不存在。目标已存在时返回 ErrConflict 且不覆盖。
 func WithIfNotExists() UploadOpt {
-	return uploadOptFunc(func(c *uploadConfig) { c.ifNotExists = true })
+	return uploadOptFunc(func(c *UploadOptions) { c.ifNotExists = true })
 }
 
 // ProgressOpt 注入进度观察，同时适用于 Upload 与 Download。
@@ -98,8 +52,8 @@ type ProgressOpt struct {
 	p Progress
 }
 
-func (o ProgressOpt) applyUpload(c *uploadConfig)     { c.progress = o.p }
-func (o ProgressOpt) applyDownload(c *downloadConfig) { c.progress = o.p }
+func (o ProgressOpt) applyUpload(c *UploadOptions)     { c.progress = o.p }
+func (o ProgressOpt) applyDownload(c *DownloadOptions) { c.progress = o.p }
 
 // WithProgress 注入进度观察者，默认关闭。
 func WithProgress(p Progress) ProgressOpt {
@@ -113,15 +67,36 @@ type RangeOpt struct {
 	length int64
 }
 
-func (o RangeOpt) applyDownload(c *downloadConfig) {
+func (r RangeOpt) validate() error {
+	if !r.set {
+		return nil
+	}
+	if r.off < 0 {
+		return invalidArgument("range offset must not be negative")
+	}
+	if r.length < -1 {
+		return invalidArgument("range length must be -1 or non-negative")
+	}
+	return nil
+}
+
+// bounds 返回范围；未指定时为 (0, -1)，即整个对象。
+func (r RangeOpt) bounds() (int64, int64) {
+	if !r.set {
+		return 0, -1
+	}
+	return r.off, r.length
+}
+
+func (o RangeOpt) applyDownload(c *DownloadOptions) {
 	if o.set {
-		c.rng = rangeConfig{set: true, off: o.off, length: o.length}
+		c.rng = o
 	}
 }
 
-func (o RangeOpt) applyRead(c *readConfig) {
+func (o RangeOpt) applyRead(c *ReadOptions) {
 	if o.set {
-		c.rng = rangeConfig{set: true, off: o.off, length: o.length}
+		c.rng = o
 	}
 }
 
@@ -133,12 +108,17 @@ func WithRange(off, length int64) RangeOpt {
 
 // UploadOptions 是校验后的 Upload 选项，只读。零值表示没有任何选项。
 type UploadOptions struct {
-	cfg uploadConfig
+	size        int64
+	hasSize     bool
+	contentType string
+	metadata    map[string]string
+	ifNotExists bool
+	progress    Progress
 }
 
 // NewUploadOptions 应用并校验 Upload 选项。nil 选项视为无操作。
 func NewUploadOptions(opts ...UploadOpt) (UploadOptions, error) {
-	var c uploadConfig
+	var c UploadOptions
 	for _, o := range opts {
 		if o != nil {
 			o.applyUpload(&c)
@@ -158,33 +138,34 @@ func NewUploadOptions(opts ...UploadOpt) (UploadOptions, error) {
 		return UploadOptions{}, err
 	}
 	c.metadata = meta
-	return UploadOptions{cfg: c}, nil
+	return c, nil
 }
 
 // Size 返回声明的长度；未声明时第二个返回值为 false。
 // 声明的 0 是合法的空文件，与未声明不同。
-func (o UploadOptions) Size() (int64, bool) { return o.cfg.size, o.cfg.hasSize }
+func (o UploadOptions) Size() (int64, bool) { return o.size, o.hasSize }
 
 // ContentType 返回内容类型；未设置时为空。
-func (o UploadOptions) ContentType() string { return o.cfg.contentType }
+func (o UploadOptions) ContentType() string { return o.contentType }
 
 // Metadata 返回元数据的副本，键已小写；没有时返回 nil。
-func (o UploadOptions) Metadata() map[string]string { return maps.Clone(o.cfg.metadata) }
+func (o UploadOptions) Metadata() map[string]string { return maps.Clone(o.metadata) }
 
 // IfNotExists 报告是否要求目标不存在。
-func (o UploadOptions) IfNotExists() bool { return o.cfg.ifNotExists }
+func (o UploadOptions) IfNotExists() bool { return o.ifNotExists }
 
 // Progress 返回进度观察者；未设置时返回 nil，调用方需判空。
-func (o UploadOptions) Progress() Progress { return o.cfg.progress }
+func (o UploadOptions) Progress() Progress { return o.progress }
 
 // DownloadOptions 是校验后的 Download 选项，只读。零值表示整个对象、无进度观察。
 type DownloadOptions struct {
-	cfg downloadConfig
+	rng      RangeOpt
+	progress Progress
 }
 
 // NewDownloadOptions 应用并校验 Download 选项。nil 选项视为无操作。
 func NewDownloadOptions(opts ...DownloadOpt) (DownloadOptions, error) {
-	var c downloadConfig
+	var c DownloadOptions
 	for _, o := range opts {
 		if o != nil {
 			o.applyDownload(&c)
@@ -193,23 +174,23 @@ func NewDownloadOptions(opts ...DownloadOpt) (DownloadOptions, error) {
 	if err := c.rng.validate(); err != nil {
 		return DownloadOptions{}, err
 	}
-	return DownloadOptions{cfg: c}, nil
+	return c, nil
 }
 
 // Range 返回范围 (off, length)；未指定时为 (0, -1)。length 为 -1 表示到末尾。
-func (o DownloadOptions) Range() (int64, int64) { return o.cfg.rng.bounds() }
+func (o DownloadOptions) Range() (int64, int64) { return o.rng.bounds() }
 
 // Progress 返回进度观察者；未设置时返回 nil。
-func (o DownloadOptions) Progress() Progress { return o.cfg.progress }
+func (o DownloadOptions) Progress() Progress { return o.progress }
 
 // ReadOptions 是校验后的 Read 选项，只读。零值表示整个对象。
 type ReadOptions struct {
-	cfg readConfig
+	rng RangeOpt
 }
 
 // NewReadOptions 应用并校验 Read 选项。nil 选项视为无操作。
 func NewReadOptions(opts ...ReadOpt) (ReadOptions, error) {
-	var c readConfig
+	var c ReadOptions
 	for _, o := range opts {
 		if o != nil {
 			o.applyRead(&c)
@@ -218,11 +199,11 @@ func NewReadOptions(opts ...ReadOpt) (ReadOptions, error) {
 	if err := c.rng.validate(); err != nil {
 		return ReadOptions{}, err
 	}
-	return ReadOptions{cfg: c}, nil
+	return c, nil
 }
 
 // Range 返回范围 (off, length)；未指定时为 (0, -1)。
-func (o ReadOptions) Range() (int64, int64) { return o.cfg.rng.bounds() }
+func (o ReadOptions) Range() (int64, int64) { return o.rng.bounds() }
 
 // normalizeMetadata 返回键已小写的新 map；没有元数据时返回 nil。
 // 大小写不同而小写后相同的两个键视为冲突。

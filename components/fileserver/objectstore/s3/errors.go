@@ -36,13 +36,7 @@ func apiError(err error) (code string, status int) {
 	return code, status
 }
 
-// hasResponse 报告错误是否来自一个 HTTP 响应。没有响应时，请求可能没有到达服务端，也可能已被处理。
-func hasResponse(err error) bool {
-	var sc statusCoder
-	return errors.As(err, &sc) && sc.HTTPStatusCode() > 0
-}
-
-// classify 把 SDK 错误映射为哨兵类别（见设计文档 6.5），同时保留原始原因。
+// classify 把 SDK 错误映射为哨兵类别，同时保留原始原因。
 // 映射表之外的错误原样返回。
 func classify(err error) error {
 	if err == nil {
@@ -68,15 +62,13 @@ func classify(err error) error {
 	return err
 }
 
-// classifyWrite 用于可能已经生效的写入请求（PutObject、UploadPart、CompleteMultipartUpload）。
+// classifyWrite 用于可能已经生效的写入请求（PutObject、CreateMultipartUpload、CompleteMultipartUpload）。
 // 没有收到 HTTP 响应的失败（连接错误、超时、取消）结果未知，映射为 ErrIndeterminate，原因保留在错误链中。
 // 收到 5xx 也不代表服务端没有提交：网关错误、后端超时都可能是“已写入但响应失败”，
 // 因此同样按结果未知处理。501 是例外：服务端没有实现该功能，请求确定没有被处理。
 func classifyWrite(err error) error {
-	if !hasResponse(err) {
-		return wrap(fileserver.ErrIndeterminate, err)
-	}
-	if _, status := apiError(err); status >= http.StatusInternalServerError && status != http.StatusNotImplemented {
+	_, status := apiError(err)
+	if status <= 0 || (status >= http.StatusInternalServerError && status != http.StatusNotImplemented) {
 		return wrap(fileserver.ErrIndeterminate, err)
 	}
 	return classify(err)

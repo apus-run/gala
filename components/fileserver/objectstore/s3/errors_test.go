@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -225,7 +226,8 @@ func TestRangedReadRequiresETag(t *testing.T) {
 
 // TestSegmentedDownloadRejectsShortResponseBody covers the per-span length
 // check: a body that is shorter than the requested range with an unchanged
-// ETag is only visible by comparing the copied byte count.
+// ETag is only visible by comparing the copied byte count. If-Match has ruled
+// out replacement, so the short body is transport truncation.
 func TestSegmentedDownloadRejectsShortResponseBody(t *testing.T) {
 	api := newMemAPI()
 	s := newTestStore(t, api, Config{Concurrency: 2})
@@ -239,8 +241,8 @@ func TestSegmentedDownloadRejectsShortResponseBody(t *testing.T) {
 
 	var buf fileservertest.BufferAt
 	err := s.Download(t.Context(), "obj", &buf)
-	if !errors.Is(err, fileserver.ErrConflict) {
-		t.Fatalf("Download error = %v, want ErrConflict", err)
+	if !errors.Is(err, io.ErrUnexpectedEOF) || !fileserver.Retryable(err) {
+		t.Fatalf("Download error = %v, want retryable io.ErrUnexpectedEOF", err)
 	}
 }
 

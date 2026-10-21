@@ -132,7 +132,7 @@ func requireBytes(t *testing.T, s *driver.Store, key string, want []byte) {
 }
 func TestRustFSContract(t *testing.T) {
 	realClient(t)
-	fileservertest.RunStorageSuite(t, func(t *testing.T) fileserver.Storage { return newRealStore(t, nil, freshPrefix(t), 4) }, fileservertest.Capabilities{ContentType: true, Metadata: true, IfNotExists: true, ModTime: true})
+	fileservertest.RunStorageSuite(t, func(t *testing.T) fileserver.Storage { return newRealStore(t, nil, freshPrefix(t), 4) }, fileservertest.Capabilities{ContentType: true, Metadata: true, IfNotExists: true, ModTime: true, ETag: true})
 }
 func TestRustFSMultipartBoundaries(t *testing.T) {
 	realClient(t)

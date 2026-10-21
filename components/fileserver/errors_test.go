@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 )
 
@@ -46,6 +47,36 @@ func TestErrorAsRecoversOpAndKey(t *testing.T) {
 	}
 	if fe.Op != "Stat" || fe.Key != "x/y" {
 		t.Fatalf("recovered Op=%q Key=%q", fe.Op, fe.Key)
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	retryable := []error{
+		ErrIntegrity,
+		fmt.Errorf("Upload: %w: backend checksum mismatch", ErrIntegrity),
+		&Error{Op: "Read", Key: "k", Err: fmt.Errorf("%w: response ended with 3 bytes still expected", io.ErrUnexpectedEOF)},
+	}
+	for _, err := range retryable {
+		if !Retryable(err) {
+			t.Errorf("Retryable(%v) = false, want true", err)
+		}
+	}
+	notRetryable := []error{
+		nil,
+		ErrIndeterminate,
+		fmt.Errorf("%w: %w", ErrIndeterminate, io.ErrUnexpectedEOF),
+		errors.Join(ErrIntegrity, ErrIndeterminate),
+		errors.Join(io.ErrUnexpectedEOF, ErrConflict),
+		ErrConflict,
+		ErrNotFound,
+		ErrInvalidArgument,
+		context.Canceled,
+		errors.New("unknown"),
+	}
+	for _, err := range notRetryable {
+		if Retryable(err) {
+			t.Errorf("Retryable(%v) = true, want false", err)
+		}
 	}
 }
 

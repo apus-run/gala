@@ -165,8 +165,9 @@ for _, result := range results {
 
 - **接口**：`Uploader`、`Downloader`、`Storage`（三者分开，调用方只依赖用到的能力）；`objectstore.ObjectStorage` 是可选的签名能力。
 - **Key**：逻辑标识，不是物理路径。必须是非空合法 UTF-8，总长不超过 1024 字节，每段不超过 255 字节；以 `/` 分隔，不允许首尾 `/`、空段、`.` 或 `..` 段。跨平台安全由 `ValidateKey` 保证：不含 Windows 禁止的字符、段不以空格或 `.` 结尾、不使用 Windows 保留名。业务侧建议用 ASCII 小写生成 Key。
-- **错误**：用 `errors.Is(err, ErrXxx)` 判断类别（`ErrInvalidKey`、`ErrInvalidArgument`、`ErrUnsupported`、`ErrNotFound`、`ErrConflict`、`ErrPermission`、`ErrSizeMismatch`、`ErrTooLarge`、`ErrIndeterminate`），用 `errors.As` 取 `*fileserver.Error` 里的 Op 与 Key。错误文本不含凭据、签名 URL 或本地绝对路径。
-- **ErrIndeterminate** 表示“结果未知”，**不得自动重试**：先 `Stat`，结合业务标识、校验和或版本判断对象是否已经生效；大小相同不足以证明内容相同。本地发布后目录同步失败也可能返回此错误，此时对象可见但耐久性未确认。
+- **错误**：用 `errors.Is(err, ErrXxx)` 判断类别（`ErrInvalidKey`、`ErrInvalidArgument`、`ErrUnsupported`、`ErrNotFound`、`ErrConflict`、`ErrPermission`、`ErrSizeMismatch`、`ErrTooLarge`、`ErrIntegrity`、`ErrIndeterminate`），用 `errors.As` 取 `*fileserver.Error` 里的 Op 与 Key。错误文本不含凭据、签名 URL 或本地绝对路径。
+- **重试**：`ErrIntegrity` 与 `io.ErrUnexpectedEOF`（响应体提前结束）是传输故障，用同样的输入重新发起是安全的；`ErrConflict` 等其余哨兵重试无用；`ErrIndeterminate` 必须先核对；错误链同时包含传输错误时，仍以 `ErrIndeterminate` / `ErrConflict` 的禁止重试结论为准。`fileserver.Retryable(err)` 封装了这张表，供重试中间件使用。
+- **ErrIndeterminate** 表示“结果未知”，**不得自动重试**：先 `Stat`，结合业务标识、校验和或版本（`ObjectInfo.FETag`）判断对象是否已经生效；大小相同不足以证明内容相同。本地发布后目录同步失败也可能返回此错误，此时对象可见但耐久性未确认。
 - **范围**：`WithRange(off, length)`，语义与 HTTP Range 一致（超出末尾截到末尾，`off > size` 报 `ErrInvalidArgument`）。
 - **进度**：`WithProgress` 注入观察者。同次调用的回调串行、单调不减，且不在 Store 的锁内执行——回调里可以安全调用同一个 Store 的其它方法。
 - **批量**：`UploadAll` / `DownloadAll` 提供有界并发与逐项结果，默认一项失败不影响其它项。
@@ -176,7 +177,7 @@ for _, result := range results {
 所有访问都经由构造时打开的 `os.Root`，Key 不会被拼成全局路径，符号链接与 `..` 不能越出根目录。Key 映射到 `data/` 之下，临时文件放在 `.fs-tmp/`，两个命名空间不相交。
 
 - **原子发布**：普通对象先写入 `.fs-tmp` 的临时文件再发布；覆盖写用 `rename`，`WithIfNotExists` 用 `link`（目标已存在即 `ErrConflict`，不会退化成“先检查后改名”）。
-- **耐久性**：`WithDurability` 选择 `SyncNone` / `SyncFile` / `SyncFileAndDir`（默认）。目录项的同步点是：新建目录时同步它的父目录，发布或删除文件名之后同步叶子目录。
+- **耐久性**：`WithDurability` 选择 `SyncNone` / `SyncFile` / `SyncFileAndDir`（默认）。目录项的同步点是：上传准备路径时逐级同步父目录（已有目录也同步），发布或删除文件名之后同步叶子目录。不缓存“已同步”状态；默认耐久模式下，嵌套路径的每次上传都会承担这些同步调用。
   **进程内的测试无法验证 fsync**——page cache 不随进程消失。需要验收耐久性时，在目标文件系统上用块设备层工具单独验证。
 - **吞吐**：默认耐久性下上传包含文件与目录同步，性能取决于文件系统和设备。应在目标环境用 benchmark 测量；选择 `SyncNone` 或 `SyncFile` 前需评估对应的掉电风险。
 - **权限**：临时文件创建时为 `0600`，发布前按 `WithFileMode` 精确设置最终权限（默认 `0644`，不受 umask 影响）。目录权限在创建时受 umask 影响。
@@ -211,7 +212,7 @@ for _, result := range results {
 
 
 - **分片上传在 `Upload` 内部完成**，不额外暴露分片 API：输入在第一片内结束就用单次 `PutObject`，否则创建分片上传，所有片成功后才 `CompleteMultipartUpload`。缓冲按实际使用的并发槽位分配，分片缓冲上界是 `实际分片大小 × Concurrency`；单对象不会预分配其它槽位。**长度已知时用 `WithSize` 声明**，否则仍按整片分配首个缓冲。
-- **校验和**：请求带 SHA-256 附加校验和。分片 ETag 在多片上传和 SSE-KMS 下不是内容 MD5，不要用它核对对象内容。分片响应若回显 SHA-256，必须与本地计算一致，否则本次上传失败；没有回显时不视为失败。
+- **校验和**：请求带 SHA-256 附加校验和。分片 ETag 在多片上传和 SSE-KMS 下不是内容 MD5，不要用它核对对象内容。分片响应若回显 SHA-256，必须与本地计算一致，否则本次上传失败（`ErrIntegrity`，可重试）；没有回显时不视为失败。`Stat` 返回的 `ObjectInfo.FETag` 同样只用于版本相等性比较。
 - **版本守卫**：范围读取与多段下载依赖 ETag（`If-Match`）确认 HEAD 与 GET 看到的是同一个版本。**不返回 ETag 的 S3 兼容服务无法做这个守卫**：多段下载与范围读取返回 `ErrUnsupported`，整对象读取不受影响。
 - **条件写**：`WithIfNotExists` 使用 `If-None-Match`。服务端不支持该功能时返回 501，映射为 `ErrUnsupported`（请求确定没有被处理），不是 `ErrIndeterminate`。
 - **结果未知**：写请求没有收到响应，或收到 5xx 时，映射为 `ErrIndeterminate`——服务端可能已经写入了。不得自动重试。

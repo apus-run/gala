@@ -3,7 +3,6 @@ package filestore
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -47,10 +46,8 @@ func TestNestedUploadSyncsEachDirectoryEntryOnce(t *testing.T) {
 	}
 }
 
-// TestSecondUploadIntoKnownDirectorySyncsOnlyTheLeaf pins the bookkeeping that
-// avoids a redundant fsync: once this process has synced a directory, a later
-// upload into the same directory only syncs the leaf.
-func TestSecondUploadIntoKnownDirectorySyncsOnlyTheLeaf(t *testing.T) {
+// Existing directories must satisfy the same durability requirement as new ones.
+func TestSecondUploadSyncsParentDirectories(t *testing.T) {
 	log := &syncLog{}
 	s := newStore(t, withHook(log.hook))
 	if err := s.Upload(t.Context(), "sub/one", bytes.NewReader([]byte("x"))); err != nil {
@@ -60,17 +57,13 @@ func TestSecondUploadIntoKnownDirectorySyncsOnlyTheLeaf(t *testing.T) {
 	if err := s.Upload(t.Context(), "sub/two", bytes.NewReader([]byte("y"))); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{filepath.Join(dataDirName, "sub")}
+	want := []string{dataDirName, filepath.Join(dataDirName, "sub")}
 	if !reflect.DeepEqual(log.dirs, want) {
 		t.Fatalf("directory syncs = %v, want %v", log.dirs, want)
 	}
 }
 
-// TestUploadIntoDirectoryFromAnotherProcessSyncsItsParent covers the case the
-// in-process cache cannot know about: a directory created by an earlier
-// process. Its entry in the parent must be synced before the new object
-// becomes visible, so this process cannot trust the cached "already synced"
-// state and syncs the parent again.
+// Directories inherited from an earlier process also require parent synchronization.
 func TestUploadIntoDirectoryFromAnotherProcessSyncsItsParent(t *testing.T) {
 	dir := t.TempDir()
 	first, err := New(dir)
@@ -118,21 +111,6 @@ func TestFailedDirectorySyncRemovesTheNewDirectory(t *testing.T) {
 	}
 	if _, statErr := s.Stat(t.Context(), "sub/obj"); !errors.Is(statErr, fileserver.ErrNotFound) {
 		t.Fatalf("the object became visible: %v", statErr)
-	}
-}
-
-// TestDirectoryMemoryIsBounded checks that the set of directories this process
-// remembers as synced does not grow with the number of distinct prefixes.
-func TestDirectoryMemoryIsBounded(t *testing.T) {
-	s := newStore(t)
-	for i := range 3 * maxSyncedDirs {
-		s.markDirSynced(fmt.Sprintf("d%d", i))
-	}
-	s.dirMu.Lock()
-	n := len(s.dirSynced)
-	s.dirMu.Unlock()
-	if n > maxSyncedDirs {
-		t.Fatalf("remembered %d directories, want at most %d", n, maxSyncedDirs)
 	}
 }
 

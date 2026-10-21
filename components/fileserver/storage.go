@@ -36,4 +36,5 @@ type ObjectInfo struct {
 	FModTime     time.Time         // 后端不提供时为零值
 	FContentType string            // 后端未持久化时为空
 	FMetadata    map[string]string // 后端未持久化时为 nil；键统一小写
+	FETag        string            // 不透明的相等性令牌：同一对象内容不变则不变。只用于相等性比较，不得当作内容 MD5
 }

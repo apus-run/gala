@@ -143,8 +143,11 @@ func runBatch(ctx context.Context, keys []string, opts []BatchOpt, work func(con
 		return results
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var cancel context.CancelFunc
+	if cfg.failFast {
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+	}
 
 	sem := make(chan struct{}, cfg.concurrency)
 	var wg sync.WaitGroup

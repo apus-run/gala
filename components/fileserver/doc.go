@@ -27,12 +27,21 @@
 //
 // 调用方用 errors.Is(err, ErrXxx) 判断类别：ErrInvalidKey、ErrInvalidArgument、
 // ErrUnsupported、ErrNotFound、ErrConflict、ErrPermission、ErrSizeMismatch、
-// ErrTooLarge、ErrIndeterminate。*Error 只附带 Op 与 Key，
+// ErrTooLarge、ErrIntegrity、ErrIndeterminate。*Error 只附带 Op 与 Key，
 // 用 errors.As 获取。驱动保留原始原因，上下文取消或超时满足 errors.Is(err, ctx.Err())。
 //
 // ErrIndeterminate 只用于两种情况：云端请求已发出但结果未知（超时、断连后于
 // 提交类请求）；本地对象已发布但目录同步失败（对象可见，耐久性未确认）。
-// 返回它时不得自动重试，应先 Stat 并以业务可核验的信息（大小、校验和、版本）判断。
+// 返回它时不得自动重试，应先 Stat 并以业务可核验的信息（大小、ETag、校验和）判断。
+//
+// 错误 → 调用方动作：ErrInvalidKey、ErrInvalidArgument、ErrUnsupported、ErrNotFound、
+// ErrPermission、ErrSizeMismatch、ErrTooLarge 与 ErrConflict 表示请求或其前置条件有误，
+// 原样重试无用；ErrIntegrity 与 io.ErrUnexpectedEOF（响应体提前结束）是传输故障，
+// 用同样的输入重新发起是安全的；ErrIndeterminate 结果未知，必须先核对再决定。
+// Retryable 封装了这张表，供重试中间件使用。
+//
+// ObjectInfo.FETag 是不透明的相等性令牌，只用于判断"是不是同一版本"，
+// 不得当作内容 MD5（多片上传与 SSE-KMS 下它不是）。后端不提供时为空。
 //
 // 错误文本不得包含签名 URL、凭据或完整本地绝对路径。
 //
@@ -67,8 +76,9 @@
 //
 // 每个操作一个选项接口，方法私有，只能由本包构造：UploadOpt、DownloadOpt、ReadOpt。
 // 被多个操作共享的选项（WithProgress、WithRange）由导出的小结构体同时实现多个接口。
-// nil 选项视为无操作。后端通过 NewUploadOptions、NewDownloadOptions、NewReadOptions
-// 解析并校验选项，获得只读访问器；元数据键统一小写。
+// nil 选项视为无操作。后端通过
+// NewUploadOptions、NewDownloadOptions、NewReadOptions 解析并校验选项，
+// 获得只读访问器；元数据键统一小写。
 //
 // # 进度与并发
 //

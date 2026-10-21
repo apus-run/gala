@@ -40,6 +40,7 @@ func TestStorageSuite(t *testing.T) {
 		Metadata:    true,
 		IfNotExists: true,
 		ModTime:     true,
+		ETag:        true,
 	})
 }
 
@@ -334,7 +335,8 @@ func TestReadRejectsObjectReplacedDuringRangedRead(t *testing.T) {
 
 // TestDownloadRejectsShortResponseBody pins the per-span length check. A body
 // shorter than the requested range with an unchanged ETag is only detectable by
-// comparing the copied byte count; If-Match does not fire.
+// comparing the copied byte count; If-Match does not fire. Truncated transfers
+// report io.ErrUnexpectedEOF (retryable), not ErrConflict.
 func TestDownloadRejectsShortResponseBody(t *testing.T) {
 	api := newMemAPI()
 	s := newTestStore(t, api, Config{})
@@ -348,8 +350,8 @@ func TestDownloadRejectsShortResponseBody(t *testing.T) {
 
 	var buf fileservertest.BufferAt
 	err := s.Download(t.Context(), "obj", &buf)
-	if !errors.Is(err, fileserver.ErrConflict) {
-		t.Fatalf("Download = %v, want ErrConflict", err)
+	if !errors.Is(err, io.ErrUnexpectedEOF) || !fileserver.Retryable(err) {
+		t.Fatalf("Download = %v, want retryable io.ErrUnexpectedEOF", err)
 	}
 	got := len(buf.Bytes())
 	if got >= len(payload) {
@@ -704,8 +706,8 @@ func TestReadRejectsShortBody(t *testing.T) {
 	}
 	defer func() { _ = rc.Close() }()
 	_, err = io.ReadAll(rc)
-	if !errors.Is(err, fileserver.ErrConflict) {
-		t.Fatalf("Read = %v, want ErrConflict", err)
+	if !errors.Is(err, io.ErrUnexpectedEOF) || !fileserver.Retryable(err) {
+		t.Fatalf("Read = %v, want retryable io.ErrUnexpectedEOF", err)
 	}
 }
 
@@ -758,8 +760,8 @@ func TestUploadRejectsMismatchedPartChecksum(t *testing.T) {
 	s := newTestStore(t, api, Config{PartSize: MinPartSize})
 	data := bytes.Repeat([]byte("y"), int(MinPartSize)+8)
 	err := s.Upload(t.Context(), "k", bytes.NewReader(data))
-	if !errors.Is(err, fileserver.ErrConflict) {
-		t.Fatalf("Upload error = %v, want ErrConflict", err)
+	if !errors.Is(err, fileserver.ErrIntegrity) || !fileserver.Retryable(err) {
+		t.Fatalf("Upload error = %v, want retryable ErrIntegrity", err)
 	}
 	if api.aborts == 0 {
 		t.Fatal("mismatched checksum did not abort the upload")

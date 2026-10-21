@@ -41,10 +41,35 @@ type SignedRequest struct {
 
 // SignOpt 是签名选项。方法私有，只能由本包构造。
 type SignOpt interface {
-	applySign(*signConfig)
+	applySign(*SignOptions)
 }
 
-type signConfig struct {
+type signOptFunc func(*SignOptions)
+
+func (f signOptFunc) applySign(c *SignOptions) { f(c) }
+
+// WithExpiry 设置签名有效期，默认 DefaultExpiry，范围 [MinExpiry, MaxExpiry]。越界在 NewSignOptions 中返回 ErrInvalidArgument。
+func WithExpiry(d time.Duration) SignOpt {
+	return signOptFunc(func(c *SignOptions) { c.expiry, c.hasExpiry = d, true })
+}
+
+// WithContentType 纳入签名头，客户端上传时必须发送相同的值。仅用于 SignUploadReq。
+func WithContentType(s string) SignOpt {
+	return signOptFunc(func(c *SignOptions) { c.contentType = s })
+}
+
+// WithContentLength 纳入签名头，限制上传的确切大小。仅用于 SignUploadReq。
+func WithContentLength(n int64) SignOpt {
+	return signOptFunc(func(c *SignOptions) { c.contentLength, c.hasLength = n, true })
+}
+
+// WithDisposition 设置下载时的 Content-Disposition 文件名。驱动负责编码。仅用于 SignDownloadReq。
+func WithDisposition(filename string) SignOpt {
+	return signOptFunc(func(c *SignOptions) { c.disposition, c.hasDisposition = filename, true })
+}
+
+// SignOptions 是校验后的签名选项，只读。
+type SignOptions struct {
 	expiry         time.Duration
 	hasExpiry      bool
 	contentType    string
@@ -54,39 +79,10 @@ type signConfig struct {
 	hasDisposition bool
 }
 
-type signOptFunc func(*signConfig)
-
-func (f signOptFunc) applySign(c *signConfig) { f(c) }
-
-// WithExpiry 设置签名有效期，默认 DefaultExpiry，范围 [MinExpiry, MaxExpiry]。越界在 NewSignOptions 中返回 ErrInvalidArgument。
-func WithExpiry(d time.Duration) SignOpt {
-	return signOptFunc(func(c *signConfig) { c.expiry, c.hasExpiry = d, true })
-}
-
-// WithContentType 纳入签名头，客户端上传时必须发送相同的值。仅用于 SignUploadReq。
-func WithContentType(s string) SignOpt {
-	return signOptFunc(func(c *signConfig) { c.contentType = s })
-}
-
-// WithContentLength 纳入签名头，限制上传的确切大小。仅用于 SignUploadReq。
-func WithContentLength(n int64) SignOpt {
-	return signOptFunc(func(c *signConfig) { c.contentLength, c.hasLength = n, true })
-}
-
-// WithDisposition 设置下载时的 Content-Disposition 文件名。驱动负责编码。仅用于 SignDownloadReq。
-func WithDisposition(filename string) SignOpt {
-	return signOptFunc(func(c *signConfig) { c.disposition, c.hasDisposition = filename, true })
-}
-
-// SignOptions 是校验后的签名选项，只读。
-type SignOptions struct {
-	cfg signConfig
-}
-
 // NewSignOptions 应用并校验签名选项。nil 选项视为无操作。
 // 方向相关的检查（例如在上传签名中使用 WithDisposition）由各驱动完成。
 func NewSignOptions(opts ...SignOpt) (SignOptions, error) {
-	var c signConfig
+	var c SignOptions
 	for _, o := range opts {
 		if o != nil {
 			o.applySign(&c)
@@ -98,22 +94,22 @@ func NewSignOptions(opts ...SignOpt) (SignOptions, error) {
 	if c.hasLength && c.contentLength < 0 {
 		return SignOptions{}, fmt.Errorf("%w: content length must not be negative", fileserver.ErrInvalidArgument)
 	}
-	return SignOptions{cfg: c}, nil
+	return c, nil
 }
 
 // Expiry 返回有效期；未设置时为 DefaultExpiry。
 func (o SignOptions) Expiry() time.Duration {
-	if !o.cfg.hasExpiry {
+	if !o.hasExpiry {
 		return DefaultExpiry
 	}
-	return o.cfg.expiry
+	return o.expiry
 }
 
 // ContentType 返回签名的内容类型；未设置时为空。
-func (o SignOptions) ContentType() string { return o.cfg.contentType }
+func (o SignOptions) ContentType() string { return o.contentType }
 
 // ContentLength 返回签名的确切长度；未设置时第二个返回值为 false。
-func (o SignOptions) ContentLength() (int64, bool) { return o.cfg.contentLength, o.cfg.hasLength }
+func (o SignOptions) ContentLength() (int64, bool) { return o.contentLength, o.hasLength }
 
 // Disposition 返回下载文件名；未设置时第二个返回值为 false。
-func (o SignOptions) Disposition() (string, bool) { return o.cfg.disposition, o.cfg.hasDisposition }
+func (o SignOptions) Disposition() (string, bool) { return o.disposition, o.hasDisposition }

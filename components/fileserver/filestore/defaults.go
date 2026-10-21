@@ -18,8 +18,6 @@ const (
 	tempDirName = ".fs-tmp"
 	// maxTempAttempts 限制临时文件名冲突时的重试次数。
 	maxTempAttempts = 8
-	// maxSyncedDirs 限制本进程记住“已同步目录”的数量。超过时整体清空：遗忘只会多做一次同步，不会跳过同步。
-	maxSyncedDirs = 4096
 )
 
 func defaultConfig() config {

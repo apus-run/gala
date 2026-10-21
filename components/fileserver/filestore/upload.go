@@ -269,7 +269,7 @@ func (s *Store) syncParent(key string) error {
 // ensureParent 逐级创建 key 的父目录，全部经由根句柄完成。
 //
 // 逐级创建而不是 MkdirAll，是为了让每一层的创建都在其父目录同步之后才对其他调用可见
-// （见 mkdirSynced）。因此每个目录项在创建时已经落盘，发布之后只需同步叶子父目录。
+// （见 mkdirSynced）。已有目录也同步其父目录，不依赖进程内缓存判断耐久性。
 func (s *Store) ensureParent(key string) error {
 	dir := parentDir(key)
 	rel, ok := strings.CutPrefix(dir, dataDirName+string(filepath.Separator))
@@ -288,8 +288,7 @@ func (s *Store) ensureParent(key string) error {
 }
 
 // mkdirSynced 在 parent 的锁内创建 path。创建成功时，先同步 parent 再放锁，
-// 这样其他调用要到目录项落盘之后才能看到 EEXIST。本进程里已经同步过的 parent，
-// 再次遇到已存在的目录时不再同步。
+// 这样其他调用不会使用同步失败后即将被回滚的目录。已有目录同样同步 parent。
 func (s *Store) mkdirSynced(parent, path string) error {
 	unlock := s.lockDir(parent)
 	defer unlock()
@@ -303,7 +302,6 @@ func (s *Store) mkdirSynced(parent, path string) error {
 			}
 			return err
 		}
-		s.markDirSynced(parent)
 		return nil
 	case errors.Is(err, fs.ErrExist):
 		fi, statErr := s.root.Lstat(path)
@@ -316,13 +314,7 @@ func (s *Store) mkdirSynced(parent, path string) error {
 		if !fi.IsDir() {
 			return conflict("a parent path component is not a directory")
 		}
-		if !s.dirKnownSynced(parent) {
-			if err := s.syncDirAt(parent); err != nil {
-				return err
-			}
-			s.markDirSynced(parent)
-		}
-		return nil
+		return s.syncDirAt(parent)
 	default:
 		if isNotDir(err) {
 			return conflict("a parent path component is not a directory")

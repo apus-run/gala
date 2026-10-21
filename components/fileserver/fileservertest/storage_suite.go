@@ -19,6 +19,7 @@ type Capabilities struct {
 	Metadata    bool // 支持 WithMetadata，并通过 Stat 返回
 	IfNotExists bool // 支持 WithIfNotExists
 	ModTime     bool // Stat 返回非零的 ModTime
+	ETag        bool // Stat 返回非空的 FETag
 }
 
 // StorageFactory 为每个子测试创建一个新的、空的后端。
@@ -427,6 +428,12 @@ func caseStatFields(t *testing.T, s fileserver.Storage, caps Capabilities) {
 	}
 	if !caps.Metadata && info.FMetadata != nil {
 		t.Fatalf("Metadata = %v, want nil when unsupported", info.FMetadata)
+	}
+	if caps.ETag && info.FETag == "" {
+		t.Fatal("Stat.ETag is empty, but the backend declares ETag support")
+	}
+	if !caps.ETag && info.FETag != "" {
+		t.Fatalf("ETag = %q for a backend without ETag support", info.FETag)
 	}
 }
 
