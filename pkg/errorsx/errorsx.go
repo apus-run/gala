@@ -43,7 +43,15 @@ func New(code int, status string) *Error {
 
 // Error 实现 error 接口中的 `Error` 方法.
 func (e *Error) Error() string {
+	if e.cause != nil {
+		return fmt.Sprintf("error: code = %d, status = %s, message = %s, cause = %v", e.Code, e.Status, e.Message, e.cause)
+	}
 	return fmt.Sprintf("error: code = %d, status = %s, message = %s", e.Code, e.Status, e.Message)
+}
+
+// Stack 返回错误发生时的调用栈信息.
+func (e *Error) Stack() []string {
+	return e.stack
 }
 
 // HTTPStatus returns the HTTP status code represented by this error.
@@ -158,7 +166,7 @@ func (e *Error) GRPCStatus() *status.Status {
 	return st
 }
 
-// Unwrap 返回原始错误
+// Unwrap 返回原始错误，便于使用 errors.Is 和 errors.As 进行错误链的遍历和匹配.
 func (e *Error) Unwrap() error {
 	return e.cause
 }
