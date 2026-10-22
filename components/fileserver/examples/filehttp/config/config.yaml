@@ -1,0 +1,18 @@
+server:
+  mode: "prod"
+  listen_addr: ":8080"
+  max_upload_bytes: 524288000
+
+database:
+  dsn: "./data/filehost.db"
+
+storage:
+  # 本地 filestore 的根目录；S3_BUCKET 非空时只用于数据库（如果 DSN 也在该目录）。
+  fs_root: "./data"
+  s3_bucket: ""
+  s3_region: "us-east-1"
+  s3_endpoint: ""
+  s3_prefix: ""
+  s3_path_style: true
+  # 仅用于本地 RustFS/MinIO 等开发环境；生产应由平台预先创建 Bucket。
+  s3_create_bucket: false
