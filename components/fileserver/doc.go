@@ -8,6 +8,7 @@
 // 操作只有一套签名：Uploader、Downloader 与 Storage 分离，调用方只依赖自己用到的能力。
 // ObjectStorage（见 objectstore）是可选的签名能力。批量传输是 UploadAll / DownloadAll，
 // 不进入 Storage 接口。分片是 Upload 的内部实现细节，不是调用方需要知道的语义。
+// 枚举与复制不在契约内：在第一个调用方出现之前不提供；需要时先扩展本包，不绕过后端。
 //
 // # Key 规则
 //
@@ -26,7 +27,7 @@
 // # 错误模型
 //
 // 调用方用 errors.Is(err, ErrXxx) 判断类别：ErrInvalidKey、ErrInvalidArgument、
-// ErrUnsupported、ErrNotFound、ErrConflict、ErrPermission、ErrSizeMismatch、
+// ErrUnsupported、ErrNotFound、ErrConflict、ErrPermission、ErrThrottled、ErrSizeMismatch、
 // ErrTooLarge、ErrIntegrity、ErrIndeterminate。*Error 只附带 Op 与 Key，
 // 用 errors.As 获取。驱动保留原始原因，上下文取消或超时满足 errors.Is(err, ctx.Err())。
 //
@@ -37,10 +38,11 @@
 // 错误 → 调用方动作：ErrInvalidKey、ErrInvalidArgument、ErrUnsupported、ErrNotFound、
 // ErrPermission、ErrSizeMismatch、ErrTooLarge 与 ErrConflict 表示请求或其前置条件有误，
 // 原样重试无用；ErrIntegrity 与 io.ErrUnexpectedEOF（响应体提前结束）是传输故障，
-// 用同样的输入重新发起是安全的；ErrIndeterminate 结果未知，必须先核对再决定。
+// ErrThrottled 表示请求在处理前被限流拒绝；三者用同样的输入重新发起是安全的；
+// ErrIndeterminate 结果未知，必须先核对再决定。
 // Retryable 封装了这张表，供重试中间件使用。
 //
-// ObjectInfo.FETag 是不透明的相等性令牌，只用于判断"是不是同一版本"，
+// ObjectInfo.ETag 是不透明的相等性令牌，只用于判断"是不是同一版本"，
 // 不得当作内容 MD5（多片上传与 SSE-KMS 下它不是）。后端不提供时为空。
 //
 // 错误文本不得包含签名 URL、凭据或完整本地绝对路径。

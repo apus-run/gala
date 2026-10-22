@@ -19,7 +19,7 @@ type Capabilities struct {
 	Metadata    bool // 支持 WithMetadata，并通过 Stat 返回
 	IfNotExists bool // 支持 WithIfNotExists
 	ModTime     bool // Stat 返回非零的 ModTime
-	ETag        bool // Stat 返回非空的 FETag
+	ETag        bool // Stat 返回非空的 ETag
 }
 
 // StorageFactory 为每个子测试创建一个新的、空的后端。
@@ -77,7 +77,7 @@ func caseRoundTrip(t *testing.T, s fileserver.Storage, _ Capabilities) {
 
 	info, err := s.Stat(t.Context(), "a/b.txt")
 	requireNoErr(t, err, "Stat")
-	if info.FKey != "a/b.txt" || info.FSize != int64(len(data)) {
+	if info.Key != "a/b.txt" || info.Size != int64(len(data)) {
 		t.Fatalf("Stat = %+v, want key a/b.txt and size %d", info, len(data))
 	}
 	got, err := readAll(t, s, "a/b.txt")
@@ -96,8 +96,8 @@ func caseEmptyObject(t *testing.T, s fileserver.Storage, _ Capabilities) {
 	for _, key := range []string{"empty", "empty-declared"} {
 		info, err := s.Stat(t.Context(), key)
 		requireNoErr(t, err, "Stat "+key)
-		if info.FSize != 0 {
-			t.Fatalf("Stat(%q).Size = %d, want 0", key, info.FSize)
+		if info.Size != 0 {
+			t.Fatalf("Stat(%q).Size = %d, want 0", key, info.Size)
 		}
 		got, err := readAll(t, s, key)
 		requireNoErr(t, err, "Read "+key)
@@ -171,8 +171,8 @@ func caseContentTypeAndMetadata(t *testing.T, s fileserver.Storage, caps Capabil
 		mustPut(t, s, "ct", data, fileserver.WithContentType("text/plain; charset=utf-8"))
 		info, err := s.Stat(t.Context(), "ct")
 		requireNoErr(t, err, "Stat")
-		if info.FContentType != "text/plain; charset=utf-8" {
-			t.Fatalf("ContentType = %q, want text/plain; charset=utf-8", info.FContentType)
+		if info.ContentType != "text/plain; charset=utf-8" {
+			t.Fatalf("ContentType = %q, want text/plain; charset=utf-8", info.ContentType)
 		}
 	} else {
 		err := put(t, s, "ct", data, fileserver.WithContentType("text/plain"))
@@ -184,8 +184,8 @@ func caseContentTypeAndMetadata(t *testing.T, s fileserver.Storage, caps Capabil
 		mustPut(t, s, "md", data, fileserver.WithMetadata(map[string]string{"Color": "red"}))
 		info, err := s.Stat(t.Context(), "md")
 		requireNoErr(t, err, "Stat")
-		if len(info.FMetadata) != 1 || info.FMetadata["color"] != "red" {
-			t.Fatalf("Metadata = %v, want map[color:red]", info.FMetadata)
+		if len(info.Metadata) != 1 || info.Metadata["color"] != "red" {
+			t.Fatalf("Metadata = %v, want map[color:red]", info.Metadata)
 		}
 	} else {
 		err := put(t, s, "md", data, fileserver.WithMetadata(map[string]string{"color": "red"}))
@@ -414,26 +414,26 @@ func caseStatFields(t *testing.T, s fileserver.Storage, caps Capabilities) {
 	mustPut(t, s, "plain", []byte("12345"))
 	info, err := s.Stat(t.Context(), "plain")
 	requireNoErr(t, err, "Stat")
-	if info.FKey != "plain" || info.FSize != 5 {
+	if info.Key != "plain" || info.Size != 5 {
 		t.Fatalf("Stat = %+v, want key plain and size 5", info)
 	}
-	if !caps.ModTime && !info.FModTime.IsZero() {
+	if !caps.ModTime && !info.ModTime.IsZero() {
 		t.Logf("backend reports ModTime although Capabilities.ModTime is false")
 	}
-	if caps.ModTime && info.FModTime.IsZero() {
+	if caps.ModTime && info.ModTime.IsZero() {
 		t.Fatal("Stat.ModTime is zero, but the backend declares ModTime support")
 	}
-	if !caps.ContentType && info.FContentType != "" {
-		t.Fatalf("ContentType = %q for an object without content type", info.FContentType)
+	if !caps.ContentType && info.ContentType != "" {
+		t.Fatalf("ContentType = %q for an object without content type", info.ContentType)
 	}
-	if !caps.Metadata && info.FMetadata != nil {
-		t.Fatalf("Metadata = %v, want nil when unsupported", info.FMetadata)
+	if !caps.Metadata && info.Metadata != nil {
+		t.Fatalf("Metadata = %v, want nil when unsupported", info.Metadata)
 	}
-	if caps.ETag && info.FETag == "" {
+	if caps.ETag && info.ETag == "" {
 		t.Fatal("Stat.ETag is empty, but the backend declares ETag support")
 	}
-	if !caps.ETag && info.FETag != "" {
-		t.Fatalf("ETag = %q for a backend without ETag support", info.FETag)
+	if !caps.ETag && info.ETag != "" {
+		t.Fatalf("ETag = %q for a backend without ETag support", info.ETag)
 	}
 }
 

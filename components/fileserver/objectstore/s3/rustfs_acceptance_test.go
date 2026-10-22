@@ -185,7 +185,7 @@ func TestRustFSBackupRestore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.FContentType != e.ContentType || !reflect.DeepEqual(info.FMetadata, e.Metadata) {
+		if info.ContentType != e.ContentType || !reflect.DeepEqual(info.Metadata, e.Metadata) {
 			t.Fatal("metadata was not restored")
 		}
 	}

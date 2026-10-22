@@ -29,12 +29,12 @@ type Storage interface {
 	Remove(ctx context.Context, key string) error
 }
 
-// ObjectInfo 是对象的元信息。后端未提供的字段为对应的零值。后续操作使用 FKey。
+// ObjectInfo 是对象的元信息。后端未提供的字段为对应的零值。后续操作使用 Key。
 type ObjectInfo struct {
-	FKey         string            // 逻辑 Key（不含后端前缀）
-	FSize        int64             // 字节数
-	FModTime     time.Time         // 后端不提供时为零值
-	FContentType string            // 后端未持久化时为空
-	FMetadata    map[string]string // 后端未持久化时为 nil；键统一小写
-	FETag        string            // 不透明的相等性令牌：同一对象内容不变则不变。只用于相等性比较，不得当作内容 MD5
+	Key         string            // 逻辑 Key（不含后端前缀）
+	Size        int64             // 字节数
+	ModTime     time.Time         // 后端不提供时为零值
+	ContentType string            // 后端未持久化时为空
+	Metadata    map[string]string // 后端未持久化时为 nil；键统一小写
+	ETag        string            // 不透明的相等性令牌：同一对象内容不变则不变。只用于相等性比较，不得当作内容 MD5
 }

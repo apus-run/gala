@@ -53,6 +53,7 @@ func TestErrorAsRecoversOpAndKey(t *testing.T) {
 func TestRetryable(t *testing.T) {
 	retryable := []error{
 		ErrIntegrity,
+		ErrThrottled,
 		fmt.Errorf("Upload: %w: backend checksum mismatch", ErrIntegrity),
 		&Error{Op: "Read", Key: "k", Err: fmt.Errorf("%w: response ended with 3 bytes still expected", io.ErrUnexpectedEOF)},
 	}

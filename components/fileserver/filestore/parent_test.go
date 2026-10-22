@@ -126,7 +126,7 @@ func TestEnsureParentRejectsAFileAsParent(t *testing.T) {
 		t.Fatalf("Upload under a file = %v, want ErrConflict", err)
 	}
 	info, err := s.Stat(ctx, "file")
-	if err != nil || info.FSize != 1 {
+	if err != nil || info.Size != 1 {
 		t.Fatalf("the file was disturbed: %+v, %v", info, err)
 	}
 }

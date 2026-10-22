@@ -270,7 +270,7 @@ func TestDirectorySyncFailureIsIndeterminate(t *testing.T) {
 		t.Fatalf("Upload error = %v, want ErrIndeterminate wrapping the cause", err)
 	}
 	info, err := s.Stat(ctx, "obj")
-	if err != nil || info.FSize != int64(len("visible")) {
+	if err != nil || info.Size != int64(len("visible")) {
 		t.Fatalf("object should be visible after an indeterminate result: %v, %+v", err, info)
 	}
 }
@@ -485,7 +485,7 @@ func TestTemporaryAreaIsOutsideTheKeySpace(t *testing.T) {
 		t.Fatalf("upload to a key that shares the temp name: %v", err)
 	}
 	info, err := s.Stat(ctx, tempDirName+"/x")
-	if err != nil || info.FSize != 1 {
+	if err != nil || info.Size != 1 {
 		t.Fatalf("Stat(%q/x) = %+v, %v", tempDirName, info, err)
 	}
 }

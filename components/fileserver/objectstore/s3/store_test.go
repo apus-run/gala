@@ -376,7 +376,7 @@ func TestPrefixIsAppliedAndStripped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.FKey != "obj" || info.FSize != int64(len(body)) {
+	if info.Key != "obj" || info.Size != int64(len(body)) {
 		t.Fatalf("Stat = %+v", info)
 	}
 	seg := strings.Repeat("k", fileserver.MaxSegmentLength)

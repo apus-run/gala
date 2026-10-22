@@ -116,9 +116,9 @@ func (s *Store) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, e
 		return nil, opErr(op, key, notFound("not a regular file"))
 	}
 	return &fileserver.ObjectInfo{
-		FKey:     key,
-		FSize:    fi.Size(),
-		FModTime: fi.ModTime(),
+		Key:     key,
+		Size:    fi.Size(),
+		ModTime: fi.ModTime(),
 	}, nil
 }
 

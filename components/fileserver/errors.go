@@ -22,6 +22,8 @@ var (
 	ErrConflict = errors.New("fileserver: conflict")
 	// ErrPermission 表示后端拒绝访问。
 	ErrPermission = errors.New("fileserver: permission denied")
+	// ErrThrottled 表示后端限流或繁忙，请求在处理前被拒绝；稍后用同样的输入重试是安全的。
+	ErrThrottled = errors.New("fileserver: throttled")
 	// ErrSizeMismatch 表示声明长度与实际输入不符。
 	ErrSizeMismatch = errors.New("fileserver: size mismatch")
 	// ErrTooLarge 表示对象或分片超过上限。
@@ -57,12 +59,12 @@ func invalidArgument(msg string) error {
 }
 
 // Retryable 报告以同样的输入重新发起整个操作是否安全：
-// 传输被截断（io.ErrUnexpectedEOF）与 ErrIntegrity 返回 true；
+// 传输被截断（io.ErrUnexpectedEOF）、ErrIntegrity 与 ErrThrottled 返回 true；
 // ErrIndeterminate 与 ErrConflict 优先返回 false，即使错误链中还包含传输错误；
 // 未识别的错误也返回 false，由调用方自行判断。
 func Retryable(err error) bool {
 	if errors.Is(err, ErrIndeterminate) || errors.Is(err, ErrConflict) {
 		return false
 	}
-	return errors.Is(err, ErrIntegrity) || errors.Is(err, io.ErrUnexpectedEOF)
+	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrThrottled) || errors.Is(err, io.ErrUnexpectedEOF)
 }

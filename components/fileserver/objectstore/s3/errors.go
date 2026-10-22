@@ -50,6 +50,9 @@ func classify(err error) error {
 		return wrap(fileserver.ErrNotFound, err)
 	case code == "AccessDenied" || code == "Forbidden" || status == http.StatusForbidden:
 		return wrap(fileserver.ErrPermission, err)
+	case code == "SlowDown" || code == "ThrottlingException" || status == http.StatusTooManyRequests:
+		// 请求在处理前被限流拒绝，重试安全。写路径的 SlowDown 是 5xx，classifyWrite 仍按结果未知处理。
+		return wrap(fileserver.ErrThrottled, err)
 	case code == "PreconditionFailed" || code == "ConditionalRequestConflict" ||
 		status == http.StatusPreconditionFailed || status == http.StatusConflict:
 		return wrap(fileserver.ErrConflict, err)

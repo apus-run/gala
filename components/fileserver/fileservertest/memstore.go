@@ -147,11 +147,11 @@ func (m *MemStore) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo
 		return nil, opError(op, key, fileserver.ErrNotFound)
 	}
 	return &fileserver.ObjectInfo{
-		FKey:         key,
-		FSize:        int64(len(obj.data)),
-		FModTime:     obj.modTime,
-		FContentType: obj.contentType,
-		FMetadata:    maps.Clone(obj.metadata),
+		Key:         key,
+		Size:        int64(len(obj.data)),
+		ModTime:     obj.modTime,
+		ContentType: obj.contentType,
+		Metadata:    maps.Clone(obj.metadata),
 	}, nil
 }
 

@@ -23,6 +23,9 @@ func TestClassifyMapsServiceErrors(t *testing.T) {
 		{"not found status", &apiErr{code: "X", status: http.StatusNotFound, msg: "no"}, fileserver.ErrNotFound},
 		{"denied", &apiErr{code: "AccessDenied", status: http.StatusForbidden, msg: "no"}, fileserver.ErrPermission},
 		{"forbidden status", &apiErr{code: "X", status: http.StatusForbidden, msg: "no"}, fileserver.ErrPermission},
+		{"slow down", &apiErr{code: "SlowDown", status: http.StatusServiceUnavailable, msg: "no"}, fileserver.ErrThrottled},
+		{"throttling exception", &apiErr{code: "ThrottlingException", status: http.StatusTooManyRequests, msg: "no"}, fileserver.ErrThrottled},
+		{"429 status", &apiErr{code: "X", status: http.StatusTooManyRequests, msg: "no"}, fileserver.ErrThrottled},
 		{"precondition", &apiErr{code: "PreconditionFailed", status: http.StatusPreconditionFailed, msg: "no"}, fileserver.ErrConflict},
 		{"conflict status", &apiErr{code: "X", status: http.StatusConflict, msg: "no"}, fileserver.ErrConflict},
 		{"too large", &apiErr{code: "EntityTooLarge", status: http.StatusRequestEntityTooLarge, msg: "no"}, fileserver.ErrTooLarge},
@@ -45,10 +48,6 @@ func TestClassifyKeepsUnmappedErrors(t *testing.T) {
 	noBucket := &apiErr{code: "NoSuchBucket", status: http.StatusNotFound, msg: "no"}
 	if got := classify(noBucket); !errors.Is(got, noBucket) {
 		t.Fatalf("classify(NoSuchBucket) = %v, want the original error", got)
-	}
-	other := &apiErr{code: "SlowDown", status: http.StatusServiceUnavailable, msg: "no"}
-	if got := classify(other); !errors.Is(got, other) {
-		t.Fatalf("classify(SlowDown) = %v, want the original error", got)
 	}
 }
 
@@ -163,11 +162,11 @@ func TestMultipartUploadPersistsContentTypeAndMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.FContentType != "application/octet-stream" {
-		t.Fatalf("ContentType = %q, want application/octet-stream", info.FContentType)
+	if info.ContentType != "application/octet-stream" {
+		t.Fatalf("ContentType = %q, want application/octet-stream", info.ContentType)
 	}
-	if info.FMetadata["owner"] != "team" {
-		t.Fatalf("Metadata = %v, want owner=team", info.FMetadata)
+	if info.Metadata["owner"] != "team" {
+		t.Fatalf("Metadata = %v, want owner=team", info.Metadata)
 	}
 }
 
@@ -266,5 +265,22 @@ func TestWriteStatusZeroIsIndeterminate(t *testing.T) {
 	got := classifyWrite(cause)
 	if !errors.Is(got, fileserver.ErrIndeterminate) || !errors.Is(got, cause) {
 		t.Fatalf("classifyWrite(status=0) = %v, want indeterminate with cause", got)
+	}
+}
+
+// A 429 arrives as a real response: the write was rejected before processing,
+// so the outcome is known and retryable. A 5xx SlowDown on a write stays
+// indeterminate per classifyWrite's rule.
+func TestWriteThrottlingClassification(t *testing.T) {
+	rejected := &apiErr{code: "ThrottlingException", status: http.StatusTooManyRequests, msg: "slow down"}
+	got := classifyWrite(rejected)
+	if !errors.Is(got, fileserver.ErrThrottled) || !fileserver.Retryable(got) {
+		t.Fatalf("classifyWrite(429) = %v, want throttled and retryable", got)
+	}
+
+	busy := &apiErr{code: "SlowDown", status: http.StatusServiceUnavailable, msg: "busy"}
+	got = classifyWrite(busy)
+	if !errors.Is(got, fileserver.ErrIndeterminate) || fileserver.Retryable(got) {
+		t.Fatalf("classifyWrite(SlowDown) = %v, want indeterminate and not retryable", got)
 	}
 }

@@ -36,12 +36,12 @@ func (s *Store) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, e
 		return nil, opErr(op, key, errMissingLength)
 	}
 	return &fileserver.ObjectInfo{
-		FKey:         key,
-		FSize:        aws.ToInt64(out.ContentLength),
-		FModTime:     aws.ToTime(out.LastModified),
-		FContentType: aws.ToString(out.ContentType),
-		FMetadata:    normalizeMetadata(out.Metadata),
-		FETag:        aws.ToString(out.ETag),
+		Key:         key,
+		Size:        aws.ToInt64(out.ContentLength),
+		ModTime:     aws.ToTime(out.LastModified),
+		ContentType: aws.ToString(out.ContentType),
+		Metadata:    normalizeMetadata(out.Metadata),
+		ETag:        aws.ToString(out.ETag),
 	}, nil
 }
 
