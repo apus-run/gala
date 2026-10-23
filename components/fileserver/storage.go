@@ -29,6 +29,23 @@ type Storage interface {
 	Remove(ctx context.Context, key string) error
 }
 
+// Opener 是读取内容及其同版本属性的可选能力，不扩展 Storage 的必需方法。
+// 实现不得用未加版本保护的 Stat + Read 拼接结果。
+type Opener interface {
+	Open(ctx context.Context, key string, opts ...ReadOpt) (*OpenResult, error)
+}
+
+// OpenResult 的 Body 与 Info 来自同一对象版本。调用方必须关闭 Body；其生命周期与 Read 相同。
+// Info.Size 是完整对象的大小；Offset 和 Length 是本次流的起点与实际长度，范围超出末尾时截短。
+// 大小必须已知；无法提供时 Open 返回 ErrUnsupported，调用方仍可使用 Read。
+// 修改 Info（包括 Metadata）不会影响存储或其他读取结果。
+type OpenResult struct {
+	Body   io.ReadCloser
+	Info   ObjectInfo
+	Offset int64
+	Length int64
+}
+
 // ObjectInfo 是对象的元信息。后端未提供的字段为对应的零值。后续操作使用 Key。
 type ObjectInfo struct {
 	Key         string            // 逻辑 Key（不含后端前缀）

@@ -41,14 +41,14 @@ func (s *Store) download(ctx context.Context, op, key string, w io.WriterAt, do 
 	}
 	defer release()
 
-	f, size, err := s.openObject(key)
+	f, fi, err := s.openObject(key)
 	if err != nil {
 		return 0, opErr(op, key, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	off, length := do.Range()
-	start, n, err := iox.ResolveRange(size, off, length)
+	start, n, err := iox.ResolveRange(fi.Size(), off, length)
 	if err != nil {
 		return 0, opErr(op, key, err)
 	}
@@ -69,7 +69,21 @@ func (s *Store) download(ctx context.Context, op, key string, w io.WriterAt, do 
 // Read 实现 fileserver.Storage。返回的流绑定打开时的文件，调用方必须关闭它。
 // 流不依赖调用时的 Context，方法返回后它不会被取消。
 func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt) (io.ReadCloser, error) {
-	const op = "Read"
+	result, err := s.open(ctx, "Read", key, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
+var _ fileserver.Opener = (*Store)(nil)
+
+// Open 返回同一文件句柄上的内容与属性，后续覆盖或删除 Key 不改变已打开的视图。
+func (s *Store) Open(ctx context.Context, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
+	return s.open(ctx, "Open", key, opts...)
+}
+
+func (s *Store) open(ctx context.Context, op, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
 	if err := fileserver.ValidateKey(key); err != nil {
 		return nil, opErr(op, key, err)
 	}
@@ -83,17 +97,22 @@ func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt
 	}
 	defer release()
 
-	f, size, err := s.openObject(key)
+	f, fi, err := s.openObject(key)
 	if err != nil {
 		return nil, opErr(op, key, err)
 	}
 	off, length := ro.Range()
-	start, n, err := iox.ResolveRange(size, off, length)
+	start, n, err := iox.ResolveRange(fi.Size(), off, length)
 	if err != nil {
 		_ = f.Close()
 		return nil, opErr(op, key, err)
 	}
-	return &objectReader{SectionReader: io.NewSectionReader(f, start, n), file: f}, nil
+	return &fileserver.OpenResult{
+		Body:   &objectReader{SectionReader: io.NewSectionReader(f, start, n), file: f},
+		Info:   fileserver.ObjectInfo{Key: key, Size: fi.Size(), ModTime: fi.ModTime()},
+		Offset: start,
+		Length: n,
+	}, nil
 }
 
 // Stat 实现 fileserver.Storage。ContentType 为空，Metadata 为 nil：本后端不持久化这两项。
@@ -162,23 +181,23 @@ func (s *Store) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
-// openObject 打开 key 指向的普通文件并返回它的大小。非常规文件视为不存在。
+// openObject 打开 key 指向的普通文件并返回该句柄的属性。非常规文件视为不存在。
 // 使用非阻塞标志打开，避免 FIFO 在没有写者时阻塞调用方。
-func (s *Store) openObject(key string) (*os.File, int64, error) {
+func (s *Store) openObject(key string) (*os.File, os.FileInfo, error) {
 	f, err := s.root.OpenFile(keyPath(key), os.O_RDONLY|nonblockFlag, 0)
 	if err != nil {
-		return nil, 0, classify(err)
+		return nil, nil, classify(err)
 	}
 	fi, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return nil, 0, classify(err)
+		return nil, nil, classify(err)
 	}
 	if !fi.Mode().IsRegular() {
 		_ = f.Close()
-		return nil, 0, notFound("not a regular file")
+		return nil, nil, notFound("not a regular file")
 	}
-	return f, fi.Size(), nil
+	return f, fi, nil
 }
 
 // objectReader 把一个范围读取器与它的文件句柄绑定，Close 关闭文件。

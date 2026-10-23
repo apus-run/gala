@@ -7,12 +7,9 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -213,85 +210,6 @@ func (h *FileHandler) GetFileMeta(c *ginx.Context) (ginx.Result, error) {
 	return ok("", d)
 }
 
-// Download 下载文件（公开）：流式写回，支持 ETag 条件请求与单区间 Range。
-func (h *FileHandler) Download(c *ginx.Context) (ginx.Result, error) {
-	ctx := c.Request.Context()
-	hash := c.Context.Param("hash")
-	d, err := h.svc.StatByHash(ctx, hash)
-	if err != nil {
-		return fail(err)
-	}
-
-	contentType := d.ContentType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	// 内容寻址：哈希本身就是强校验器，任何后端都可用它做条件请求。
-	etag := `"` + d.FileHash + `"`
-	c.Header("ETag", etag)
-	if inm := c.GetHeader("If-None-Match"); inm == "*" || strings.Contains(inm, etag) {
-		c.Status(http.StatusNotModified)
-		return ginx.Result{}, ginx.ErrNoResponse
-	}
-	c.Header("Content-Type", contentType)
-	if c.Context.Query("inline") == "1" {
-		// 预览模式：浏览器内联展示而不是下载。
-		c.Header("Content-Disposition", "inline; filename=\""+asciiName(d.FileName)+"\"")
-	} else {
-		c.Header("Content-Disposition", contentDisposition(d.FileName))
-	}
-	c.Header("Accept-Ranges", "bytes")
-
-	start, length := int64(0), int64(-1)
-	ranged := false
-	// Range 只对 GET 生效。HEAD 必须忽略 Range，返回完整的 Content-Length，
-	// 否则会出现"200 + 区间长度"这种既不是完整响应也不是 206 的奇怪组合。
-	if c.Request.Method == http.MethodGet {
-		if rh := c.GetHeader("Range"); rh != "" {
-			// If-Range 不匹配时按 RFC 回退为完整响应；解析不了的（多区间、格式错误）同样回退。
-			if ir := c.GetHeader("If-Range"); ir == "" || ir == etag {
-				if st, ln, ok := parseRange(rh, d.FileSize); ok {
-					// 语法正确但不可满足的区间返回 416，而不是静默发完整对象。
-					if st >= d.FileSize {
-						c.Header("Content-Range", fmt.Sprintf("bytes */%d", d.FileSize))
-						c.Status(http.StatusRequestedRangeNotSatisfiable)
-						return ginx.Result{}, ginx.ErrNoResponse
-					}
-					start, length, ranged = st, ln, true
-				}
-			}
-		}
-	}
-	// 区间按契约截到末尾，与实际读取的字节数保持一致。
-	n := d.FileSize - start
-	if length >= 0 && length < n {
-		n = length
-	}
-	c.Header("Content-Length", strconv.FormatInt(n, 10))
-	if c.Request.Method == http.MethodHead {
-		c.Status(http.StatusOK)
-		return ginx.Result{}, ginx.ErrNoResponse
-	}
-
-	rc, err := h.svc.OpenByHash(ctx, hash, start, n)
-	if err != nil {
-		return fail(err)
-	}
-	defer rc.Close()
-
-	if ranged {
-		c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+n-1, d.FileSize))
-		c.Status(http.StatusPartialContent)
-	} else {
-		c.Status(http.StatusOK)
-	}
-	if _, err := io.Copy(c.Writer, rc); err != nil && !errors.Is(err, context.Canceled) {
-		// 响应头已写出，无法再改状态码；记录客户端中断与传输错误。
-		c.Error(err) //nolint:errcheck
-	}
-	return ginx.Result{}, ginx.ErrNoResponse
-}
-
 // ListFiles 获取当前用户的文件列表（需认证）。
 func (h *FileHandler) ListFiles(c *ginx.Context) (ginx.Result, error) {
 	uid, valid := mustUser(c)
@@ -440,73 +358,6 @@ type initChunkReq struct {
 
 type createFolderReq struct {
 	Path string `json:"path" binding:"required"`
-}
-
-// contentDisposition 生成 attachment 头：ASCII 回退名 + filename*（近似 RFC 5987 编码，
-// 展示用途；浏览器对未编码字符有容错）。
-func contentDisposition(name string) string {
-	return "attachment; " + dispositionTail(name)
-}
-
-// asciiName 返回可安全放进内联头的 ASCII 回退名。
-func asciiName(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
-			b.WriteByte('_')
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-func dispositionTail(name string) string {
-	var b strings.Builder
-	b.WriteString("filename=\"")
-	for _, r := range name {
-		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
-			b.WriteByte('_')
-			continue
-		}
-		b.WriteRune(r)
-	}
-	b.WriteString("\"; filename*=UTF-8''")
-	b.WriteString(url.PathEscape(name))
-	return b.String()
-}
-
-// parseRange 解析单区间 "bytes=a-b"：返回起点与长度（-1 表示到末尾）。
-// 支持开放区间 "bytes=a-" 与后缀区间 "bytes=-N"；多区间与格式错误返回 ok=false，
-// 调用方按 RFC 的允许回退为完整响应。
-func parseRange(h string, size int64) (start, length int64, ok bool) {
-	spec, found := strings.CutPrefix(h, "bytes=")
-	if !found || strings.Contains(spec, ",") {
-		return 0, 0, false
-	}
-	a, b, found := strings.Cut(spec, "-")
-	if !found {
-		return 0, 0, false
-	}
-	if a == "" { // 后缀区间：最后 N 字节
-		n, err := strconv.ParseInt(b, 10, 64)
-		if err != nil || n <= 0 {
-			return 0, 0, false
-		}
-		return max(size-n, 0), min(n, size), true
-	}
-	start, err := strconv.ParseInt(a, 10, 64)
-	if err != nil || start < 0 {
-		return 0, 0, false
-	}
-	if b == "" {
-		return start, -1, true
-	}
-	end, err := strconv.ParseInt(b, 10, 64)
-	if err != nil || end < start {
-		return 0, 0, false
-	}
-	return start, end - start + 1, true
 }
 
 // errBadRequest / errTooLarge 把 HTTP 层的参数问题转为 errorsx，复用统一响应形态。

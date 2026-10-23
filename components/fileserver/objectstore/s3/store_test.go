@@ -44,6 +44,12 @@ func TestStorageSuite(t *testing.T) {
 	})
 }
 
+func TestOpenSuite(t *testing.T) {
+	fileservertest.RunOpenSuite(t, func(t *testing.T) fileserver.Storage {
+		return newTestStore(t, newMemAPI(), Config{})
+	})
+}
+
 func TestNewRejectsBadConfig(t *testing.T) {
 	api := newMemAPI()
 	cases := []Config{

@@ -39,6 +39,13 @@ func ExampleApplyErr() {
 	// name 不能为空
 }
 
+func TestOptionErrAdapter(t *testing.T) {
+	u := &User{}
+	err := ApplyErr[User](u, WithName("Tom").Err(), WithAgeErr(18))
+	require.NoError(t, err)
+	assert.Equal(t, &User{name: "Tom", age: 18}, u)
+}
+
 func ExampleApply() {
 	u := &User{}
 	Apply[User](u, WithName("Tom"), WithAge(18))

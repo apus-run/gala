@@ -35,6 +35,10 @@ func TestStorageSuite(t *testing.T) {
 	}, localCaps)
 }
 
+func TestOpenSuite(t *testing.T) {
+	fileservertest.RunOpenSuite(t, func(t *testing.T) fileserver.Storage { return newStore(t) })
+}
+
 func TestSuiteWithoutSyncStillSatisfiesContract(t *testing.T) {
 	fileservertest.RunStorageSuite(t, func(t *testing.T) fileserver.Storage {
 		return newStore(t, WithDurability(SyncNone))

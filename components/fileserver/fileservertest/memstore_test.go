@@ -14,3 +14,7 @@ func TestMemStoreStorageSuite(t *testing.T) {
 		return NewMemStore()
 	}, allCaps)
 }
+
+func TestMemStoreOpenSuite(t *testing.T) {
+	RunOpenSuite(t, func(t *testing.T) fileserver.Storage { return NewMemStore() })
+}

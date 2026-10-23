@@ -25,6 +25,7 @@ type MemStore struct {
 }
 
 var _ fileserver.Storage = (*MemStore)(nil)
+var _ fileserver.Opener = (*MemStore)(nil)
 
 type memObject struct {
 	data        []byte // 写入后不再原地修改，读者可以安全地持有快照
@@ -114,7 +115,19 @@ func (memReader) Close() error { return nil }
 
 // Read 实现 Storage。返回的流绑定打开时的快照。
 func (m *MemStore) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt) (io.ReadCloser, error) {
-	const op = "Read"
+	result, err := m.open(ctx, "Read", key, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
+// Open 返回同一快照的内容与属性。
+func (m *MemStore) Open(ctx context.Context, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
+	return m.open(ctx, "Open", key, opts...)
+}
+
+func (m *MemStore) open(ctx context.Context, op, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
 	if err := validateEntry(ctx, key); err != nil {
 		return nil, opError(op, key, err)
 	}
@@ -122,16 +135,26 @@ func (m *MemStore) Read(ctx context.Context, key string, opts ...fileserver.Read
 	if err != nil {
 		return nil, opError(op, key, err)
 	}
-	data, err := m.snapshot(key)
-	if err != nil {
-		return nil, opError(op, key, err)
+	m.mu.Lock()
+	obj, ok := m.objects[key]
+	m.mu.Unlock()
+	if !ok {
+		return nil, opError(op, key, fileserver.ErrNotFound)
 	}
+	data := obj.data
 	off, length := ro.Range()
 	start, n, err := iox.ResolveRange(int64(len(data)), off, length)
 	if err != nil {
 		return nil, opError(op, key, err)
 	}
-	return memReader{io.NewSectionReader(bytes.NewReader(data), start, n)}, nil
+	return &fileserver.OpenResult{
+		Body: memReader{io.NewSectionReader(bytes.NewReader(data), start, n)},
+		Info: fileserver.ObjectInfo{
+			Key: key, Size: int64(len(data)), ModTime: obj.modTime,
+			ContentType: obj.contentType, Metadata: maps.Clone(obj.metadata),
+		},
+		Offset: start, Length: n,
+	}, nil
 }
 
 // Stat 实现 Storage。

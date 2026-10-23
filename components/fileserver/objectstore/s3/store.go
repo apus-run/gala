@@ -28,12 +28,20 @@ func (s *Store) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, e
 	if err := ctx.Err(); err != nil {
 		return nil, opErr(op, key, err)
 	}
+	info, err := s.objectInfo(ctx, objKey, key)
+	if err != nil {
+		return nil, opErr(op, key, err)
+	}
+	return info, nil
+}
+
+func (s *Store) objectInfo(ctx context.Context, objKey, key string) (*fileserver.ObjectInfo, error) {
 	out, err := s.api.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objKey)})
 	if err != nil {
-		return nil, opErr(op, key, classify(err))
+		return nil, classify(err)
 	}
 	if out.ContentLength == nil {
-		return nil, opErr(op, key, errMissingLength)
+		return nil, errMissingLength
 	}
 	return &fileserver.ObjectInfo{
 		Key:         key,
@@ -74,7 +82,30 @@ func (s *Store) Remove(ctx context.Context, key string) error {
 // 没有 ETag 的兼容服务无法做这个版本守卫，范围读取返回 ErrUnsupported；整对象读取不依赖 ETag。
 // S3 没有随机读能力；需要随机读时用 Download 加 WithRange。
 func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt) (io.ReadCloser, error) {
-	const op = "Read"
+	result, err := s.open(ctx, "Read", key, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
+var _ fileserver.Opener = (*Store)(nil)
+
+// Open 返回 GET 响应的内容与属性。范围读取通过 HEAD + If-Match 保证对象大小与 GET 同版本。
+// 缺少 ContentLength 的兼容后端无法提供准确大小，返回 ErrUnsupported；Read 仍支持这种后端。
+func (s *Store) Open(ctx context.Context, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
+	result, err := s.open(ctx, "Open", key, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if result.Info.Size < 0 {
+		return nil, opErr("Open", key, errors.Join(
+			fmt.Errorf("%w: Open requires an object size", fileserver.ErrUnsupported), result.Body.Close()))
+	}
+	return result, nil
+}
+
+func (s *Store) open(ctx context.Context, op, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
 	objKey, err := s.objectKey(key)
 	if err != nil {
 		return nil, opErr(op, key, err)
@@ -87,27 +118,31 @@ func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt
 		return nil, opErr(op, key, err)
 	}
 
-	size := int64(-1)
+	size, fullSize, base := int64(-1), int64(-1), int64(0)
 	in := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objKey)}
 	if off, length := ro.Range(); off != 0 || length != -1 {
-		fullSize, etag, err := s.head(ctx, objKey)
+		info, err := s.objectInfo(ctx, objKey, key)
 		if err != nil {
 			return nil, opErr(op, key, err)
 		}
-		var base int64
+		fullSize = info.Size
 		base, size, err = iox.ResolveRange(fullSize, off, length)
 		if err != nil {
 			return nil, opErr(op, key, err)
 		}
 		if size == 0 {
-			return io.NopCloser(bytes.NewReader(nil)), nil
+			return &fileserver.OpenResult{
+				Body: io.NopCloser(bytes.NewReader(nil)), Info: *info, Offset: base, Length: 0,
+			}, nil
 		}
-		if etag == "" {
+		if info.ETag == "" {
 			// 没有 ETag 就无法保证 HEAD 与 GET 看到的是同一个版本。
 			return nil, opErr(op, key, fmt.Errorf("%w: a ranged read requires an ETag for version consistency", fileserver.ErrUnsupported))
 		}
 		in.Range = aws.String(rangeHeader(base, size))
-		in.IfMatch = ifMatch(etag)
+		in.IfMatch = ifMatch(info.ETag)
+		// 保存完整大小；GET 的 ContentLength 仅表示返回区间的长度。
+		// 属性的其余部分从 GET 响应读取，避免返回 HEAD 阶段的旧元数据。
 	}
 	out, cancel, err := s.getDetached(ctx, in)
 	if err != nil {
@@ -120,7 +155,18 @@ func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt
 	if size < 0 && out.ContentLength != nil {
 		size = aws.ToInt64(out.ContentLength)
 	}
-	return &objectStream{ReadCloser: out.Body, cancel: cancel, key: key, left: size}, nil
+	if in.Range == nil {
+		fullSize = size
+	}
+	return &fileserver.OpenResult{
+		Body: &objectStream{ReadCloser: out.Body, cancel: cancel, op: op, key: key, left: size},
+		Info: fileserver.ObjectInfo{
+			Key: key, Size: fullSize, ContentType: aws.ToString(out.ContentType),
+			ModTime: aws.ToTime(out.LastModified), ETag: aws.ToString(out.ETag),
+			Metadata: normalizeMetadata(out.Metadata),
+		},
+		Offset: base, Length: size,
+	}, nil
 }
 
 // getDetached 发起 GET，并在它进行期间把调用方 Context 的取消桥接到请求上。GET 成功返回且
@@ -148,6 +194,7 @@ func (s *Store) getDetached(ctx context.Context, in *awss3.GetObjectInput) (*aws
 type objectStream struct {
 	io.ReadCloser
 	cancel context.CancelFunc
+	op     string
 	key    string
 	left   int64 // 剩余预期字节；-1 表示长度未知
 }
@@ -173,7 +220,7 @@ func (s *objectStream) Read(p []byte) (int, error) {
 	if err == nil || err == io.EOF {
 		return n, err
 	}
-	return n, &fileserver.Error{Op: "Read", Key: s.key, Err: err}
+	return n, &fileserver.Error{Op: s.op, Key: s.key, Err: err}
 }
 
 // Download 实现 fileserver.Downloader。对象第 i 个字节写到 w 的偏移 i 处。

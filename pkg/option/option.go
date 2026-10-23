@@ -16,6 +16,16 @@ func Apply[T any](t *T, opts ...Option[T]) {
 // 你应该优先使用 Option，除非你在设计 option 模式的时候需要进行一些校验
 type OptionErr[T any] func(t *T) error
 
+// Err 将 Option 适配为 OptionErr，用于混用两种 option 的列表：
+//
+//	ApplyErr[User](u, WithName("Tom").Err(), WithAgeErr(18))
+func (o Option[T]) Err() OptionErr[T] {
+	return func(t *T) error {
+		o(t)
+		return nil
+	}
+}
+
 // ApplyErr 形如 Apply，它将 opts 应用在 t 之上，
 // 如果 opts 中任何一个返回 error，那么它会中断并且返回 error
 func ApplyErr[T any](t *T, opts ...OptionErr[T]) error {

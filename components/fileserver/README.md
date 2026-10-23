@@ -125,6 +125,24 @@ if err != nil {
 
 不支持的语义选项返回 `ErrUnsupported`，不会静默忽略。空对象合法；未传 `WithSize` 表示长度未知，与 `WithSize(0)` 不同。
 
+### 读取内容与同版本属性
+
+`Storage` 保持原有接口；`filestore.Store`、`s3.Store` 与测试用 `MemStore` 另外实现可选的 `fileserver.Opener`：
+
+```go
+view, err := store.Open(ctx, "docs/report", fileserver.WithRange(100, 20))
+if err != nil {
+    return err
+}
+defer view.Body.Close()
+// view.Info.Size 是完整对象的大小；view.Offset / view.Length 是本次读取的实际范围。
+// view.Body 与 view.Info 对应同一对象版本，覆盖或删除 Key 不会改动已打开的流。
+```
+
+本地属性来自已打开的文件句柄；S3 整对象读取从一次 GET 取得内容与属性，不额外 HEAD；范围读取使用 HEAD 的完整大小和 If-Match，并从 GET 取得其余属性。空范围返回 HEAD 观察到的属性与空流。不能用无版本保护的 `Stat + Read` 代替此能力。
+
+`Open` 要求大小已知；兼容 S3 服务的 GET 缺少 ContentLength 时返回 `ErrUnsupported` 并关闭响应体，原有 `Read` 仍支持未知长度。`Open` 流的生命周期与 `Read` 相同，返回后由调用方 `Close`。第三方后端可用 `fileservertest.RunOpenSuite` 验证范围与版本语义。
+
 ### 下载与范围读取
 
 `Download` 使用**原对象偏移**：`WithRange(100, 20)` 把数据写到目标的 `[100, 120)`，不是从目标偏移 0 写入。若只想获得连续的范围内容，使用 `Read(ctx, key, fileserver.WithRange(100, 20))` 并读取返回流。
@@ -155,11 +173,26 @@ for _, result := range results {
 }
 ```
 
+常见来源可以直接构造任务，每次执行均打开独立的流，由 `UploadAll` 关闭：
+
+```go
+tasks := []fileserver.UploadTask{
+    fileserver.UploadTaskFromPath("docs/report", "report.txt"),
+    fileserver.UploadTaskFromBytes("docs/message", []byte("hello")),
+    fileserver.UploadTaskFromMultipart("docs/form-file", header), // *multipart.FileHeader
+}
+results := fileserver.UploadAll(ctx, store, tasks)
+```
+
+路径来源延迟打开，不预读文件或推断长度，需要精确检查时传 `WithSize`。字节来源复制输入，避免任务创建后修改原切片影响上传；字节与 multipart 来源默认声明准确长度。multipart 上传必须在表单临时文件被 `RemoveAll` 之前完成。来源可重新打开不代表操作可以自动重试，也不保证路径内容跨次不变；继续遵守 `Retryable` / `ErrIndeterminate` 约定。
+
 批量函数返回与输入同序、同长的 `[]Result`。默认并发度为 4，`WithConcurrency` 允许 1–64；默认单项失败不影响其它项，`WithFailFast()` 会取消其余任务，但不会回滚已经成功的对象。函数返回前等待所有工作协程退出。
 
 `UploadTask.Open` 在任务开始时才调用，返回的流由 `UploadAll` 关闭，关闭错误也会计入结果。`DownloadTask.W` 由调用方关闭；不同任务应使用独立目标，避免写入区域相互覆盖。
 
 进度可通过 `fileserver.ProgressFunc(func(ctx context.Context, p fileserver.ProgressInfo) { ... })` 注入。`p.Total == -1` 表示总量未知，`0` 表示空文件。回调应快速返回；同一次调用串行通知，但多个任务共用观察者时需自行同步。**字节进度达到总量不代表提交成功，最终结果以方法返回值为准。**
+
+HTTP 下载、预览、条件请求与 Range 处理属于应用协议层，见 [filehttp 示例](examples/filehttp)。核心包只提供存储能力。
 
 ## 契约要点
 
