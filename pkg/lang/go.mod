@@ -4,7 +4,6 @@ go 1.27
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
-	github.com/google/uuid v1.6.0
 	github.com/guregu/null v4.0.0+incompatible
 	github.com/json-iterator/go v1.1.12
 	github.com/mitchellh/go-wordwrap v1.0.1

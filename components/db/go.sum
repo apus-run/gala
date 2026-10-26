@@ -1,7 +1,7 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/apus-run/gala/pkg/lang v0.0.0-20251114123351-8359a2c70c91 h1:RwKmT9kzhwhZKx1ekaz6dfs1sRjeK2Yp5KHEP71O1j0=
-github.com/apus-run/gala/pkg/lang v0.0.0-20251114123351-8359a2c70c91/go.mod h1:+kApu9KRkfGX/5MjcwtYqWpFzlHmsG3VokmY1uTLmWs=
+github.com/apus-run/gala/pkg/lang v0.13.0 h1:WygPS9A7bjjTe+j98jG+gX1YVgICUsLSe+hv4p3s0JM=
+github.com/apus-run/gala/pkg/lang v0.13.0/go.mod h1:mF7QKC0LjctJomf94MpkNmakPyMLWb9PQiisrRxkRfE=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

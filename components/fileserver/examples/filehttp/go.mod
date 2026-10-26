@@ -5,11 +5,11 @@ go 1.27
 require (
 	github.com/a-h/templ v0.3.1070
 	github.com/apus-run/gala/components/conf v0.13.0
-	github.com/apus-run/gala/components/db v0.9.0
-	github.com/apus-run/gala/components/fileserver v0.0.0
-	github.com/apus-run/gala/components/fileserver/objectstore/s3 v0.0.0
-	github.com/apus-run/gala/components/ginx v0.9.0
-	github.com/apus-run/gala/pkg/errorsx v0.9.0
+	github.com/apus-run/gala/components/db v0.13.0
+	github.com/apus-run/gala/components/fileserver v0.13.0
+	github.com/apus-run/gala/components/fileserver/objectstore/s3 v0.13.0
+	github.com/apus-run/gala/components/ginx v0.13.0
+	github.com/apus-run/gala/pkg/errorsx v0.13.0
 	github.com/aws/aws-sdk-go-v2 v1.47.3
 	github.com/aws/aws-sdk-go-v2/config v1.31.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
@@ -21,7 +21,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
-	github.com/apus-run/gala/pkg/lang v0.8.1 // indirect
+	github.com/apus-run/gala/pkg/lang v0.13.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.10 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.6 // indirect
@@ -55,6 +55,10 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/guregu/null v4.0.0+incompatible // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/pgx/v5 v5.9.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -82,6 +86,7 @@ require (
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251020155222-88f65dc88635 // indirect
@@ -89,6 +94,7 @@ require (
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
+	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/plugin/dbresolver v1.6.2 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect

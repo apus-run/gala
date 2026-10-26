@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"time"
+	"uuid"
 
 	"github.com/guregu/null"
 	jsonIter "github.com/json-iterator/go"
@@ -303,6 +304,35 @@ func (o *O[T]) Scan(src any) error {
 		}
 		o.V, o.Valid = any(t.Time).(T), t.Valid
 		return nil
+	case uuid.UUID:
+		var u uuid.UUID
+		var text string
+		switch v := src.(type) {
+		case nil:
+			o.V, o.Valid = any(u).(T), false
+			return nil
+		case string:
+			text = v
+		case []byte:
+			if len(v) == len(u) {
+				u = uuid.UUID(v)
+				o.V, o.Valid = any(u).(T), true
+				return nil
+			}
+			text = string(v)
+		default:
+			return fmt.Errorf("cannot scan %T into uuid.UUID", src)
+		}
+		if text == "" {
+			o.V, o.Valid = any(u).(T), false
+			return nil
+		}
+		u, err := uuid.Parse(text)
+		if err != nil {
+			return fmt.Errorf("scan uuid.UUID: %w", err)
+		}
+		o.V, o.Valid = any(u).(T), true
+		return nil
 	default:
 		s, ok := any(&o.V).(sql.Scanner)
 		if !ok {
@@ -324,6 +354,8 @@ func (o O[T]) Value() (driver.Value, error) {
 	switch v := any(o.V).(type) {
 	case int:
 		return int64(v), nil
+	case uuid.UUID:
+		return v.String(), nil
 	case driver.Valuer:
 		return v.Value()
 	}

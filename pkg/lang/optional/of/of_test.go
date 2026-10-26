@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -202,7 +202,7 @@ func TestOf_MarshalJSON(t *testing.T) {
 		}
 	})
 	t.Run("uuid.UUID", func(t *testing.T) {
-		id := uuid.Must(uuid.New(), nil)
+		id := uuid.New()
 		o := of.From(id)
 		v, err := o.MarshalJSON()
 		if assert.NoError(t, err) {
@@ -270,7 +270,7 @@ func TestOf_UnmarshalText(t *testing.T) {
 	})
 	t.Run("uuid.UUID", func(t *testing.T) {
 		var o of.O[uuid.UUID]
-		err := o.Scan([]byte("b3b6173c-6dd4-45a6-bcb8-9b74acb037be"))
+		err := o.UnmarshalText([]byte("b3b6173c-6dd4-45a6-bcb8-9b74acb037be"))
 		if assert.NoError(t, err) {
 			assert.True(t, o.Valid)
 			assert.EqualValues(t, "b3b6173c-6dd4-45a6-bcb8-9b74acb037be", o.V.String())
@@ -375,7 +375,7 @@ func TestOf_MarshalText(t *testing.T) {
 		}
 	})
 	t.Run("uuid.UUID", func(t *testing.T) {
-		id := uuid.Must(uuid.New(), nil)
+		id := uuid.New()
 		o := of.From(id)
 		v, err := o.MarshalText()
 		if assert.NoError(t, err) {
@@ -430,7 +430,7 @@ func TestOf_Value(t *testing.T) {
 		}
 	})
 	t.Run("uuid.UUID", func(t *testing.T) {
-		id := uuid.Must(uuid.New(), nil)
+		id := uuid.New()
 		o := of.From(id)
 		v, err := o.Value()
 		if assert.NoError(t, err) {

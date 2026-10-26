@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/mail/smtp
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/mail v0.10.0
+	github.com/apus-run/gala/components/mail v0.13.0
 	github.com/wneessen/go-mail v0.8.1
 )
 

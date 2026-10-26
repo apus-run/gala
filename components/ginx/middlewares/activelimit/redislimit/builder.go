@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"uuid"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/atomic"
 )
@@ -117,7 +117,7 @@ func (a *RedisActiveLimit) Build() gin.HandlerFunc {
 		request := c.Request
 		ctx, cancel := context.WithTimeout(request.Context(), ttl)
 		defer cancel()
-		token := uuid.NewString()
+		token := uuid.New().String()
 		release := func() {
 			cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 			defer done()

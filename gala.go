@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"uuid"
 
-	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/apus-run/gala/registry"
@@ -27,9 +27,7 @@ type Service struct {
 func New(opts ...Option) *Service {
 	options := Apply(opts...)
 	if options.id == "" {
-		if id, err := uuid.NewUUID(); err == nil {
-			options.id = id.String()
-		}
+		options.id = uuid.NewV4().String()
 	}
 
 	ctx, cancel := context.WithCancel(options.context)

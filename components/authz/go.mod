@@ -4,11 +4,13 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/apus-run/gala/components/authz/adapter/gorm v0.0.0
-	github.com/apus-run/gala/components/authz/adapter/redis v0.0.0
+	github.com/apus-run/gala/components/authz/adapter/gorm v0.13.0
+	github.com/apus-run/gala/components/authz/adapter/redis v0.13.0
 	github.com/casbin/casbin/v3 v3.10.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/redis/go-redis/v9 v9.23.0
+	gorm.io/driver/mysql v1.6.0
+	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
 
@@ -46,8 +48,6 @@ require (
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
-	gorm.io/driver/mysql v1.6.0 // indirect
-	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.3 // indirect
 	gorm.io/plugin/dbresolver v1.6.2 // indirect
 	modernc.org/libc v1.67.4 // indirect
