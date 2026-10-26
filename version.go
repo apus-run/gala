@@ -9,7 +9,7 @@ import (
 // Name and Version info of this framework, used for statistics and debug
 const (
 	Name    = "Gala"
-	Version = "v0.13.0"
+	Version = "v0.14.0"
 )
 
 // Build metadata of the binary, overridden at build time:
