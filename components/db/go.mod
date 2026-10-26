@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/db
 go 1.27
 
 require (
-	github.com/apus-run/gala/pkg/lang v0.13.0
+	github.com/apus-run/gala/pkg/lang v0.14.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/jinzhu/copier v0.4.0
 	github.com/pkg/errors v0.9.1

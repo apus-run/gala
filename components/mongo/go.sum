@@ -1,5 +1,5 @@
-github.com/apus-run/gala/components/log v0.13.0 h1:7hDhN7wB6DPG7vQoc+0GH/l0W+iqiIWbc9oYIAqprxQ=
-github.com/apus-run/gala/components/log v0.13.0/go.mod h1:JCFOvCmZBc5OyrZ/948Av65Si0Qn+DWHQ3ntpcSaRNs=
+github.com/apus-run/gala/components/log v0.14.0 h1:q5l6ut5FLMyS3E0wdP2EGbCAiDKHu+IzavwJUjC39F4=
+github.com/apus-run/gala/components/log v0.14.0/go.mod h1:JCFOvCmZBc5OyrZ/948Av65Si0Qn+DWHQ3ntpcSaRNs=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

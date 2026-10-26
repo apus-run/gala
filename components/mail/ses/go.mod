@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/mail/ses
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/mail v0.13.0
+	github.com/apus-run/gala/components/mail v0.14.0
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.63.0
 	github.com/aws/smithy-go v1.27.3

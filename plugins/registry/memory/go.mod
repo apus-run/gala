@@ -4,4 +4,4 @@ go 1.27
 
 replace github.com/apus-run/gala => ../../..
 
-require github.com/apus-run/gala v0.13.0
+require github.com/apus-run/gala v0.14.0

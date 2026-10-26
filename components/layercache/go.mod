@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/apus-run/gala/components/ecache v0.13.0
+	github.com/apus-run/gala/components/ecache v0.14.0
 	github.com/bytedance/sonic v1.15.0
 	github.com/klauspost/compress v1.18.3
 	github.com/redis/go-redis/v9 v9.19.0

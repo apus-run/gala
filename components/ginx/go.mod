@@ -6,9 +6,9 @@ replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/apus-run/gala/components/ecache v0.13.0
-	github.com/apus-run/gala/pkg/errorsx v0.13.0
-	github.com/apus-run/gala/pkg/lang v0.13.0
+	github.com/apus-run/gala/components/ecache v0.14.0
+	github.com/apus-run/gala/pkg/errorsx v0.14.0
+	github.com/apus-run/gala/pkg/lang v0.14.0
 	github.com/gavv/httpexpect/v2 v2.17.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1

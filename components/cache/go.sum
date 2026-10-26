@@ -1,5 +1,5 @@
-github.com/apus-run/gala/pkg/lang v0.13.0 h1:WygPS9A7bjjTe+j98jG+gX1YVgICUsLSe+hv4p3s0JM=
-github.com/apus-run/gala/pkg/lang v0.13.0/go.mod h1:mF7QKC0LjctJomf94MpkNmakPyMLWb9PQiisrRxkRfE=
+github.com/apus-run/gala/pkg/lang v0.14.0 h1:GGthgz/B0OzRLrEmstMnW/ell7vzSEjDY7Xq098M18c=
+github.com/apus-run/gala/pkg/lang v0.14.0/go.mod h1:lQnG6KrWb855DtSxRyCToAaGOilnXLGA+BNkmi6BYbw=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=

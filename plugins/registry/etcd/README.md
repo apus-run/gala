@@ -59,3 +59,7 @@ go test -race -timeout 60s ./...
 
 命名调整：原 `NewRegistrar` 改为 `NewRegistry`，原组合入口移除。
 原先通过 Registry 调用的 `GetService`、`Subscribe` 改为使用独立的 Discovery。
+
+## Docker 示例
+
+见 [Docker 注册与发现示例](examples/docker/README.md)，包含 Compose 配置与可运行的 Go 程序。

@@ -1,7 +1,7 @@
 # Consul registry
 
 通过 Consul Agent HTTP API 实现 `registry.Registry` 和 `registry.Discovery`。
-仅使用标准库，随根模块构建，不增加 SDK 或独立模块依赖。
+独立 Go 模块，仅依赖 gala 与标准库，不增加 Consul SDK。
 
 ```go
 r, err := consul.NewRegistry(consul.WithAddress("127.0.0.1:8500"))
@@ -68,10 +68,15 @@ for event := range events {
   规则参见 [Consul blocking queries](https://developer.hashicorp.com/consul/api-docs/features/blocking)。
 
 ```sh
-go test -race ./plugins/registry/consul ./registry/...
+cd plugins/registry/consul
+go test -race ./...
 ```
 
 测试不要求运行 Consul；未覆盖真实集群、ACL 策略和 TLS 部署联调。
 
 命名调整：原注册端构造函数统一为 `NewRegistry`，不再提供组合包装类型。
 查询和订阅使用 `NewDiscovery` 返回的对象。
+
+## Docker 示例
+
+见 [Docker 注册与发现示例](examples/docker/README.md)，包含 Compose 配置与可运行的 Go 程序。

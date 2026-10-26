@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/circuitbreaker/examples/ginbreaker
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/circuitbreaker v0.13.0
+	github.com/apus-run/gala/components/circuitbreaker v0.14.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/sony/gobreaker/v2 v2.4.0
 )

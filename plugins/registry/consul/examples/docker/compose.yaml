@@ -1,0 +1,13 @@
+name: gala-consul-example
+services:
+  consul:
+    image: hashicorp/consul:1.22
+    command: ["agent", "-dev", "-ui", "-client=0.0.0.0"]
+    ports:
+      - "127.0.0.1:8500:8500"
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
