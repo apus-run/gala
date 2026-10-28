@@ -35,20 +35,33 @@ type (
 	// StringCmd is an alias of redis.StringCmd.
 	StringCmd = redis.StringCmd
 	// Script is an alias of redis.Script.
-	Script    = redis.Script
+	Script = redis.Script
+	// Pipeliner is an alias of redis.Pipeliner.
 	Pipeliner = redis.Pipeliner
 )
 
+// Provider hands out the redis client and owns its lifecycle.
 type Provider interface {
-	// DB 创建一个新的数据库会话
+	// DB returns the shared redis client. It does not open a new session,
+	// and ctx is currently unused.
 	DB(ctx context.Context) Cmdable
+	// Close releases the underlying client. Closing twice is not an error.
+	Close() error
 }
 
 type provider struct {
-	cli *Client
+	cli redis.UniversalClient
 }
 
 // DB implements Provider.
 func (p *provider) DB(_ context.Context) Cmdable {
 	return p.cli
+}
+
+// Close implements Provider.
+func (p *provider) Close() error {
+	if err := p.cli.Close(); err != nil && !IsClosedError(err) {
+		return err
+	}
+	return nil
 }

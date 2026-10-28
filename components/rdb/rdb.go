@@ -1,3 +1,5 @@
+// Package rdb is a thin wrapper around go-redis v9 that exposes the client
+// through a Provider. Test helpers live in the rdbtest subpackage.
 package rdb
 
 import (
@@ -8,71 +10,83 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func NewClient(opts *Options) (Provider, error) {
-	return NewRDBFromConfig(opts)
-}
+const connectTimeout = 3 * time.Second
 
-func NewRDB(url string) (Provider, error) {
+// NewFromURL creates a Provider from a redis URL, e.g. redis://:pass@host:6379/0.
+func NewFromURL(url string) (Provider, error) {
 	opts, err := redis.ParseURL(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse redis url: %w", err)
 	}
-	return NewRDBFromConfig(opts)
+	return New(opts)
 }
 
-func NewRDBFromConfig(opts *Options) (Provider, error) {
+// New creates a Provider from opts. It does not connect.
+func New(opts *Options) (Provider, error) {
 	if opts == nil {
 		return nil, ErrNilOptions
 	}
-	cli := redis.NewClient(opts)
+	return &provider{cli: redis.NewClient(opts)}, nil
+}
+
+// NewFromClient wraps an existing client. The Provider takes over its
+// lifecycle: Provider.Close closes cli.
+func NewFromClient(cli *Client) (Provider, error) {
+	if cli == nil {
+		return nil, ErrNilClient
+	}
 	return &provider{cli: cli}, nil
 }
 
-func NewRDBFromClient(cli *Client) Provider {
-	return &provider{cli: cli}
+// NewFromUniversalClient wraps a standalone, cluster or sentinel client.
+// The Provider takes over its lifecycle: Provider.Close closes cli.
+func NewFromUniversalClient(cli UniversalClient) (Provider, error) {
+	if cli == nil {
+		return nil, ErrNilClient
+	}
+	return &provider{cli: cli}, nil
 }
 
+// Unwrap returns the underlying *Client. It reports false when the Provider
+// is not backed by a standalone *Client (a mock, or a cluster client).
 func Unwrap(cli Provider) (*Client, bool) {
-	if p, ok := cli.(*provider); ok && p.cli != nil {
-		return p.cli, true
+	if p, ok := cli.(*provider); ok {
+		if c, ok := p.cli.(*Client); ok && c != nil {
+			return c, true
+		}
 	}
 	return nil, false
 }
 
+// Close closes rdb, ignoring a nil client and an already closed one.
 func Close(rdb *Client) error {
 	if rdb == nil {
 		return nil
 	}
 
-	err := rdb.Close()
-	if err != nil && !IsClosedError(err) {
+	if err := rdb.Close(); err != nil && !IsClosedError(err) {
 		return err
 	}
-
 	return nil
 }
 
-func ConnectRDB(opts *Options) (Provider, error) {
-	// 创建客户端
-	rdb, err := NewRDBFromConfig(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create redis client: %w", err)
+// Connect creates a Provider and verifies the connection with a PING.
+// The PING is bounded by ctx and, if ctx has no earlier deadline, by a
+// 3 second timeout.
+func Connect(ctx context.Context, opts *Options) (Provider, error) {
+	if opts == nil {
+		return nil, ErrNilOptions
 	}
+	cli := redis.NewClient(opts)
 
-	// 创建超时上下文
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
-	client, ok := Unwrap(rdb)
-	if !ok {
-		return nil, fmt.Errorf("failed to unwrap redis client")
-	}
-
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = Close(client)
+	if err := cli.Ping(ctx).Err(); err != nil {
+		_ = Close(cli)
 		return nil, fmt.Errorf("failed to ping redis: %w", err)
 	}
-	return rdb, nil
+	return &provider{cli: cli}, nil
 }
 
 // NewScript returns a new Script instance.

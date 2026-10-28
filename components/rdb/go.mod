@@ -4,7 +4,6 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/stretchr/testify v1.11.1
 )
@@ -22,5 +21,3 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/apus-run/gala/components/rdb => ../rdb
