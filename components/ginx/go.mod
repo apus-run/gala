@@ -6,6 +6,7 @@ replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/apus-run/gala/components/authn v0.14.0
 	github.com/apus-run/gala/components/ecache v0.14.0
 	github.com/apus-run/gala/pkg/errorsx v0.14.0
 	github.com/apus-run/gala/pkg/lang v0.14.0
@@ -28,6 +29,9 @@ require (
 	github.com/TylerBrock/colorjson v0.0.0-20200706003622-8a50f05110d2 // indirect
 	github.com/ajg/form v1.5.1 // indirect
 	github.com/andybalholm/brotli v1.0.4 // indirect
+	github.com/apus-run/gala/components/token v0.14.0 // indirect
+	github.com/apus-run/gala/pkg/jwtx v0.14.0 // indirect
+	github.com/apus-run/gala/pkg/option v0.14.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
@@ -100,3 +104,5 @@ require (
 )
 
 replace github.com/apus-run/gala/components/ginx => ../ginx
+
+replace github.com/apus-run/gala/components/authn => ../authn

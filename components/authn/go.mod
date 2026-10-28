@@ -28,5 +28,3 @@ replace github.com/apus-run/gala/pkg/jwtx => ../../pkg/jwtx
 
 // 本地开发用：components/token 与 pkg/jwtx 发新 tag 后删掉这两行，把 require 提到对应版本
 replace github.com/apus-run/gala/components/token => ../token
-
-replace github.com/apus-run/gala/components/authn => ../authn

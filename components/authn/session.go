@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -49,6 +50,9 @@ func NewSessionAuth(s store.SessionStorer, opts ...Option) (*SessionAuth, error)
 		return nil, ErrEmptySessionStore
 	}
 	o := Apply(opts...)
+	if o.claims != nil {
+		return nil, ErrSessionClaimsUnsupported
+	}
 	if o.accessTTL < time.Second || o.refreshTTL < o.accessTTL {
 		return nil, errors.New("session TTLs must satisfy 1s <= access <= refresh")
 	}
@@ -122,6 +126,11 @@ func (s *SessionAuth) Logout(ctx context.Context, raw string) error {
 }
 
 func (s *SessionAuth) parse(raw, use string) (*SessionClaims, error) {
+	// An empty token is a client credential error. Normalize it here so every
+	// ParseAccess failure remains recognizable as ErrTokenInvalid by StatusOf.
+	if strings.TrimSpace(raw) == "" {
+		return nil, ErrTokenInvalid
+	}
 	claims := &SessionClaims{}
 	if err := s.manager.ParseClaims(raw, claims, jwt.WithExpirationRequired()); err != nil {
 		return nil, err

@@ -40,6 +40,7 @@ func Apply(opts ...Option) *Options {
 // 工厂里填了 iss/aud 的话，还要用 token.WithIssuer/WithAudience 配同一个值：校验侧按
 // 配置查（token 的默认 issuer 是 gala/token），两边对不上会得到 ErrTokenInvalidIssuer。
 // token.WithExpiry 只作用于 token 自己的内置 claims，对工厂产出的 claims 不生效。
+// 该选项只用于旧 JwtAuth；NewSessionAuth 会返回 ErrSessionClaimsUnsupported。
 func WithClaims(f func() jwt.Claims) Option {
 	return func(o *Options) {
 		o.claims = f
