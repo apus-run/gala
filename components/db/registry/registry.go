@@ -1,18 +1,17 @@
 package registry
 
 import (
+	"slices"
 	"sync"
 
 	"gorm.io/gorm"
 )
 
-var (
-	globalRegistry *Registry
-	once           sync.Once
-)
+var globalRegistry = NewRegistry()
 
-// 定义一个Registry类型用于管理模型注册
+// 定义一个Registry类型用于管理模型注册，Register 与 Migrate 可并发调用。
 type Registry struct {
+	mu     sync.Mutex
 	models []any
 }
 
@@ -25,12 +24,18 @@ func NewRegistry() *Registry {
 
 // Register 添加新的模型到Registry
 func (r *Registry) Register(model any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.models = append(r.models, model)
 }
 
 // Migrate 执行所有注册模型的迁移
 func (r *Registry) Migrate(db *gorm.DB) error {
-	for _, model := range r.models {
+	r.mu.Lock()
+	models := slices.Clone(r.models)
+	r.mu.Unlock()
+
+	for _, model := range models {
 		if err := db.AutoMigrate(model); err != nil {
 			return err
 		}
@@ -39,16 +44,9 @@ func (r *Registry) Migrate(db *gorm.DB) error {
 }
 
 func Register(model any) {
-	once.Do(func() {
-		globalRegistry = NewRegistry()
-	})
 	globalRegistry.Register(model)
 }
 
 func Migrate(db *gorm.DB) error {
-	if globalRegistry == nil {
-		return nil
-	}
-
 	return globalRegistry.Migrate(db)
 }
