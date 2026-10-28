@@ -22,6 +22,7 @@ type Cache struct {
 	mux        sync.RWMutex
 	gcInterval time.Duration // 后台清理间隔
 	done       chan struct{} // 停止信号
+	closeOnce  sync.Once
 }
 
 // New 创建带过期机制的LRU缓存
@@ -43,17 +44,15 @@ func New(opts ...Option) *Cache {
 
 // Set 设置缓存（带过期时间）
 func (s *Cache) Set(ctx context.Context, key string, val any, exp time.Duration) error {
+	// 空 key 或 nil 值写不进去：报错而不是假装成功，否则调用方以为写入了。
 	if len(key) == 0 || val == nil {
-		return nil
+		return errs.ErrSetKeyFailed
 	}
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
-	var e int64
-	if exp > 0 {
-		e = timer.Timestamp() + int64(exp.Seconds())
-	}
+	e := timer.ExpireAt(exp)
 
 	item := &Item{
 		Val: val,
@@ -74,29 +73,17 @@ func (s *Cache) Get(ctx context.Context, key string) (any, error) {
 		return nil, errs.ErrKeyNotExist
 	}
 
+	// 过期项留给后台 gc 删除：在这里异步 Delete 会删掉期间重新写入的新值。
 	if item.Expired() {
-		go s.Delete(context.Background(), key) // 异步清理
 		return nil, errs.ErrItemExpired
 	}
 	return item.Value(), nil
 }
 
-// GetAny 获取封装后的值
+// GetAny 获取封装后的值，错误与 Get 一致。
+// 不在这里加锁：Get 自己会拿读锁，读锁重入在有写者排队时会死锁。
 func (s *Cache) GetAny(ctx context.Context, key string) (val cache.Value) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-
-	if len(key) == 0 {
-		val.Error = errs.ErrKeyNotExist
-	}
-
-	value, err := s.Get(ctx, key)
-	if err != nil {
-		val.Error = errs.ErrKeyNotExist
-	} else {
-		val.Value = value
-	}
-
+	val.Value, val.Error = s.Get(ctx, key)
 	return
 }
 
@@ -215,7 +202,7 @@ func (s *Cache) gc() {
 
 // Close 关闭缓存释放资源
 func (s *Cache) Close() {
-	close(s.done)
+	s.closeOnce.Do(func() { close(s.done) })
 	s.Flush(context.Background())
 }
 

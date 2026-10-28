@@ -35,7 +35,7 @@ func Test_Memory(t *testing.T) {
 	// Get non-existing key
 	result, err = store.Get(ctx, "empty")
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.Zero(t, result)
 
 	// Set key with value and ttl
 	err = store.Set(ctx, key, val, exp)
@@ -43,7 +43,7 @@ func Test_Memory(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	result, err = store.Get(ctx, key)
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.Zero(t, result)
 
 	// Set key with value and no expiration
 	err = store.Set(ctx, key, val, 0)
@@ -57,7 +57,7 @@ func Test_Memory(t *testing.T) {
 	require.NoError(t, err)
 	result, err = store.Get(ctx, key)
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.Zero(t, result)
 
 	// Reset all keys
 	err = store.Set(ctx, "john-reset", val, 0)
@@ -70,10 +70,10 @@ func Test_Memory(t *testing.T) {
 	// Check if all keys are deleted
 	result, err = store.Get(ctx, "john-reset")
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.Zero(t, result)
 	result, err = store.Get(ctx, "doe-reset")
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.Zero(t, result)
 }
 
 func Benchmark_Memory(b *testing.B) {

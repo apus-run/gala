@@ -26,9 +26,9 @@ func TestCache_SetWithEmptyKey(t *testing.T) {
 	value := "test-value"
 	expiration := time.Minute
 
-	// Test Set with an empty key
+	// Test Set with an empty key: rejected, not silently ignored
 	err := store.Set(ctx, "", value, expiration)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, errs.ErrSetKeyFailed)
 
 	// Ensure the key does not exist
 	result, err := store.Get(ctx, "")
@@ -44,9 +44,9 @@ func TestCache_SetWithNilValue(t *testing.T) {
 	key := "test-key"
 	expiration := time.Minute
 
-	// Test Set with a nil value
+	// Test Set with a nil value: rejected, not silently ignored
 	err := store.Set(ctx, key, nil, expiration)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, errs.ErrSetKeyFailed)
 
 	// Ensure the key does not exist
 	result, err := store.Get(ctx, key)

@@ -48,16 +48,22 @@ func WithGCInterval(d time.Duration) Option {
 	}
 }
 
+// WithSize 设置容量上限；size<1 时忽略。
 func WithSize(size int) Option {
 	return func(s *Options) {
+		if size < 1 {
+			return
+		}
 		s.Size = size
+		s.Data.Resize(size)
 	}
 }
 
 // Data initializes the cache with preconfigured items.
 func Data(items map[string]Item) Option {
 	return func(o *Options) {
-		cache, _ := lru.New[string, *Item](len(items))
+		// lru.New(0) 返回 nil cache 与错误：空 map 也至少给 1 的容量。
+		cache, _ := lru.New[string, *Item](max(len(items), 1))
 		for k, v := range items {
 			cache.Add(k, &v)
 		}

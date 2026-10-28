@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 type Cache[K comparable, V any] struct {
 	data       map[K]Item[V]
 	done       chan struct{}
+	closeOnce  sync.Once
 	gcInterval time.Duration
 	mux        sync.RWMutex
 }
@@ -38,12 +40,14 @@ func (s *Cache[K, V]) Get(ctx context.Context, key K) (V, error) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
+	var zero V
 	item, ok := s.data[key]
 	if !ok {
-		return item.Value(), errs.ErrKeyNotExist
+		return zero, errs.ErrKeyNotExist
 	}
+	// 过期时返回零值，不把已过期的旧值交给调用方。
 	if item.Expired() {
-		return item.Value(), errs.ErrItemExpired
+		return zero, errs.ErrItemExpired
 	}
 
 	return item.Value(), nil
@@ -53,24 +57,20 @@ func (s *Cache[K, V]) GetAny(ctx context.Context, key K) (val cache.Value) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
-	var ok bool
-	val.Value, ok = s.data[key]
-	if !ok {
+	item, ok := s.data[key]
+	switch {
+	case !ok:
 		val.Error = errs.ErrKeyNotExist
-	}
-	if val.Value.(*Item[V]).Expired() {
+	case item.Expired():
 		val.Error = errs.ErrItemExpired
+	default:
+		val.Value = item.Value()
 	}
-
 	return
 }
 
 func (s *Cache[K, V]) Set(ctx context.Context, key K, val V, exp time.Duration) error {
-	var e int64
-
-	if exp > 0 {
-		e = timer.Timestamp() + int64(exp.Seconds())
-	}
+	e := timer.ExpireAt(exp)
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
@@ -154,31 +154,23 @@ func (s *Cache[K, V]) Contains(ctx context.Context, key K) bool {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
+	// 只拿读锁，不能在这里 delete（会与并发读写冲突）；过期项交给 gc 清理。
 	v, ok := s.data[key]
-	if ok {
-		if v.Expired() {
-			delete(s.data, key)
-
-			return false
-		}
-	}
-
-	return ok
+	return ok && !v.Expired()
 }
 
-// Close the memory cache.
+// Close stops the garbage collector. It is safe to call more than once.
 func (s *Cache[K, V]) Close() error {
-	s.done <- struct{}{}
-
+	s.closeOnce.Do(func() { close(s.done) })
 	return nil
 }
 
-// Conn return database client.
+// Conn 返回数据的一份快照。返回内部 map 会让调用方绕过锁读写，构成数据竞争。
 func (s *Cache[K, V]) Conn() map[K]Item[V] {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
-	return s.data
+	return maps.Clone(s.data)
 }
 
 func (s *Cache[K, V]) String() string {

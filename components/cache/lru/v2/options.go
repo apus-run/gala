@@ -45,20 +45,22 @@ func WithGCInterval[K comparable, V any](d time.Duration) Option[K, V] {
 }
 
 // WithSize 泛型版本
+// size<1 时忽略。
 func WithSize[K comparable, V any](size int) Option[K, V] {
 	return func(s *Options[K, V]) {
-		s.Size = size
-		if s.Data == nil {
-			cache, _ := lru.New[K, *Item[V]](size)
-			s.Data = cache
+		if size < 1 {
+			return
 		}
+		s.Size = size
+		s.Data.Resize(size)
 	}
 }
 
 // Data 泛型数据初始化
 func Data[K comparable, V any](items map[K]Item[V]) Option[K, V] {
 	return func(o *Options[K, V]) {
-		cache, _ := lru.New[K, *Item[V]](len(items))
+		// lru.New(0) 返回 nil cache 与错误：空 map 也至少给 1 的容量。
+		cache, _ := lru.New[K, *Item[V]](max(len(items), 1))
 		for k, v := range items {
 			cache.Add(k, &v)
 		}

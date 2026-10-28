@@ -17,6 +17,17 @@ func Timestamp() int64 {
 	return timestamp.Load()
 }
 
+// ExpireAt 返回 exp 之后的过期时间戳（秒）；exp<=0 返回 0，表示永不过期。
+//
+// 时间戳是秒级的，所以向上取整：向下取整会让 500ms 的 TTL 写入即过期、
+// 1.5s 只活 1s。向上取整保证至少活满 exp。
+func ExpireAt(exp time.Duration) int64 {
+	if exp <= 0 {
+		return 0
+	}
+	return Timestamp() + int64((exp+time.Second-1)/time.Second)
+}
+
 // StartTimeStampUpdater starts a concurrent function which stores the timestamp to an atomic value per second,
 // which is much better for performance than determining it at runtime each time
 func StartTimeStampUpdater() {

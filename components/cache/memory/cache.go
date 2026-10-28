@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ var (
 type Cache struct {
 	data       map[string]Item
 	done       chan struct{}
+	closeOnce  sync.Once
 	gcInterval time.Duration
 	mux        sync.RWMutex
 }
@@ -56,36 +58,19 @@ func (s *Cache) Get(ctx context.Context, key string) (any, error) {
 	return item.Value(), nil
 }
 
+// GetAny 与 Get 语义一致：Value 是存入的值本身，不是内部的 Item。
 func (s *Cache) GetAny(ctx context.Context, key string) (val cache.Value) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-
-	if len(key) == 0 {
-		val.Error = errs.ErrKeyNotExist
-	}
-
-	var ok bool
-	val.Value, ok = s.data[key]
-	if !ok {
-		val.Error = errs.ErrKeyNotExist
-	}
-	if val.Value.(Item).Expired() {
-		val.Error = errs.ErrItemExpired
-	}
-
+	val.Value, val.Error = s.Get(ctx, key)
 	return
 }
 
 func (s *Cache) Set(ctx context.Context, key string, val any, exp time.Duration) error {
+	// 空 key 或 nil 值写不进去：报错而不是假装成功，否则调用方以为写入了。
 	if len(key) == 0 || val == nil {
-		return nil
+		return errs.ErrSetKeyFailed
 	}
 
-	var e int64
-
-	if exp > 0 {
-		e = timer.Timestamp() + int64(exp.Seconds())
-	}
+	e := timer.ExpireAt(exp)
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
@@ -170,31 +155,23 @@ func (s *Cache) Contains(ctx context.Context, key string) bool {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
+	// 只拿读锁，不能在这里 delete（会与并发读写冲突）；过期项交给 gc 清理。
 	v, ok := s.data[key]
-	if ok {
-		if v.Expired() {
-			delete(s.data, key)
-
-			return false
-		}
-	}
-
-	return ok
+	return ok && !v.Expired()
 }
 
-// Close the memory cache.
+// Close stops the garbage collector. It is safe to call more than once.
 func (s *Cache) Close() error {
-	s.done <- struct{}{}
-
+	s.closeOnce.Do(func() { close(s.done) })
 	return nil
 }
 
-// Conn return database client.
+// Conn 返回数据的一份快照。返回内部 map 会让调用方绕过锁读写，构成数据竞争。
 func (s *Cache) Conn() map[string]Item {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
-	return s.data
+	return maps.Clone(s.data)
 }
 
 func (s *Cache) String() string {

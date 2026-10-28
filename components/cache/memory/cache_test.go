@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apus-run/gala/components/cache"
+	"github.com/apus-run/gala/components/cache/internal/errs"
 	"github.com/apus-run/gala/components/cache/memory"
 )
 
@@ -37,6 +38,7 @@ func TestCache(t *testing.T) {
 		}
 	})
 
+	// 时间戳是秒级的，TTL 向上取整到秒：过期断言要等过一个完整的秒。
 	t.Run("CacheGetExpired", func(t *testing.T) {
 		c := memory.New()
 		e := 20 * time.Millisecond
@@ -45,13 +47,14 @@ func TestCache(t *testing.T) {
 			t.Error(err)
 		}
 
-		<-time.After(25 * time.Millisecond)
+		<-time.After(2100 * time.Millisecond)
 		r, err := c.Get(ctx, key)
 
-		t.Logf("值为: %v", r)
-		require.Error(t, err)
+		require.ErrorIs(t, err, errs.ErrItemExpired)
+		require.Nil(t, r)
 	})
 
+	// 亚秒级 TTL 在到期前必须仍然可读（向下取整时它写入即过期）。
 	t.Run("CacheGetValid", func(t *testing.T) {
 		c := memory.New()
 		e := 25 * time.Millisecond
@@ -63,8 +66,8 @@ func TestCache(t *testing.T) {
 		<-time.After(20 * time.Millisecond)
 		r, err := c.Get(ctx, key)
 
-		t.Logf("值为: %v", r)
-		require.Error(t, err)
+		require.NoError(t, err)
+		require.Equal(t, val, r)
 	})
 
 	t.Run("CacheDeleteMiss", func(t *testing.T) {

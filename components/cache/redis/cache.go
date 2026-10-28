@@ -53,11 +53,24 @@ func (s *Cache) Deletes(ctx context.Context, keys ...string) (int64, error) {
 	return s.client.Del(ctx, keys...).Result()
 }
 
+// Flush 清空当前 redis 库（FLUSHDB ASYNC），包括不是经由本 Cache 写入的 key。
+// 与其他业务共用一个库时不要调用。
 func (s *Cache) Flush(ctx context.Context) error {
 	return s.client.FlushDBAsync(ctx).Err()
 }
+
+// Keys 用 SCAN 遍历：KEYS * 是 O(N) 的单条命令，执行期间阻塞整个 redis。
+// 结果可能包含遍历期间新增的 key，也可能漏掉被删除的 key（SCAN 的语义）。
 func (s *Cache) Keys(ctx context.Context) []string {
-	return s.client.Keys(ctx, "*").Val()
+	var keys []string
+	iter := s.client.Scan(ctx, 0, "*", 1000).Iterator()
+	for iter.Next(ctx) {
+		keys = append(keys, iter.Val())
+	}
+	if iter.Err() != nil {
+		return nil
+	}
+	return keys
 }
 
 func (s *Cache) Contains(ctx context.Context, key string) bool {
