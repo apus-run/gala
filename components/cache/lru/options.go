@@ -42,9 +42,13 @@ func Apply(opts ...Option) *Options {
 	return options
 }
 
+// WithGCInterval 设置后台清理间隔；d<=0 时保持默认值（time.NewTicker 对非正间隔会 panic，
+// 而且发生在后台协程里，调用方无法 recover）。
 func WithGCInterval(d time.Duration) Option {
 	return func(s *Options) {
-		s.GCInterval = d
+		if d > 0 {
+			s.GCInterval = d
+		}
 	}
 }
 

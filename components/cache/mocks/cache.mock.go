@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 	time "time"
 
+	cache "github.com/apus-run/gala/components/cache"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -69,6 +70,26 @@ func (mr *MockCacheMockRecorder) Delete(ctx, key any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockCache)(nil).Delete), ctx, key)
 }
 
+// Deletes mocks base method.
+func (m *MockCache) Deletes(ctx context.Context, keys ...string) (int64, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx}
+	for _, a := range keys {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "Deletes", varargs...)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Deletes indicates an expected call of Deletes.
+func (mr *MockCacheMockRecorder) Deletes(ctx any, keys ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx}, keys...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deletes", reflect.TypeOf((*MockCache)(nil).Deletes), varargs...)
+}
+
 // Flush mocks base method.
 func (m *MockCache) Flush(ctx context.Context) error {
 	m.ctrl.T.Helper()
@@ -96,6 +117,20 @@ func (m *MockCache) Get(ctx context.Context, key string) (any, error) {
 func (mr *MockCacheMockRecorder) Get(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockCache)(nil).Get), ctx, key)
+}
+
+// GetAny mocks base method.
+func (m *MockCache) GetAny(ctx context.Context, key string) cache.Value {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAny", ctx, key)
+	ret0, _ := ret[0].(cache.Value)
+	return ret0
+}
+
+// GetAny indicates an expected call of GetAny.
+func (mr *MockCacheMockRecorder) GetAny(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAny", reflect.TypeOf((*MockCache)(nil).GetAny), ctx, key)
 }
 
 // Keys mocks base method.

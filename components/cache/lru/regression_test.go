@@ -133,3 +133,17 @@ func TestSubSecondTTL(t *testing.T) {
 		t.Fatalf("Get right after Set(500ms) = %v", err)
 	}
 }
+
+// time.NewTicker 对非正间隔会 panic，而且发生在后台 gc 协程里：整个进程退出，
+// 调用方无法 recover。非正间隔必须回落到默认值。
+func TestNonPositiveGCIntervalIsIgnored(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		c := lru.New(lru.WithGCInterval(d))
+		_ = c.Set(rctx, "k", 1, 0)
+		time.Sleep(50 * time.Millisecond) // 给 gc 协程机会 panic
+		if !c.Contains(rctx, "k") {
+			t.Fatalf("WithGCInterval(%v) broke the cache", d)
+		}
+		c.Close()
+	}
+}

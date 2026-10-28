@@ -38,9 +38,13 @@ func Apply[K comparable, V any](opts ...Option[K, V]) *Options[K, V] {
 }
 
 // WithGCInterval 泛型版本
+// WithGCInterval 设置后台清理间隔；d<=0 时保持默认值（time.NewTicker 对非正间隔会 panic，
+// 而且发生在后台协程里，调用方无法 recover）。
 func WithGCInterval[K comparable, V any](d time.Duration) Option[K, V] {
 	return func(s *Options[K, V]) {
-		s.GCInterval = d
+		if d > 0 {
+			s.GCInterval = d
+		}
 	}
 }
 

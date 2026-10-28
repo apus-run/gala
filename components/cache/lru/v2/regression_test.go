@@ -102,3 +102,15 @@ func TestSetRejectsZeroKey(t *testing.T) {
 		t.Fatalf("Set(\"\") = %v, want ErrSetKeyFailed", err)
 	}
 }
+
+func TestNonPositiveGCIntervalIsIgnored(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		c := lru.New[string, int](lru.WithGCInterval[string, int](d))
+		_ = c.Set(rctx, "k", 1, 0)
+		time.Sleep(50 * time.Millisecond)
+		if !c.Contains(rctx, "k") {
+			t.Fatalf("WithGCInterval(%v) broke the cache", d)
+		}
+		c.Close()
+	}
+}

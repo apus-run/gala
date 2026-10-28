@@ -21,7 +21,7 @@ type Cache[K comparable, V any] struct {
 	closeOnce  sync.Once
 }
 
-// 创建带过期机制的LRU缓存（泛型）
+// 创建带过期机制的LRU缓存（泛型）并启动后台 gc 协程；不再使用时必须 Close，否则协程一直存活。
 func New[K comparable, V any](opts ...Option[K, V]) *Cache[K, V] {
 	options := Apply(opts...)
 

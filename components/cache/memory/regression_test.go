@@ -122,3 +122,15 @@ func TestSetRejectsEmptyKeyAndNil(t *testing.T) {
 		t.Fatal("rejected Set must not store anything")
 	}
 }
+
+func TestNonPositiveGCIntervalIsIgnored(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		c := memory.New(memory.WithGCInterval(d))
+		_ = c.Set(rctx, "k", 1, 0)
+		time.Sleep(50 * time.Millisecond)
+		if !c.Contains(rctx, "k") {
+			t.Fatalf("WithGCInterval(%v) broke the cache", d)
+		}
+		_ = c.Close()
+	}
+}
