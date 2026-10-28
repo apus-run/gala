@@ -24,7 +24,7 @@ func newRedisCaptcha(t *testing.T) *Captcha {
 	if err := cli.Ping(context.Background()).Err(); err != nil {
 		t.Fatal(err)
 	}
-	return NewDigit(rc.New(cli), WithTTL(time.Minute))
+	return New(Digit, rc.New(cli), WithTTL(time.Minute))
 }
 
 // 多实例（各自的 redis 连接池）共用一个 redis：同一个验证码并发校验只能成功一次。

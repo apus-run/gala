@@ -9,7 +9,6 @@ import (
 	"context"
 	"image/color"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mojocn/base64Captcha"
@@ -17,49 +16,127 @@ import (
 	"github.com/apus-run/gala/components/cache"
 )
 
-// keyPrefix 把验证码限定在自己的命名空间：Verify 的 id 由调用方传入，
-// 在共享的 cache 里不加前缀就能指向并删掉任意 key。
-const keyPrefix = "captcha:"
+// keyPrefix 把验证题限定在自己的命名空间：Verify 的 id 由调用方传入，
+// 不加前缀就能指向并删掉共享 cache 里的任意 key。
+const keyPrefix = "captcha:q:"
 
 // DefaultTTL 是验证码默认的有效期。
 const DefaultTTL = 10 * time.Minute
+
+// Kind 是验证码的类型。
+type Kind int
+
+const (
+	// Digit 数字验证码：默认 4 位、240×80，无字体依赖。
+	Digit Kind = iota
+	// String 小写字母数字验证码（去掉了易混的 0/1/i/l/o）：默认 4 位、140×46。
+	// 字体在构造时解析（约 11MB 分配）：在启动时创建实例并复用，不要在请求路径上构造。
+	String
+	// Math 算式验证码（如 "3+5=?"，答案是 8）：默认 140×46，构造时同样解析字体。
+	// WithLength 对它无效，算式长度固定。
+	// 答案空间很小：每题都答 "0" 约 6.8%（≈1/15）能过，只挡脚本不挡针对性爆破；
+	// 登录等要防暴力的场景用 Digit 或 String（4 位 Digit 盲猜是 1/10000）。
+	Math
+)
+
+// Config 是 Captcha 的配置。
+type Config struct {
+	// TTL 是答案的有效期，默认 DefaultTTL。
+	TTL time.Duration
+	// Length 是验证码字符数，默认 4；对 Math 无效。
+	Length int
+	// Width、Height 是图片像素宽高，默认值按类型：Digit 240×80，String/Math 140×46。
+	Width, Height int
+}
+
+// Option 配置 Config。
+type Option func(*Config)
+
+// DefaultOptions 返回默认配置；宽高留 0，由 New 按类型补默认值。
+func DefaultOptions() *Config {
+	return &Config{TTL: DefaultTTL, Length: 4}
+}
+
+// Apply 从默认配置出发依次应用 opts。
+func Apply(opts ...Option) *Config {
+	cfg := DefaultOptions()
+	for _, o := range opts {
+		o(cfg)
+	}
+	return cfg
+}
+
+// WithTTL 设置答案有效期；d<=0 时忽略（0 在 memory 与 redis 上都表示永不过期）。
+func WithTTL(d time.Duration) Option {
+	return func(c *Config) {
+		if d > 0 {
+			c.TTL = d
+		}
+	}
+}
+
+// WithLength 设置验证码字符数；n<1 时忽略，Math 类型忽略（算式长度固定）。
+func WithLength(n int) Option {
+	return func(c *Config) {
+		if n >= 1 {
+			c.Length = n
+		}
+	}
+}
+
+// WithSize 设置图片像素宽高；w 或 h <=0 时忽略（用类型的默认宽高）。
+// 字符数加长时记得同步加宽，否则字符挤在一起（宽度不随字符数自动调整）。
+func WithSize(width, height int) Option {
+	return func(c *Config) {
+		if width > 0 && height > 0 {
+			c.Width, c.Height = width, height
+		}
+	}
+}
 
 // Captcha 生成并校验一种验证码。零个或多个实例可以共用同一个 cache，
 // 方法可以并发调用。
 type Captcha struct {
 	cache  cache.Cache
+	cfg    Config
 	driver base64Captcha.Driver
-	ttl    time.Duration
 }
 
-// Option 配置 Captcha。
-type Option func(*Captcha)
-
-// WithTTL 设置验证码有效期；d<=0 时使用 DefaultTTL（0 在 memory 与 redis 上都表示永不过期）。
-func WithTTL(d time.Duration) Option {
-	return func(c *Captcha) {
-		if d > 0 {
-			c.ttl = d
+// New 按类型创建验证码，c 注入 cache.Cache（memory 或 redis），多实例可共用。
+func New(kind Kind, c cache.Cache, opts ...Option) *Captcha {
+	cfg := Apply(opts...)
+	// WithSize 忽略非法值，宽为 0 即未设置，补类型默认宽高。
+	if cfg.Width == 0 {
+		switch kind {
+		case String, Math:
+			cfg.Width, cfg.Height = 140, 46
+		default:
+			cfg.Width, cfg.Height = 240, 80
 		}
 	}
+	return &Captcha{cache: c, cfg: *cfg, driver: newCaptchaDriver(kind, cfg)}
 }
 
-// NewDigit 返回 4 位数字验证码。
-func NewDigit(c cache.Cache, opts ...Option) *Captcha {
-	return newCaptcha(c, digitDriver(), opts)
-}
-
-// NewString 返回 4 位字母数字验证码（小写，去掉了易混的 0/1/i/l/o）。
-func NewString(c cache.Cache, opts ...Option) *Captcha {
-	return newCaptcha(c, stringDriver(), opts)
-}
-
-func newCaptcha(c cache.Cache, d base64Captcha.Driver, opts []Option) *Captcha {
-	cp := &Captcha{cache: c, driver: d, ttl: DefaultTTL}
-	for _, opt := range opts {
-		opt(cp)
+func newCaptchaDriver(kind Kind, cfg *Config) base64Captcha.Driver {
+	switch kind {
+	case String:
+		return base64Captcha.NewDriverString(
+			cfg.Height, cfg.Width, 2, 2, cfg.Length,
+			"234567890abcdefghjkmnpqrstuvwxyz",
+			&color.RGBA{240, 240, 246, 246},
+			nil,
+			[]string{"wqy-microhei.ttc"},
+		)
+	case Math:
+		return base64Captcha.NewDriverMath(
+			cfg.Height, cfg.Width, 2, 2,
+			&color.RGBA{240, 240, 246, 246},
+			nil,
+			[]string{"wqy-microhei.ttc"},
+		)
+	default:
+		return base64Captcha.NewDriverDigit(cfg.Height, cfg.Width, cfg.Length, 0.7, 80)
 	}
-	return cp
 }
 
 // Generate 出一道题，返回 id 与 base64 编码的 PNG。答案只留在服务端，不出现在返回值里。
@@ -74,7 +151,7 @@ func (c *Captcha) generate(ctx context.Context) (id, b64s, answer string, err er
 	if err != nil {
 		return "", "", "", err
 	}
-	if err := c.cache.Set(ctx, keyPrefix+id, answer, c.ttl); err != nil {
+	if err := c.cache.Set(ctx, keyPrefix+id, answer, c.cfg.TTL); err != nil {
 		return "", "", "", err
 	}
 	return id, item.EncodeB64string(), answer, nil
@@ -87,7 +164,7 @@ func (c *Captcha) generate(ctx context.Context) (id, b64s, answer string, err er
 // 调用方应当按服务故障处理，而不是提示用户验证码错误。
 func (c *Captcha) Verify(ctx context.Context, id, code string) (bool, error) {
 	if id == "" {
-		return false, nil // 没有题可作废；也避免去碰 "captcha:" 这个 key
+		return false, nil // 没有题可作废；也避免去碰 "captcha:q:" 这个 key
 	}
 	code = strings.TrimSpace(code)
 	key := keyPrefix + id
@@ -106,25 +183,3 @@ func (c *Captcha) Verify(ctx context.Context, id, code string) (bool, error) {
 	answer, _ := v.(string)
 	return code != "" && strings.EqualFold(answer, code), nil
 }
-
-// The drivers are built once and shared.
-//
-// ConvertFonts reads the font files on every call, and the string driver was
-// calling it per captcha: eleven megabytes allocated to render one image that
-// is a couple of kilobytes. A converted driver is read-only afterwards - it
-// holds the parsed fonts and the drawing parameters - so one instance serves
-// every Captcha.
-var (
-	stringDriver = sync.OnceValue(func() base64Captcha.Driver {
-		return base64Captcha.NewDriverString(
-			46, 140, 2, 2, 4,
-			"234567890abcdefghjkmnpqrstuvwxyz",
-			&color.RGBA{240, 240, 246, 246},
-			nil,
-			[]string{"wqy-microhei.ttc"},
-		).ConvertFonts()
-	})
-	digitDriver = sync.OnceValue(func() base64Captcha.Driver {
-		return base64Captcha.NewDriverDigit(80, 240, 4, 0.7, 80)
-	})
-)

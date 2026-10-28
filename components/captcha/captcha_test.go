@@ -1,9 +1,11 @@
 package captcha
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"image/png"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,14 +16,15 @@ import (
 
 	"github.com/apus-run/gala/components/cache"
 	"github.com/apus-run/gala/components/cache/memory"
+	"github.com/apus-run/gala/pkg/lang/value"
 )
 
 var ctx = context.Background()
 
-// both 对数字与字符串两种验证码各跑一遍 fn。
+// both 对数字、字符串、算式三种验证码各跑一遍 fn。
 func both(t *testing.T, c cache.Cache, fn func(t *testing.T, cp *Captcha)) {
 	t.Helper()
-	for name, cp := range map[string]*Captcha{"digit": NewDigit(c), "string": NewString(c)} {
+	for name, cp := range map[string]*Captcha{"digit": New(Digit, c), "string": New(String, c), "math": New(Math, c)} {
 		t.Run(name, func(t *testing.T) { fn(t, cp) })
 	}
 }
@@ -49,7 +52,7 @@ func TestGenerateAndVerify(t *testing.T) {
 
 // Generate 不把答案交给调用方。
 func TestGenerateDoesNotReturnAnswer(t *testing.T) {
-	cp := NewDigit(memory.New())
+	cp := New(Digit, memory.New())
 	id, b64s, err := cp.Generate(ctx)
 	if err != nil || id == "" || b64s == "" {
 		t.Fatalf("Generate = %q, %d bytes, %v", id, len(b64s), err)
@@ -81,7 +84,7 @@ func TestVerifyIsOneShot(t *testing.T) {
 // 空答案同样让题作废，不给反复试探的机会。
 func TestVerifyEmptyAnswer(t *testing.T) {
 	c := memory.New()
-	cp := NewDigit(c)
+	cp := New(Digit, c)
 	_ = c.Set(ctx, keyPrefix+"blank", "", time.Minute)
 
 	for _, code := range []string{"", "   "} {
@@ -106,7 +109,7 @@ func TestVerifyEmptyAnswer(t *testing.T) {
 func TestVerifyEmptyID(t *testing.T) {
 	c := memory.New()
 	_ = c.Set(ctx, keyPrefix, "1234", time.Minute)
-	if ok, err := NewDigit(c).Verify(ctx, "", "1234"); ok || err != nil {
+	if ok, err := New(Digit, c).Verify(ctx, "", "1234"); ok || err != nil {
 		t.Fatalf("Verify(\"\", 1234) = %v, %v, want false, nil", ok, err)
 	}
 	if !c.Contains(ctx, keyPrefix) {
@@ -116,7 +119,7 @@ func TestVerifyEmptyID(t *testing.T) {
 
 // 去掉首尾空白，不区分大小写（字符串验证码的答案是小写）。
 func TestVerifyIgnoresCaseAndSpace(t *testing.T) {
-	cp := NewString(memory.New())
+	cp := New(String, memory.New())
 	for _, variant := range []func(string) string{
 		strings.ToUpper,
 		func(s string) string { return " " + s + "\t" },
@@ -130,7 +133,7 @@ func TestVerifyIgnoresCaseAndSpace(t *testing.T) {
 
 // 并发提交同一个验证码只有一次成功。
 func TestConcurrentVerifyOnlyOnce(t *testing.T) {
-	cp := NewDigit(memory.New())
+	cp := New(Digit, memory.New())
 	for range 50 {
 		id, _, answer, _ := cp.generate(ctx)
 		if n := verifyConcurrently(32, func(int) bool {
@@ -144,7 +147,7 @@ func TestConcurrentVerifyOnlyOnce(t *testing.T) {
 
 // 过期后校验失败，且不是后端错误。
 func TestVerifyExpired(t *testing.T) {
-	cp := NewDigit(memory.New(), WithTTL(time.Second))
+	cp := New(Digit, memory.New(), WithTTL(time.Second))
 	id, _, answer, _ := cp.generate(ctx)
 	time.Sleep(2100 * time.Millisecond) // memory 的时间戳精度是秒
 	if ok, err := cp.Verify(ctx, id, answer); ok || err != nil {
@@ -158,7 +161,7 @@ func TestKeyNamespace(t *testing.T) {
 	if err := c.Set(ctx, "session:42", "secret", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	cp := NewDigit(c)
+	cp := New(Digit, c)
 	if ok, _ := cp.Verify(ctx, "session:42", "secret"); ok {
 		t.Fatal("Verify must not read arbitrary cache keys")
 	}
@@ -183,17 +186,56 @@ func TestWithTTL(t *testing.T) {
 		{[]Option{WithTTL(-time.Second)}, DefaultTTL},
 		{[]Option{WithTTL(time.Minute)}, time.Minute},
 	} {
-		if got := NewDigit(c, tc.opt...).ttl; got != tc.want {
+		if got := New(Digit, c, tc.opt...).cfg.TTL; got != tc.want {
 			t.Errorf("ttl = %v, want %v", got, tc.want)
 		}
+	}
+}
+
+// 字符数与宽高按实例生效；字体仍只解析一次（stringBase 共享，不在本测试断言）。
+func TestWithLengthAndSize(t *testing.T) {
+	for name, mk := range map[string]func(cache.Cache) *Captcha{
+		"digit":  func(c cache.Cache) *Captcha { return New(Digit, c, WithLength(6), WithSize(200, 70)) },
+		"string": func(c cache.Cache) *Captcha { return New(String, c, WithLength(6), WithSize(200, 70)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cp := mk(memory.New())
+			id, b64s, answer, err := cp.generate(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(answer) != 6 {
+				t.Fatalf("answer %q has length %d, want 6", answer, len(answer))
+			}
+			raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(b64s, "data:image/png;base64,"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := png.DecodeConfig(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Width != 200 || cfg.Height != 70 {
+				t.Fatalf("image = %d×%d, want 200×70", cfg.Width, cfg.Height)
+			}
+			if ok, err := cp.Verify(ctx, id, answer); !ok || err != nil {
+				t.Fatalf("Verify = %v, %v", ok, err)
+			}
+		})
+	}
+
+	// 非法参数回退默认（数字：4 位、240×80）。
+	cp := New(Digit, memory.New(), WithLength(0), WithSize(-1, 0))
+	if cp.cfg.Length != 4 || cp.cfg.Width != 240 || cp.cfg.Height != 80 {
+		t.Fatalf("invalid opts applied: length=%d size=%d×%d", cp.cfg.Length, cp.cfg.Width, cp.cfg.Height)
 	}
 }
 
 // 实例互不影响：同一个 cache 上的两个 Captcha 各自工作，没有全局状态。
 func TestInstancesAreIndependent(t *testing.T) {
 	c := memory.New()
-	digit, str := NewDigit(c, WithTTL(time.Minute)), NewString(c, WithTTL(time.Hour))
-	if digit.ttl == str.ttl {
+	digit, str := New(Digit, c, WithTTL(time.Minute)), New(String, c, WithTTL(time.Hour))
+	if digit.cfg.TTL == str.cfg.TTL {
 		t.Fatal("options leaked between instances")
 	}
 	id, _, answer, _ := digit.generate(ctx)
@@ -205,7 +247,7 @@ func TestInstancesAreIndependent(t *testing.T) {
 		t.Fatal("captcha must be spent across instances")
 	}
 
-	other := NewDigit(memory.New())
+	other := New(Digit, memory.New())
 	id, _, answer, _ = digit.generate(ctx)
 	if ok, _ := other.Verify(ctx, id, answer); ok {
 		t.Fatal("an instance on a different cache must not see the captcha")
@@ -236,6 +278,13 @@ func (f *faultyCache) Get(ctx context.Context, k string) (any, error) {
 	return f.Cache.Get(ctx, k)
 }
 
+func (f *faultyCache) GetAny(ctx context.Context, k string) cache.Value {
+	if f.failGet {
+		return cache.Value{AnyValue: value.AnyValue{Error: errBackend}}
+	}
+	return f.Cache.GetAny(ctx, k)
+}
+
 func (f *faultyCache) Deletes(ctx context.Context, keys ...string) (int64, error) {
 	if f.failDeletes {
 		return 0, errBackend
@@ -245,14 +294,14 @@ func (f *faultyCache) Deletes(ctx context.Context, keys ...string) (int64, error
 
 func TestBackendErrors(t *testing.T) {
 	t.Run("Generate", func(t *testing.T) {
-		cp := NewDigit(&faultyCache{Cache: memory.New(), failSet: true})
+		cp := New(Digit, &faultyCache{Cache: memory.New(), failSet: true})
 		if id, b64s, err := cp.Generate(ctx); !errors.Is(err, errBackend) || id != "" || b64s != "" {
 			t.Fatalf("Generate = %q, %d bytes, %v, want empty + errBackend", id, len(b64s), err)
 		}
 	})
 	t.Run("Verify Deletes fails", func(t *testing.T) {
 		fc := &faultyCache{Cache: memory.New()}
-		cp := NewDigit(fc)
+		cp := New(Digit, fc)
 		id, _, answer, _ := cp.generate(ctx)
 		fc.failDeletes = true
 		if ok, err := cp.Verify(ctx, id, answer); ok || !errors.Is(err, errBackend) {
@@ -262,7 +311,7 @@ func TestBackendErrors(t *testing.T) {
 	t.Run("Verify Get fails", func(t *testing.T) {
 		// Get 失败但删除成功：这道题已作废，不能放行，也不应误报为后端错误以外的成功。
 		fc := &faultyCache{Cache: memory.New()}
-		cp := NewDigit(fc)
+		cp := New(Digit, fc)
 		id, _, answer, _ := cp.generate(ctx)
 		fc.failGet = true
 		if ok, _ := cp.Verify(ctx, id, answer); ok {
@@ -282,7 +331,8 @@ func (failingDriver) DrawCaptcha(string) (base64Captcha.Item, error) { return ni
 
 func TestGenerateDrawError(t *testing.T) {
 	c := memory.New()
-	cp := newCaptcha(c, failingDriver{digitDriver()}, nil)
+	cp := New(Digit, c)
+	cp.driver = failingDriver{cp.driver}
 	if id, b64s, err := cp.Generate(ctx); !errors.Is(err, errBackend) || id != "" || b64s != "" {
 		t.Fatalf("Generate = %q, %d bytes, %v, want empty + errBackend", id, len(b64s), err)
 	}
@@ -309,7 +359,7 @@ func (c ctxCheckingCache) Deletes(ctx context.Context, keys ...string) (int64, e
 }
 
 func TestContextIsPropagated(t *testing.T) {
-	cp := NewDigit(ctxCheckingCache{memory.New()})
+	cp := New(Digit, ctxCheckingCache{memory.New()})
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 
@@ -330,7 +380,7 @@ func TestConcurrentGenerate(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for _, cp := range []*Captcha{NewDigit(c), NewString(c)} {
+			for _, cp := range []*Captcha{New(Digit, c), New(String, c)} {
 				id, _, answer, err := cp.generate(ctx)
 				if err != nil {
 					t.Error(err)
@@ -366,7 +416,7 @@ func verifyConcurrently(n int, verify func(i int) bool) int32 {
 }
 
 func BenchmarkGenerateString(b *testing.B) {
-	cp := NewString(memory.New())
+	cp := New(String, memory.New())
 	b.ReportAllocs()
 	for b.Loop() {
 		if _, _, err := cp.Generate(ctx); err != nil {
