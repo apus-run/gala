@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"gorm.io/gorm"
+
 	"github.com/apus-run/gala/components/db/page"
 )
 
@@ -58,7 +60,7 @@ type Repository[T any] interface {
 	Decrement(ctx context.Context, id any, field string, value int) error
 
 	// Transaction support
-	WithTransaction(tx any) Repository[T]
+	WithTransaction(tx *gorm.DB) Repository[T]
 }
 
 // Query represents a chainable query builder
@@ -74,7 +76,6 @@ type Query[T any] interface {
 
 	// Relationships
 	With(relation string) Query[T]
-	WithCount(relation string) Query[T]
 
 	// Ordering and limiting
 	OrderBy(field string, direction string) Query[T]

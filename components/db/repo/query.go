@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -54,13 +55,17 @@ func (q *GormQuery[T]) WhereBetween(field string, start, end any) Query[T] {
 
 // WhereNull adds a WHERE IS NULL condition using clause.IsNull
 func (q *GormQuery[T]) WhereNull(field string) Query[T] {
-	q.db = q.db.Where(clause.Expr{SQL: field + " IS NULL"})
+	q.db = q.db.Clauses(clause.Where{Exprs: []clause.Expression{
+		clause.Eq{Column: field, Value: nil}, // 生成 IS NULL，列名由 gorm 加引号
+	}})
 	return q
 }
 
 // WhereNotNull adds a WHERE IS NOT NULL condition using clause.Not and clause.IsNull
 func (q *GormQuery[T]) WhereNotNull(field string) Query[T] {
-	q.db = q.db.Where(clause.Expr{SQL: field + " IS NOT NULL"})
+	q.db = q.db.Clauses(clause.Where{Exprs: []clause.Expression{
+		clause.Neq{Column: field, Value: nil}, // 生成 IS NOT NULL
+	}})
 	return q
 }
 
@@ -78,37 +83,21 @@ func (q *GormQuery[T]) With(relation string) Query[T] {
 	return q
 }
 
-// WithCount preloads a relationship count
-func (q *GormQuery[T]) WithCount(relation string) Query[T] {
-	// GORM doesn't have a direct WithCount, so we'll use a custom approach
-	// This would need to be implemented based on your specific needs
-	q.db = q.db.Preload(relation)
-	return q
-}
-
-// OrderBy adds ordering.
-//
-// field is interpolated into the SQL, so it must be a compile-time constant.
-// Ordering that comes from a request must go through where.Sortable instead.
+// OrderBy adds ordering. direction 为 "DESC"（不区分大小写）时倒序，其余一律正序；
+// 列名由 gorm 加引号。请求带来的排序字段仍应走 where.Sortable 白名单。
 func (q *GormQuery[T]) OrderBy(field string, direction string) Query[T] {
-	q.db = q.db.Order(fmt.Sprintf("%s %s", field, direction))
+	q.db = q.db.Order(clause.OrderByColumn{Column: clause.Column{Name: field}, Desc: strings.EqualFold(direction, "DESC")})
 	return q
 }
 
-// OrderByDesc adds descending order.
-//
-// field must be a compile-time constant, see OrderBy.
+// OrderByDesc adds descending order, see OrderBy.
 func (q *GormQuery[T]) OrderByDesc(field string) Query[T] {
-	q.db = q.db.Order(fmt.Sprintf("%s DESC", field))
-	return q
+	return q.OrderBy(field, "DESC")
 }
 
-// OrderByAsc adds ascending order.
-//
-// field must be a compile-time constant, see OrderBy.
+// OrderByAsc adds ascending order, see OrderBy.
 func (q *GormQuery[T]) OrderByAsc(field string) Query[T] {
-	q.db = q.db.Order(fmt.Sprintf("%s ASC", field))
-	return q
+	return q.OrderBy(field, "ASC")
 }
 
 // Limit adds a limit
@@ -123,22 +112,24 @@ func (q *GormQuery[T]) Offset(offset int) Query[T] {
 	return q
 }
 
-// GroupBy adds grouping
+// GroupBy adds grouping. 不传字段时是空操作。
+// 不用 db.Group(string)：字段含空格或符号时 gorm 会把它当原始 SQL。
 func (q *GormQuery[T]) GroupBy(fields ...string) Query[T] {
-	q.db = q.db.Group(fmt.Sprintf("%s", fields[0]))
-	for _, field := range fields[1:] {
-		q.db = q.db.Group(field)
+	for _, field := range fields {
+		q.db = q.db.Clauses(clause.GroupBy{Columns: []clause.Column{{Name: field}}})
 	}
 	return q
 }
 
-// Having adds a HAVING clause
+// Having adds a HAVING clause。condition 是原始 SQL 片段，只能是编译期常量，
+// 值通过 value 占位符传入。
 func (q *GormQuery[T]) Having(condition string, value any) Query[T] {
 	q.db = q.db.Having(condition, value)
 	return q
 }
 
-// Select specifies fields to select
+// Select specifies fields to select。fields 是原始 SQL 片段（可以写 COUNT(*) AS n），
+// 只能是编译期常量。
 func (q *GormQuery[T]) Select(fields ...string) Query[T] {
 	q.db = q.db.Select(fields)
 	return q
@@ -185,11 +176,11 @@ func (q *GormQuery[T]) FirstOrFail(ctx context.Context) (*T, error) {
 	return result, nil
 }
 
-// Exists checks if records exist
+// Exists checks if records exist。只取一行，不数全部匹配行。
 func (q *GormQuery[T]) Exists(ctx context.Context) (bool, error) {
-	var count int64
-	err := q.db.WithContext(ctx).Model(&q.model).Count(&count).Error
-	return count > 0, err
+	var one int
+	res := q.db.WithContext(ctx).Model(&q.model).Select("1").Limit(1).Scan(&one)
+	return res.RowsAffected > 0, res.Error
 }
 
 // DoesNotExist checks if no records exist
@@ -208,7 +199,9 @@ func (q *GormQuery[T]) Count(ctx context.Context) (int64, error) {
 // Pluck extracts values from a column
 func (q *GormQuery[T]) Pluck(ctx context.Context, field string) ([]any, error) {
 	var results []any
-	err := q.db.WithContext(ctx).Model(&q.model).Pluck(field, &results).Error
+	// 显式 Select 列：只传字符串时，字段含空格或符号会被 gorm 当原始 SQL。
+	sel := clause.Select{Distinct: q.db.Statement.Distinct, Columns: []clause.Column{{Name: field}}}
+	err := q.db.WithContext(ctx).Model(&q.model).Clauses(sel).Pluck(field, &results).Error
 	return results, err
 }
 
