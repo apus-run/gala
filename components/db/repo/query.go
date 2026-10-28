@@ -7,6 +7,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/apus-run/gala/components/db/page"
 )
 
 // GormQuery implements the Query interface for GORM
@@ -84,19 +86,26 @@ func (q *GormQuery[T]) WithCount(relation string) Query[T] {
 	return q
 }
 
-// OrderBy adds ordering
+// OrderBy adds ordering.
+//
+// field is interpolated into the SQL, so it must be a compile-time constant.
+// Ordering that comes from a request must go through where.Sortable instead.
 func (q *GormQuery[T]) OrderBy(field string, direction string) Query[T] {
 	q.db = q.db.Order(fmt.Sprintf("%s %s", field, direction))
 	return q
 }
 
-// OrderByDesc adds descending order
+// OrderByDesc adds descending order.
+//
+// field must be a compile-time constant, see OrderBy.
 func (q *GormQuery[T]) OrderByDesc(field string) Query[T] {
 	q.db = q.db.Order(fmt.Sprintf("%s DESC", field))
 	return q
 }
 
-// OrderByAsc adds ascending order
+// OrderByAsc adds ascending order.
+//
+// field must be a compile-time constant, see OrderBy.
 func (q *GormQuery[T]) OrderByAsc(field string) Query[T] {
 	q.db = q.db.Order(fmt.Sprintf("%s ASC", field))
 	return q
@@ -231,45 +240,21 @@ type GormPaginatedResult[T any] struct {
 
 // Execute executes the paginated query
 func (p *GormPaginatedResult[T]) Execute(ctx context.Context) (*PaginationMeta, []T, error) {
-	// Count total records
+	params := page.Params{Page: p.page, Size: p.perPage}
+	base := p.query.db.WithContext(ctx)
+
+	// 取消调用方可能已经设置的分页，保证 total 是全量匹配数。
 	var total int64
-	if err := p.query.db.Model(&p.query.model).Count(&total).Error; err != nil {
+	if err := base.Model(&p.query.model).Offset(-1).Limit(-1).Count(&total).Error; err != nil {
 		return nil, nil, err
 	}
 
-	// Calculate pagination
-	if p.page < 1 {
-		p.page = 1
-	}
-	if p.perPage < 1 {
-		p.perPage = 10
-	}
+	meta := page.NewMeta(params, total)
 
-	offset := (p.page - 1) * p.perPage
-	totalPages := int(total) / p.perPage
-	if int(total)%p.perPage > 0 {
-		totalPages++
-	}
-
-	// Get paginated results
-	var results []T
-	err := p.query.db.WithContext(ctx).
-		Limit(p.perPage).
-		Offset(offset).
-		Find(&results).Error
-
-	if err != nil {
+	results := make([]T, 0)
+	if err := base.Offset(params.Offset()).Limit(params.Limit()).Find(&results).Error; err != nil {
 		return nil, nil, err
 	}
 
-	meta := &PaginationMeta{
-		Page:       p.page,
-		PerPage:    p.perPage,
-		Total:      total,
-		TotalPages: totalPages,
-		HasNext:    p.page < totalPages,
-		HasPrev:    p.page > 1,
-	}
-
-	return meta, results, nil
+	return &meta, results, nil
 }

@@ -1,3 +1,6 @@
+// Package where 提供链式的查询条件、分页与排序选项，通过 Where 一次性应用到 *gorm.DB。
+//
+// 分页规则委托给 page 包；排序只接受 Sortable 白名单里声明过的字段。
 package where
 
 import (
@@ -6,6 +9,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/apus-run/gala/components/db/page"
 )
 
 const (
@@ -60,6 +65,9 @@ type Options struct {
 	Clauses []clause.Expression
 	// Queries contains a list of queries to be executed.
 	Queries []Query
+	// Orders defines the ORDER BY columns, usually produced by Sortable.Parse.
+	// +optional
+	Orders []clause.OrderByColumn
 }
 
 // DefaultOptions .
@@ -108,18 +116,12 @@ func WithLimit(limit int64) Option {
 }
 
 // WithPage is a sugar function to convert page and pageSize into limit and offset in Options.
-// This function is commonly used in business logic to facilitate pagination.
-func WithPage(page int, pageSize int) Option {
+//
+// Normalization is delegated to page.Params, so WithPage and P always agree:
+// pg<1 is page 1, size<1 is page.DefaultSize, size>page.MaxSize is capped.
+func WithPage(pg int, size int) Option {
 	return func(whr *Options) {
-		if page == 0 {
-			page = 1
-		}
-		if pageSize <= 0 {
-			pageSize = defaultLimit
-		}
-
-		whr.Offset = (page - 1) * pageSize
-		whr.Limit = pageSize
+		whr.P(pg, size)
 	}
 }
 
@@ -172,15 +174,18 @@ func (whr *Options) L(limit int) *Options {
 }
 
 // P sets the pagination based on the page number and page size.
-func (whr *Options) P(page int, pageSize int) *Options {
-	if page < 1 {
-		page = 1 // Ensure page is at least 1
-	}
-	if pageSize <= 0 {
-		pageSize = defaultLimit // Ensure defaultLimit is defined elsewhere
-	}
-	whr.Offset = (page - 1) * pageSize
-	whr.Limit = pageSize
+//
+// The rules live in page.Params: pg<1 becomes 1, size<1 becomes page.DefaultSize,
+// size>page.MaxSize is capped. Use WithLimit(0) for an unbounded query.
+func (whr *Options) P(pg int, size int) *Options {
+	params := page.Params{Page: pg, Size: size}
+	whr.Offset, whr.Limit = params.Offset(), params.Limit()
+	return whr
+}
+
+// S appends ORDER BY columns, typically the result of Sortable.Parse.
+func (whr *Options) S(columns ...clause.OrderByColumn) *Options {
+	whr.Orders = append(whr.Orders, columns...)
 	return whr
 }
 
@@ -224,13 +229,27 @@ func (whr *Options) F(kvs ...any) *Options {
 	return whr
 }
 
-// Where applies the filters and clauses to the given gorm.DB instance.
+// Where applies filters, clauses, ordering, offset and limit to the given gorm.DB.
+//
+// It never modifies the receiver, so one Options can build several queries
+// (store.List needs a count query and a page query from the same Options).
+// A nil receiver is a no-op: (*Options)(nil) reaches here through the Where
+// interface, where the usual nil check cannot catch it.
 func (whr *Options) Where(db *gorm.DB) *gorm.DB {
-	for _, query := range whr.Queries {
-		conds := db.Statement.BuildCondition(query.Query, query.Args...)
-		whr.Clauses = append(whr.Clauses, conds...)
+	if whr == nil {
+		return db
 	}
-	return db.Where(whr.Filters).Clauses(whr.Clauses...).Offset(whr.Offset).Limit(whr.Limit)
+
+	conditions := make([]clause.Expression, 0, len(whr.Clauses)+len(whr.Queries)+1)
+	conditions = append(conditions, whr.Clauses...)
+	for _, query := range whr.Queries {
+		conditions = append(conditions, db.Statement.BuildCondition(query.Query, query.Args...)...)
+	}
+	if len(whr.Orders) > 0 {
+		conditions = append(conditions, clause.OrderBy{Columns: whr.Orders})
+	}
+
+	return db.Where(whr.Filters).Clauses(conditions...).Offset(whr.Offset).Limit(whr.Limit)
 }
 
 // O is a convenience function to create a new Options with offset.
@@ -244,8 +263,8 @@ func L(limit int) *Options {
 }
 
 // P is a convenience function to create a new Options with page number and page size.
-func P(page int, pageSize int) *Options {
-	return NewWhere().P(page, pageSize)
+func P(pg int, size int) *Options {
+	return NewWhere().P(pg, size)
 }
 
 // C is a convenience function to create a new Options with conditions.

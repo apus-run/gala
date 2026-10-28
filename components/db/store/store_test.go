@@ -3,7 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
-	"sync"
+	"fmt"
 	"testing"
 
 	"github.com/jinzhu/copier"
@@ -19,11 +19,6 @@ import (
 // ---------------------------------data-------------------------------------------
 // 确保 dataStore 实现了 DataStore 接口.
 var _ DataStore = (*datastore)(nil)
-
-var (
-	once sync.Once
-	S    *datastore
-)
 
 // transactionKey 用于在 context.Context 中存储事务上下文的键.
 type transactionKey struct{}
@@ -44,11 +39,12 @@ type datastore struct {
 	// fake *gorm.DB
 }
 
+// NewStore 为每个测试返回独立的 datastore。
+//
+// 之前这里用 sync.Once 复用了第一个测试的 :memory: 库，导致后续测试的
+// db.Create 写进自己的库、而 store 读写第一个库，测试之间互相污染。
 func NewStore(db *gorm.DB) *datastore {
-	once.Do(func() {
-		S = &datastore{db}
-	})
-	return S
+	return &datastore{db: db}
 }
 
 // DB 根据传入的条件（wheres）对数据库实例进行筛选.
@@ -213,11 +209,28 @@ func (u *userRepository) Login(ctx context.Context, rq *LoginRequest) (*LoginRes
 
 // ----------------------------------------------------------------------------
 
+// setupTestDB 为每个测试打开一个独立的 SQLite 内存库。
+//
+// 注意两点：
+//   - SQLite 的 ":memory:" 是「每个连接一个库」，连接池换连接就会看不到表，
+//     所以用带名字的 shared cache DSN，把库限定在单个测试内；
+//   - MaxOpenConns(1) 让同一个库只有一个连接，避免并发写时的 database is locked。
 func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	t.Helper()
+
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("Failed to get sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
 	if err := db.AutoMigrate(&UserModel{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
@@ -373,4 +386,101 @@ func TestUserRepository(t *testing.T) {
 	loginResp, err := userRepo.Login(ctx, loginReq)
 	assert.NoError(t, err)
 	assert.Equal(t, "ssss", loginResp.Token)
+}
+
+func TestStore_ListDefaultOrder(t *testing.T) {
+	db := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](NewStore(db))
+
+	ctx := context.Background()
+	for _, name := range []string{"first", "second", "third"} {
+		assert.NoError(t, db.Create(&UserModel{Name: name}).Error)
+	}
+
+	count, rows, err := store.List(ctx, where.L(2))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), count, "count must ignore the limit")
+	assert.Len(t, rows, 2)
+	assert.Equal(t, "third", rows[0].Name)
+	assert.Equal(t, "second", rows[1].Name)
+}
+
+func TestStore_ListWithSort(t *testing.T) {
+	db := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](NewStore(db))
+
+	ctx := context.Background()
+	for _, name := range []string{"b", "c", "a"} {
+		assert.NoError(t, db.Create(&UserModel{Name: name}).Error)
+	}
+
+	columns, err := where.Sortable{"name": "name"}.Parse("name")
+	assert.NoError(t, err)
+
+	count, rows, err := store.List(ctx, where.P(1, 2).S(columns...))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), count)
+	assert.Len(t, rows, 2)
+	assert.Equal(t, "a", rows[0].Name)
+	assert.Equal(t, "b", rows[1].Name)
+}
+
+func TestStore_ListEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](NewStore(db))
+
+	count, rows, err := store.List(context.Background(), where.L(10))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+	assert.NotNil(t, rows, "empty result must be an empty slice, not nil")
+	assert.Empty(t, rows)
+}
+
+func TestStore_ListPageBeyondEnd(t *testing.T) {
+	db := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](NewStore(db))
+
+	ctx := context.Background()
+	assert.NoError(t, db.Create(&UserModel{Name: "only"}).Error)
+
+	count, rows, err := store.List(ctx, where.P(5, 10))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	assert.NotNil(t, rows, "empty page must be an empty slice, not nil")
+	assert.Empty(t, rows)
+}
+
+func TestStore_ListNilOptions(t *testing.T) {
+	db := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](NewStore(db))
+
+	ctx := context.Background()
+	assert.NoError(t, db.Create(&UserModel{Name: "first"}).Error)
+	assert.NoError(t, db.Create(&UserModel{Name: "second"}).Error)
+
+	count, rows, err := store.List(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+	assert.Len(t, rows, 2)
+	assert.Equal(t, "second", rows[0].Name, "default ordering is still id desc")
+}
+
+func TestStore_ListWithFilterAndSort(t *testing.T) {
+	db := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](NewStore(db))
+
+	ctx := context.Background()
+	for _, name := range []string{"bob", "alice", "carol"} {
+		assert.NoError(t, db.Create(&UserModel{Name: name}).Error)
+	}
+
+	columns, err := where.Sortable{"name": "name"}.Parse("name")
+	assert.NoError(t, err)
+
+	// 过滤、分页、排序走同一个 Options，计数与查询各应用一次。
+	count, rows, err := store.List(ctx, where.F("name", "bob").P(1, 10).S(columns...))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	assert.Len(t, rows, 1)
+	assert.Equal(t, "bob", rows[0].Name)
 }

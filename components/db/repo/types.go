@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"errors"
+
+	"github.com/apus-run/gala/components/db/page"
 )
 
 var (
@@ -109,15 +111,11 @@ type PaginatedResult[T any] interface {
 	Execute(ctx context.Context) (*PaginationMeta, []T, error)
 }
 
-// PaginationMeta contains pagination metadata
-type PaginationMeta struct {
-	Page       int   `json:"page"`
-	PerPage    int   `json:"per_page"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"total_pages"`
-	HasNext    bool  `json:"has_next"`
-	HasPrev    bool  `json:"has_prev"`
-}
+// PaginationMeta contains pagination metadata.
+//
+// It is an alias of page.Meta, so the JSON shape and the existing call sites are
+// unchanged while the normalization rules live in exactly one place.
+type PaginationMeta = page.Meta
 
 // BaseRepository provides common functionality for all repositories
 type BaseRepository[T any] interface {

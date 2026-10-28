@@ -175,7 +175,10 @@ func (r *GormRepository[T]) With(relation string) Query[T] {
 	}
 }
 
-// OrderBy adds ordering to the query
+// OrderBy adds ordering to the query.
+//
+// field is interpolated into the SQL, so it must be a compile-time constant.
+// Ordering that comes from a request must go through where.Sortable instead.
 func (r *GormRepository[T]) OrderBy(field string, direction string) Query[T] {
 	return &GormQuery[T]{
 		db:    r.getDB().Order(fmt.Sprintf("%s %s", field, direction)),

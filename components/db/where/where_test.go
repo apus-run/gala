@@ -3,7 +3,13 @@ package where
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
+	"github.com/apus-run/gala/components/db/page"
 )
 
 func TestOptions_P(t *testing.T) {
@@ -26,16 +32,22 @@ func TestOptions_P(t *testing.T) {
 			expected: Options{Offset: 0, Limit: 10},
 		},
 		{
-			name:     "PageSize is zero",
+			name:     "PageSize is zero falls back to the default",
 			page:     2,
 			pageSize: 0,
-			expected: Options{Offset: -1, Limit: defaultLimit},
+			expected: Options{Offset: page.DefaultSize, Limit: page.DefaultSize},
 		},
 		{
 			name:     "Negative page and pageSize",
 			page:     -1,
 			pageSize: -5,
-			expected: Options{Offset: 0, Limit: defaultLimit},
+			expected: Options{Offset: 0, Limit: page.DefaultSize},
+		},
+		{
+			name:     "PageSize above the cap is clamped",
+			page:     2,
+			pageSize: page.MaxSize + 1,
+			expected: Options{Offset: page.MaxSize, Limit: page.MaxSize},
 		},
 	}
 
@@ -174,12 +186,12 @@ func TestOptions_O(t *testing.T) {
 		{
 			name:     "Valid offset",
 			offset:   5,
-			expected: Options{Offset: 5, Limit: defaultLimit},
+			expected: Options{Offset: 5},
 		},
 		{
 			name:     "Negative offset",
 			offset:   -3,
-			expected: Options{Offset: 0, Limit: defaultLimit},
+			expected: Options{Offset: 0},
 		},
 	}
 
@@ -296,11 +308,10 @@ func TestOptions_WithLimit(t *testing.T) {
 
 func TestOptions_WithPage(t *testing.T) {
 	tests := []struct {
-		name       string
-		page       int
-		pageSize   int
-		expected   Options
-		shouldSkip bool
+		name     string
+		page     int
+		pageSize int
+		expected Options
 	}{
 		{
 			name:     "Valid page and pageSize",
@@ -309,17 +320,34 @@ func TestOptions_WithPage(t *testing.T) {
 			expected: Options{Offset: 10, Limit: 10},
 		},
 		{
-			name:       "Page is zero",
-			page:       0,
-			pageSize:   10,
-			expected:   Options{Offset: 0, Limit: 10},
-			shouldSkip: true,
+			name:     "Page is zero",
+			page:     0,
+			pageSize: 10,
+			expected: Options{Offset: 0, Limit: 10},
 		},
 		{
-			name:     "PageSize is zero",
+			name:     "Page is negative",
+			page:     -2,
+			pageSize: 10,
+			expected: Options{Offset: 0, Limit: 10},
+		},
+		{
+			name:     "PageSize is zero falls back to the default",
 			page:     2,
 			pageSize: 0,
-			expected: Options{Offset: 10, Limit: defaultLimit},
+			expected: Options{Offset: page.DefaultSize, Limit: page.DefaultSize},
+		},
+		{
+			name:     "PageSize is negative falls back to the default",
+			page:     2,
+			pageSize: -5,
+			expected: Options{Offset: page.DefaultSize, Limit: page.DefaultSize},
+		},
+		{
+			name:     "PageSize above the cap is clamped",
+			page:     2,
+			pageSize: page.MaxSize + 1,
+			expected: Options{Offset: page.MaxSize, Limit: page.MaxSize},
 		},
 	}
 
@@ -328,14 +356,6 @@ func TestOptions_WithPage(t *testing.T) {
 			option := WithPage(tt.page, tt.pageSize)
 			options := &Options{}
 			option(options)
-
-			if tt.shouldSkip {
-				if options.Offset != 0 || options.Limit != defaultLimit {
-					t.Errorf("Expected Offset: 0, Limit: %d, got Offset: %d, Limit: %d",
-						defaultLimit, options.Offset, options.Limit)
-				}
-				return
-			}
 
 			if options.Offset != tt.expected.Offset || options.Limit != tt.expected.Limit {
 				t.Errorf("Expected Offset: %d, Limit: %d, got Offset: %d, Limit: %d",
@@ -373,5 +393,82 @@ func TestOptions_WithFilter(t *testing.T) {
 				t.Errorf("Expected Filters: %v, got: %v", tt.expected, options.Filters)
 			}
 		})
+	}
+}
+
+type testRow struct {
+	ID   uint
+	Name string
+}
+
+func (testRow) TableName() string { return "test_rows" }
+
+func newDryRunDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{DryRun: true})
+	if err != nil {
+		t.Fatalf("open dry-run db: %v", err)
+	}
+	return db
+}
+
+// Where 不能修改接收者：store.List 用同一个 Options 构造计数与分页两次查询，
+// 旧实现每次调用都会把 Queries 转出的条件追加进 Clauses。
+func TestOptionsWhereIsPure(t *testing.T) {
+	db := newDryRunDB(t)
+	opts := NewWhere(WithQuery("name = ?", "alice")).P(2, 10)
+
+	opts.Where(db)
+	afterFirst := len(opts.Clauses)
+	opts.Where(db)
+
+	if len(opts.Clauses) != afterFirst {
+		t.Fatalf("Where modified Clauses: %d -> %d", afterFirst, len(opts.Clauses))
+	}
+
+	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return opts.Where(tx).Find(&[]testRow{})
+	})
+	if strings.Count(sql, "name = ") != 1 {
+		t.Fatalf("duplicated condition in %q", sql)
+	}
+	if !strings.Contains(sql, "LIMIT 10 OFFSET 10") {
+		t.Fatalf("pagination missing from %q", sql)
+	}
+}
+
+func TestOptionsWhereAppliesOrders(t *testing.T) {
+	db := newDryRunDB(t)
+	columns, err := Sortable{"name": "name", "id": "id"}.Parse("-name,id")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	opts := NewWhere(WithPage(1, 5)).S(columns...)
+	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return opts.Where(tx).Find(&[]testRow{})
+	})
+
+	if !strings.Contains(sql, "ORDER BY `name` DESC,`id`") {
+		t.Fatalf("orders missing from %q", sql)
+	}
+	if !strings.Contains(sql, "LIMIT 5") {
+		t.Fatalf("limit missing from %q", sql)
+	}
+}
+
+// (*Options)(nil) 通过 where.Where 接口传进来时，普通的 whr != nil 判断拦不住，
+// 旧实现会在这里空指针 panic。
+func TestOptionsWhereNilReceiver(t *testing.T) {
+	db := newDryRunDB(t)
+
+	var opts *Options
+	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return opts.Where(tx).Find(&[]testRow{})
+	})
+
+	if strings.Contains(sql, "WHERE") {
+		t.Fatalf("nil Options must not add conditions: %q", sql)
 	}
 }

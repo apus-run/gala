@@ -86,9 +86,23 @@ func (s *Store[T]) Get(ctx context.Context, opts *where.Options) (*T, error) {
 }
 
 // List retrieves a list of objects from the database based on the provided where options.
+//
+// The count query and the page query are built separately from the same Options.
+// where.Options.Where does not mutate its receiver, so filters and pagination are
+// applied once per query. Without Orders the default stays id desc.
 func (s *Store[T]) List(ctx context.Context, opts *where.Options) (count int64, rets []*T, err error) {
-	err = s.db(ctx, opts).Order("id desc").Find(&rets).Offset(-1).Limit(-1).Count(&count).Error
-	if err != nil {
+	if err = s.db(ctx, opts).Model(new(T)).Offset(-1).Limit(-1).Count(&count).Error; err != nil {
+		return 0, nil, err
+	}
+	if count == 0 {
+		return 0, []*T{}, nil
+	}
+
+	q := s.db(ctx, opts)
+	if opts == nil || len(opts.Orders) == 0 {
+		q = q.Order("id desc")
+	}
+	if err = q.Find(&rets).Error; err != nil {
 		return 0, nil, err
 	}
 	return count, rets, nil
