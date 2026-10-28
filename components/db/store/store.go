@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/apus-run/gala/components/db"
+	"github.com/apus-run/gala/components/db/page"
 	"github.com/apus-run/gala/components/db/where"
 )
 
@@ -76,6 +77,9 @@ func (s *Store[T]) Get(ctx context.Context, opts *where.Options) (*T, error) {
 // The count query and the page query are built separately from the same Options.
 // where.Options.Where does not mutate its receiver, so filters and pagination are
 // applied once per query. Without Orders the default stays id desc.
+//
+// 没有指定条数（opts 为 nil 或 Limit<=0）时只取 page.DefaultSize 条，避免一次把整张表
+// 读进内存；返回的 count 仍是全量匹配数。需要更多时用 where.P 或 where.L 显式指定。
 func (s *Store[T]) List(ctx context.Context, opts *where.Options) (count int64, rets []*T, err error) {
 	if err = s.db(ctx, opts).Model(new(T)).Offset(-1).Limit(-1).Count(&count).Error; err != nil {
 		return 0, nil, err
@@ -85,6 +89,9 @@ func (s *Store[T]) List(ctx context.Context, opts *where.Options) (count int64, 
 	}
 
 	q := s.db(ctx, opts)
+	if opts == nil || opts.Limit <= 0 {
+		q = q.Limit(page.DefaultSize)
+	}
 	if opts == nil || len(opts.Orders) == 0 {
 		q = q.Order("id desc")
 	}
@@ -95,8 +102,9 @@ func (s *Store[T]) List(ctx context.Context, opts *where.Options) (count int64, 
 }
 
 // Count returns the number of objects in the database that match the provided where options.
+// opts 里的分页被忽略：和 List 一样返回全量匹配数，而不是 LIMIT/OFFSET 之后的行数。
 func (s *Store[T]) Count(ctx context.Context, opts *where.Options) (count int64, err error) {
-	err = s.db(ctx, opts).Model(new(T)).Count(&count).Error
+	err = s.db(ctx, opts).Model(new(T)).Offset(-1).Limit(-1).Count(&count).Error
 	if err != nil {
 		return 0, err
 	}

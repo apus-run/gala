@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	galadb "github.com/apus-run/gala/components/db"
+	"github.com/apus-run/gala/components/db/page"
 	"github.com/apus-run/gala/components/db/where"
 
 	genericStore "github.com/apus-run/gala/components/db/store"
@@ -526,4 +527,88 @@ func TestStore_InTransactionAllOps(t *testing.T) {
 	got, err := store.Get(ctx, where.F("id", seed.ID))
 	assert.NoError(t, err)
 	assert.Equal(t, "seed", got.Name)
+}
+
+// Count 忽略 opts 里的分页：返回全量匹配数，而不是 LIMIT/OFFSET 之后的行数。
+func TestStore_CountIgnoresPaging(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	ctx := context.Background()
+	for i := range 25 {
+		assert.NoError(t, db.Create(&UserModel{Name: fmt.Sprintf("u%02d", i)}).Error)
+	}
+
+	for _, opts := range []*where.Options{where.P(2, 10), where.P(3, 10), where.P(9, 10), where.L(5), where.O(20)} {
+		n, err := store.Count(ctx, opts)
+		assert.NoError(t, err)
+		assert.Equal(t, int64(25), n, "Count must return the total regardless of paging: %+v", opts)
+	}
+	n, err := store.Count(ctx, where.P(1, 10).F("name", "u03"))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), n, "filters still apply, paging does not")
+}
+
+// 没指定条数时 List 只取 page.DefaultSize 条，count 仍是全量。
+func TestStore_ListDefaultsToPageSize(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	ctx := context.Background()
+	total := page.DefaultSize + 7
+	for i := range total {
+		assert.NoError(t, db.Create(&UserModel{Name: fmt.Sprintf("u%03d", i)}).Error)
+	}
+
+	for name, opts := range map[string]*where.Options{
+		"nil opts":        nil,
+		"no limit":        where.NewWhere(),
+		"filter only":     where.F("id", 1).C(),
+		"limit 0 -> none": where.L(0),
+	} {
+		count, rows, err := store.List(ctx, opts)
+		assert.NoError(t, err, name)
+		if name == "filter only" {
+			assert.Len(t, rows, 1, name)
+			continue
+		}
+		assert.Equal(t, int64(total), count, name)
+		assert.Len(t, rows, page.DefaultSize, name)
+	}
+
+	// 显式指定条数时不被默认值覆盖。
+	_, rows, err := store.List(ctx, where.L(total))
+	assert.NoError(t, err)
+	assert.Len(t, rows, total)
+	_, rows, err = store.List(ctx, where.P(1, 3))
+	assert.NoError(t, err)
+	assert.Len(t, rows, 3)
+}
+
+// F 的参数不成对时，所有执行点都返回 ErrInvalidFilter，并且不碰数据。
+func TestStore_InvalidFilterReturnsError(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	ctx := context.Background()
+	assert.NoError(t, db.Create(&[]UserModel{{Name: "a"}, {Name: "b"}}).Error)
+
+	bad := func() *where.Options { return where.F("name") }
+
+	assert.NotPanics(t, func() { _ = bad() })
+	_, err := store.Get(ctx, bad())
+	assert.ErrorIs(t, err, where.ErrInvalidFilter)
+	_, _, err = store.List(ctx, bad())
+	assert.ErrorIs(t, err, where.ErrInvalidFilter)
+	_, err = store.Count(ctx, bad())
+	assert.ErrorIs(t, err, where.ErrInvalidFilter)
+	_, err = store.Pluck(ctx, "name", bad())
+	assert.ErrorIs(t, err, where.ErrInvalidFilter)
+	assert.ErrorIs(t, store.Delete(ctx, bad()), where.ErrInvalidFilter)
+
+	var n int64
+	db.Model(&UserModel{}).Count(&n)
+	assert.Equal(t, int64(2), n, "a rejected Delete must not delete anything")
+
+	// 出错的 Options 不污染 store：下一次正常查询照常工作。
+	got, err := store.Get(ctx, where.F("name", "a"))
+	assert.NoError(t, err)
+	assert.Equal(t, "a", got.Name)
 }
