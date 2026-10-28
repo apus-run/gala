@@ -1,0 +1,34 @@
+# 集成测试用的真实数据库，端口避开本机常用的 3306/5432。
+#
+#   docker compose -f integration/docker-compose.yml up -d --wait
+#   export GALA_DB_MYSQL_DSN='root:gala@tcp(127.0.0.1:53306)/gala?parseTime=true&charset=utf8mb4'
+#   export GALA_DB_POSTGRES_DSN='host=127.0.0.1 port=55433 user=gala password=gala dbname=gala sslmode=disable'
+#   (cd integration && go test -count=1 ./...)
+#   docker compose -f integration/docker-compose.yml down -v
+name: gala-db-integration
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: gala
+      MYSQL_DATABASE: gala
+    ports: ["53306:3306"]
+    tmpfs: [/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pgala"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: gala
+      POSTGRES_PASSWORD: gala
+      POSTGRES_DB: gala
+    ports: ["55433:5432"]
+    tmpfs: [/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gala -d gala"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
