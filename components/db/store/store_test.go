@@ -10,7 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
+	galadb "github.com/apus-run/gala/components/db"
 	"github.com/apus-run/gala/components/db/where"
 
 	genericStore "github.com/apus-run/gala/components/db/store"
@@ -20,58 +22,16 @@ import (
 // 确保 dataStore 实现了 DataStore 接口.
 var _ DataStore = (*datastore)(nil)
 
-// transactionKey 用于在 context.Context 中存储事务上下文的键.
-type transactionKey struct{}
-
 // DataStore 定义了 Store 层需要实现的方法.
 type DataStore interface {
-	genericStore.Provider
+	galadb.Provider
 
 	User() UserStore
 }
 
-// store 实现了 Store 接口，提供了对 gorm.DB 的访问和事务处理功能.
-// store 结构体包含了一个 *gorm.DB 实例，代表了数据库连接.
+// datastore 在 db.Provider 之上挂载各业务 store.
 type datastore struct {
-	db *gorm.DB
-
-	// 可以根据需要添加其他数据库实例
-	// fake *gorm.DB
-}
-
-// NewStore 为每个测试返回独立的 datastore。
-//
-// 之前这里用 sync.Once 复用了第一个测试的 :memory: 库，导致后续测试的
-// db.Create 写进自己的库、而 store 读写第一个库，测试之间互相污染。
-func NewStore(db *gorm.DB) *datastore {
-	return &datastore{db: db}
-}
-
-// DB 根据传入的条件（wheres）对数据库实例进行筛选.
-// 如果未传入任何条件，则返回上下文中的数据库实例（事务实例或核心数据库实例）.
-func (store *datastore) DB(ctx context.Context, wheres ...where.Where) *gorm.DB {
-	db := store.db
-	// 从上下文中提取事务实例
-	if tx, ok := ctx.Value(transactionKey{}).(*gorm.DB); ok {
-		db = tx
-	}
-
-	// 遍历所有传入的条件并逐一叠加到数据库查询对象上
-	for _, whr := range wheres {
-		db = whr.Where(db)
-	}
-	return db
-}
-
-// TX 返回一个新的事务实例.
-// nolint: fatcontext
-func (store *datastore) TX(ctx context.Context, fn func(ctx context.Context) error) error {
-	return store.db.WithContext(ctx).Transaction(
-		func(tx *gorm.DB) error {
-			ctx = context.WithValue(ctx, transactionKey{}, tx)
-			return fn(ctx)
-		},
-	)
+	galadb.Provider
 }
 
 // User 返回一个实现了 UserStore 接口的实例.
@@ -120,7 +80,7 @@ func newUserStore(store *datastore) *userStore {
 // FindByUsername implements [UserStore].
 func (u *userStore) FindByUsername(ctx context.Context, opts *where.Options) (*UserModel, error) {
 	var user UserModel
-	err := u.store.DB(ctx, opts).First(&user).Error
+	err := opts.Where(u.store.DB(ctx)).First(&user).Error
 	if err != nil {
 		return nil, err
 	}
@@ -215,31 +175,31 @@ func (u *userRepository) Login(ctx context.Context, rq *LoginRequest) (*LoginRes
 //   - SQLite 的 ":memory:" 是「每个连接一个库」，连接池换连接就会看不到表，
 //     所以用带名字的 shared cache DSN，把库限定在单个测试内；
 //   - MaxOpenConns(1) 让同一个库只有一个连接，避免并发写时的 database is locked。
-func setupTestDB(t *testing.T) *gorm.DB {
+func setupTestDB(t *testing.T) (*gorm.DB, *datastore) {
 	t.Helper()
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	provider, err := galadb.NewDB(sqlite.Open(dsn))
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
+	db, _ := galadb.Unwrap(provider)
 
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatalf("Failed to get sql.DB: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	t.Cleanup(func() { _ = provider.Close() })
 
 	if err := db.AutoMigrate(&UserModel{}); err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
-	return db
+	return db, &datastore{Provider: provider}
 }
 
 func TestStore_Create(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -256,8 +216,7 @@ func TestStore_Create(t *testing.T) {
 }
 
 func TestStore_Update(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -275,8 +234,7 @@ func TestStore_Update(t *testing.T) {
 }
 
 func TestStore_Delete(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -292,8 +250,7 @@ func TestStore_Delete(t *testing.T) {
 }
 
 func TestStore_Get(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -303,11 +260,13 @@ func TestStore_Get(t *testing.T) {
 	result, err := store.Get(ctx, where.F("id", obj.ID))
 	assert.NoError(t, err)
 	assert.Equal(t, obj.Name, result.Name)
+
+	_, err = store.Get(ctx, where.F("id", obj.ID+1))
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
 func TestStore_List(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -321,8 +280,7 @@ func TestStore_List(t *testing.T) {
 }
 
 func TestStore_Count(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -335,8 +293,7 @@ func TestStore_Count(t *testing.T) {
 }
 
 func TestStore_Pluck(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
@@ -355,8 +312,7 @@ func TestStore_Pluck(t *testing.T) {
 type userIDKey struct{}
 
 func TestUserRepository(t *testing.T) {
-	db := setupTestDB(t)
-	dataStore := NewStore(db)
+	_, dataStore := setupTestDB(t)
 	userRepo := NewUserRepository(dataStore)
 
 	// 这个 RegisterTenant 应该再 NewServer 开头就初始化好
@@ -389,8 +345,8 @@ func TestUserRepository(t *testing.T) {
 }
 
 func TestStore_ListDefaultOrder(t *testing.T) {
-	db := setupTestDB(t)
-	store := genericStore.NewStore[UserModel](NewStore(db))
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
 	for _, name := range []string{"first", "second", "third"} {
@@ -406,8 +362,8 @@ func TestStore_ListDefaultOrder(t *testing.T) {
 }
 
 func TestStore_ListWithSort(t *testing.T) {
-	db := setupTestDB(t)
-	store := genericStore.NewStore[UserModel](NewStore(db))
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
 	for _, name := range []string{"b", "c", "a"} {
@@ -426,8 +382,8 @@ func TestStore_ListWithSort(t *testing.T) {
 }
 
 func TestStore_ListEmpty(t *testing.T) {
-	db := setupTestDB(t)
-	store := genericStore.NewStore[UserModel](NewStore(db))
+	_, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
 
 	count, rows, err := store.List(context.Background(), where.L(10))
 	assert.NoError(t, err)
@@ -437,8 +393,8 @@ func TestStore_ListEmpty(t *testing.T) {
 }
 
 func TestStore_ListPageBeyondEnd(t *testing.T) {
-	db := setupTestDB(t)
-	store := genericStore.NewStore[UserModel](NewStore(db))
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
 	assert.NoError(t, db.Create(&UserModel{Name: "only"}).Error)
@@ -451,8 +407,8 @@ func TestStore_ListPageBeyondEnd(t *testing.T) {
 }
 
 func TestStore_ListNilOptions(t *testing.T) {
-	db := setupTestDB(t)
-	store := genericStore.NewStore[UserModel](NewStore(db))
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
 	assert.NoError(t, db.Create(&UserModel{Name: "first"}).Error)
@@ -466,8 +422,8 @@ func TestStore_ListNilOptions(t *testing.T) {
 }
 
 func TestStore_ListWithFilterAndSort(t *testing.T) {
-	db := setupTestDB(t)
-	store := genericStore.NewStore[UserModel](NewStore(db))
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
 
 	ctx := context.Background()
 	for _, name := range []string{"bob", "alice", "carol"} {
@@ -483,4 +439,91 @@ func TestStore_ListWithFilterAndSort(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 	assert.Len(t, rows, 1)
 	assert.Equal(t, "bob", rows[0].Name)
+}
+
+// Store 在 db.Provider.TX 的 ctx 下自动参与事务。
+func TestStore_InTransaction(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	ctx := context.Background()
+
+	err := dataStore.TX(ctx, func(ctx context.Context) error {
+		if err := store.Create(ctx, &UserModel{Name: "rolled back"}); err != nil {
+			return err
+		}
+		return errors.New("abort")
+	})
+	assert.Error(t, err)
+
+	var count int64
+	db.Model(&UserModel{}).Count(&count)
+	assert.Equal(t, int64(0), count)
+}
+
+// 表不存在时，每个方法都应把数据库错误原样返回，而不是吞掉。
+func TestStore_PropagatesDBErrors(t *testing.T) {
+	_, dataStore := setupTestDB(t)
+	type Missing struct{ ID int64 }
+	store := genericStore.NewStore[Missing](dataStore)
+	ctx := context.Background()
+
+	assert.Error(t, store.Create(ctx, &Missing{}))
+	assert.Error(t, store.Update(ctx, &Missing{ID: 1}))
+	assert.Error(t, store.Delete(ctx, where.F("id", 1)))
+
+	_, err := store.Get(ctx, where.F("id", 1))
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	_, _, err = store.List(ctx, nil)
+	assert.Error(t, err)
+	_, err = store.Count(ctx, nil)
+	assert.Error(t, err)
+	_, err = store.Pluck(ctx, "id", nil)
+	assert.Error(t, err)
+}
+
+// 先 Count 为正、再取页失败时同样要返回错误：用不存在的排序列触发第二条查询失败。
+func TestStore_ListPageQueryError(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	assert.NoError(t, db.Create(&UserModel{Name: "a"}).Error)
+
+	_, _, err := store.List(context.Background(), where.NewWhere().S(clause.OrderByColumn{
+		Column: clause.Column{Name: "no_such_column"},
+	}))
+	assert.Error(t, err)
+}
+
+// Delete 命中 0 行不是错误。
+func TestStore_DeleteNoMatch(t *testing.T) {
+	_, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	assert.NoError(t, store.Delete(context.Background(), where.F("id", 999)))
+}
+
+// 事务内 Count / Pluck / Update / Delete 也参与事务。
+func TestStore_InTransactionAllOps(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	ctx := context.Background()
+	seed := &UserModel{Name: "seed"}
+	assert.NoError(t, db.Create(seed).Error)
+
+	_ = dataStore.TX(ctx, func(ctx context.Context) error {
+		seed.Name = "changed"
+		assert.NoError(t, store.Update(ctx, seed))
+		n, err := store.Count(ctx, where.F("name", "changed"))
+		assert.NoError(t, err)
+		assert.Equal(t, int64(1), n)
+		names, err := store.Pluck(ctx, "name", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, []any{"changed"}, names)
+		assert.NoError(t, store.Delete(ctx, where.F("id", seed.ID)))
+		return errors.New("rollback")
+	})
+
+	got, err := store.Get(ctx, where.F("id", seed.ID))
+	assert.NoError(t, err)
+	assert.Equal(t, "seed", got.Name)
 }

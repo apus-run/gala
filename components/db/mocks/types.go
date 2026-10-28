@@ -42,6 +42,20 @@ func (m *MockProvider) EXPECT() *MockProviderMockRecorder {
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockProvider) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockProviderMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockProvider)(nil).Close))
+}
+
 // DB mocks base method.
 func (m *MockProvider) DB(ctx context.Context, opts ...db.Option) *gorm.DB {
 	m.ctrl.T.Helper()
@@ -62,7 +76,7 @@ func (mr *MockProviderMockRecorder) DB(ctx any, opts ...any) *gomock.Call {
 }
 
 // TX mocks base method.
-func (m *MockProvider) TX(ctx context.Context, fn func(*gorm.DB) error, opts ...db.Option) error {
+func (m *MockProvider) TX(ctx context.Context, fn func(context.Context) error, opts ...db.Option) error {
 	m.ctrl.T.Helper()
 	varargs := []any{ctx, fn}
 	for _, a := range opts {

@@ -2,33 +2,29 @@ package db
 
 import (
 	"context"
-	"database/sql"
-	"log/slog"
-	"sync"
-	"time"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/utils"
 	"gorm.io/plugin/dbresolver"
 )
 
-var (
-	_ Provider = (*provider)(nil)
+var _ Provider = (*provider)(nil)
 
-	once sync.Once
-)
+// txKey 是 TX 把事务放进 ctx 时使用的键。
+// 绑定 provider 实例：同一进程连多个库时，各自只取自己的事务。
+type txKey struct{ p *provider }
 
 // provider 包装 gorm.db 并强制提供 ctx 以串联 trace
 type provider struct {
 	db *gorm.DB
 }
 
-// NewDB 创建一个 db 实例
+// NewDB 创建一个 db 实例，驱动由调用方选择，如 NewDB(mysql.Open(dsn))。
+//
+// 总是开启 TranslateError：驱动错误统一翻译为 gorm.ErrDuplicatedKey、
+// gorm.ErrForeignKeyViolated 等，调用方用 errors.Is 判断，与驱动无关。
 func NewDB(dialer gorm.Dialector, opts ...gorm.Option) (Provider, error) {
-	db, err := gorm.Open(dialer, opts...)
+	db, err := gorm.Open(dialer, withTranslateError(opts)...)
 	if err != nil {
 		return nil, err
 	}
@@ -42,37 +38,16 @@ func Unwrap(db Provider) (*gorm.DB, bool) {
 	return nil, false
 }
 
-// NewMySQLFromConfig 从 MySQL DSN 创建一个 db 实例
-func NewMySQLFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
-	once.Do(func() {
-		if !utils.Contains(mysql.UpdateClauses, "RETURNING") {
-			mysql.UpdateClauses = append(mysql.UpdateClauses, "RETURNING")
+// withTranslateError 在调用方已有的 *gorm.Config 上开启 TranslateError。
+// 不能再追加一个 Config：gorm.Open 按整体赋值应用 Config，后者会覆盖前者。
+func withTranslateError(opts []gorm.Option) []gorm.Option {
+	for _, o := range opts {
+		if c, ok := o.(*gorm.Config); ok {
+			c.TranslateError = true
+			return opts
 		}
-	})
-	opts = append(opts, &gorm.Config{
-		TranslateError: true,
-	})
-
-	db, err := gorm.Open(mysql.Open(dsn), opts...)
-	if err != nil {
-		return nil, err
 	}
-
-	return &provider{db: db}, nil
-}
-
-// NewPostgresFromConfig 从 PostgreSQL DSN 创建一个 db 实例
-func NewPostgresFromConfig(dsn string, opts ...gorm.Option) (Provider, error) {
-	opts = append(opts, &gorm.Config{
-		TranslateError: true,
-	})
-
-	db, err := gorm.Open(postgres.Open(dsn), opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &provider{db: db}, nil
+	return append(opts, &gorm.Config{TranslateError: true})
 }
 
 func (p *provider) Close() error {
@@ -85,32 +60,15 @@ func (p *provider) Close() error {
 		return err
 	}
 
-	waitInUse(sqlDB, 5*time.Second)
-
+	// sql.DB.Close 会等待已开始的查询结束。
 	return sqlDB.Close()
-}
-
-func waitInUse(sqlDB *sql.DB, duration time.Duration) {
-	ctx, cancel := context.WithTimeout(context.Background(), duration)
-	defer cancel()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if sqlDB.Stats().InUse == 0 {
-				return
-			}
-		case <-ctx.Done():
-			slog.Warn("close db: connections still in use after timeout",
-				"in_use", sqlDB.Stats().InUse)
-			return
-		}
-	}
 }
 
 func (p *provider) DB(ctx context.Context, opts ...Option) *gorm.DB {
 	session := p.db
+	if tx, ok := ctx.Value(txKey{p}).(*gorm.DB); ok {
+		session = tx
+	}
 
 	opt := Apply(opts...)
 
@@ -132,7 +90,9 @@ func (p *provider) DB(ctx context.Context, opts ...Option) *gorm.DB {
 	return session.WithContext(ctx)
 }
 
-func (p *provider) TX(ctx context.Context, fn func(tx *gorm.DB) error, opts ...Option) error {
-	session := p.DB(ctx, opts...)
-	return session.Transaction(fn)
+func (p *provider) TX(ctx context.Context, fn func(ctx context.Context) error, opts ...Option) error {
+	// ctx 里已有事务时，gorm 会以 savepoint 嵌套。
+	return p.DB(ctx, opts...).Transaction(func(tx *gorm.DB) error {
+		return fn(context.WithValue(ctx, txKey{p}, tx))
+	})
 }

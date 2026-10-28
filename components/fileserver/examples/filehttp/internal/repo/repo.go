@@ -86,7 +86,8 @@ func translate(err error) error {
 }
 
 func (r *FileRepo) CreateFileAndLinkUser(ctx context.Context, m *model.FileMeta, uf *model.UserFile, stagingKey string) error {
-	err := r.db.TX(ctx, func(tx *gorm.DB) error {
+	err := r.db.TX(ctx, func(ctx context.Context) error {
+		tx := r.db.DB(ctx)
 		if err := tx.Create(m).Error; err != nil {
 			return err
 		}
@@ -99,7 +100,8 @@ func (r *FileRepo) CreateFileAndLinkUser(ctx context.Context, m *model.FileMeta,
 }
 
 func (r *FileRepo) LinkUserAndIncRef(ctx context.Context, uf *model.UserFile) error {
-	err := r.db.TX(ctx, func(tx *gorm.DB) error {
+	err := r.db.TX(ctx, func(ctx context.Context) error {
+		tx := r.db.DB(ctx)
 		if err := tx.Create(uf).Error; err != nil {
 			return err
 		}
@@ -121,7 +123,8 @@ func (r *FileRepo) DeleteUserFileAndDecRef(ctx context.Context, userID uint64, h
 		key       string
 		remaining int
 	)
-	err := r.db.TX(ctx, func(tx *gorm.DB) error {
+	err := r.db.TX(ctx, func(ctx context.Context) error {
+		tx := r.db.DB(ctx)
 		res := tx.Where("user_id = ? AND file_hash = ?", userID, hash).Delete(&model.UserFile{})
 		if res.Error != nil {
 			return res.Error
@@ -279,7 +282,8 @@ func (r *FileRepo) Session(ctx context.Context, id string) (*model.UploadSession
 }
 
 func (r *FileRepo) SetSessionBit(ctx context.Context, id string, index int) error {
-	return r.db.TX(ctx, func(tx *gorm.DB) error {
+	return r.db.TX(ctx, func(ctx context.Context) error {
+		tx := r.db.DB(ctx)
 		s := &model.UploadSession{}
 		if err := tx.First(s, "id = ?", id).Error; err != nil {
 			return translate(err)

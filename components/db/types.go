@@ -10,10 +10,11 @@ import (
 )
 
 type Provider interface {
-	// DB 创建一个新的数据库会话
+	// DB 创建一个新的数据库会话；ctx 由 TX 传入时，会话落在该事务上
 	DB(ctx context.Context, opts ...Option) *gorm.DB
-	// TX 执行一个事务
-	TX(ctx context.Context, fn func(tx *gorm.DB) error, opts ...Option) error
+	// TX 执行一个事务，fn 内用 DB(ctx) 取得事务会话。
+	// 事务 ctx 不能跨 goroutine 并发使用：sql.Tx 不支持并发查询。
+	TX(ctx context.Context, fn func(ctx context.Context) error, opts ...Option) error
 	// Close 关闭数据库连接
 	Close() error
 }
@@ -70,17 +71,4 @@ func WithSelectForUpdate() Option {
 	return func(o *Options) {
 		o.selectForUpdate = true
 	}
-}
-
-// ContainWithMasterOpt 检查选项中是否包含强制读主库的选项
-// 用于在执行查询前检查是否需要强制读主库
-func ContainWithMasterOpt(opts []Option) bool {
-	o := &Options{}
-	for _, fn := range opts {
-		fn(o)
-		if o.withMaster {
-			return true
-		}
-	}
-	return false
 }

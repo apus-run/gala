@@ -13,8 +13,8 @@ import (
 	"log"
 
 	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 
+	"github.com/apus-run/gala/components/db"
 	"github.com/apus-run/gala/components/db/page"
 	"github.com/apus-run/gala/components/db/store"
 	"github.com/apus-run/gala/components/db/where"
@@ -27,53 +27,20 @@ type User struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-type txKey struct{}
-
-// dbProvider 把 *gorm.DB 适配成 store.Provider。
-type dbProvider struct {
-	db *gorm.DB
-}
-
-func (p dbProvider) DB(ctx context.Context, wheres ...where.Where) *gorm.DB {
-	session := p.db
-	if tx, ok := ctx.Value(txKey{}).(*gorm.DB); ok {
-		session = tx
-	}
-	session = session.WithContext(ctx)
-
-	for _, whr := range wheres {
-		if whr != nil {
-			session = whr.Where(session)
-		}
-	}
-	return session
-}
-
-func (p dbProvider) TX(ctx context.Context, fn func(context.Context) error) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(context.WithValue(ctx, txKey{}, tx))
-	})
-}
-
 func main() {
 	ctx := context.Background()
 
-	db, err := gorm.Open(sqlite.Open("file:example?mode=memory&cache=shared"), &gorm.Config{})
+	provider, err := db.NewDB(sqlite.Open("file:example?mode=memory&cache=shared"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer sqlDB.Close()
-	sqlDB.SetMaxOpenConns(1)
+	defer provider.Close()
 
-	if err = db.AutoMigrate(&User{}); err != nil {
+	if err = provider.DB(ctx).AutoMigrate(&User{}); err != nil {
 		log.Fatal(err)
 	}
 	for i, name := range []string{"alice", "bob", "carol", "dave", "erin"} {
-		if err = db.Create(&User{Name: name, CreatedAt: int64(i)}).Error; err != nil {
+		if err = provider.DB(ctx).Create(&User{Name: name, CreatedAt: int64(i)}).Error; err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -90,7 +57,7 @@ func main() {
 
 	// 2. 分页 + 排序：同一个 Options 交给 store，计数与查询各应用一次。
 	params := page.Params{Page: 2, Size: 2}
-	userStore := store.NewStore[User](dbProvider{db: db})
+	userStore := store.NewStore[User](provider)
 	total, users, err := userStore.List(ctx, where.P(params.Page, params.Size).S(columns...))
 	if err != nil {
 		log.Fatal(err)

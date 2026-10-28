@@ -1,7 +1,4 @@
 // Package store provides a generic data store implementation
-//
-//go:generate mockgen -source=$GOFILE -destination=mocks/$GOFILE -package=mocks
-
 package store
 
 import (
@@ -10,28 +7,19 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/apus-run/gala/components/db"
 	"github.com/apus-run/gala/components/db/where"
 )
 
-// Provider defines an interface for providing a database connection.
-type Provider interface {
-	// DB returns the database instance for the given context.
-	DB(ctx context.Context, wheres ...where.Where) *gorm.DB
-
-	// TX executes a transactional operation.
-	TX(ctx context.Context, fn func(ctx context.Context) error) error
-}
-
-// Option defines a function type for configuring the Store.
-type Option[T any] func(*Store[T])
-
-// Store represents a generic data store with logging capabilities.
+// Store represents a generic data store.
+//
+// Store 在 db.Provider.TX 传入的 ctx 下自动落在该事务上。
 type Store[T any] struct {
-	storage Provider
+	storage db.Provider
 }
 
-// NewStore creates a new instance of Store with the provided DBProvider.
-func NewStore[T any](storage Provider) *Store[T] {
+// NewStore creates a new instance of Store with the provided db.Provider.
+func NewStore[T any](storage db.Provider) *Store[T] {
 	return &Store[T]{
 		storage: storage,
 	}
@@ -74,12 +62,10 @@ func (s *Store[T]) Delete(ctx context.Context, opts *where.Options) error {
 }
 
 // Get retrieves a single object from the database based on the provided where options.
+// 未命中时返回 gorm.ErrRecordNotFound，调用方用 errors.Is 判断。
 func (s *Store[T]) Get(ctx context.Context, opts *where.Options) (*T, error) {
 	var obj T
 	if err := s.db(ctx, opts).First(&obj).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("record not found")
-		}
 		return nil, err
 	}
 	return &obj, nil

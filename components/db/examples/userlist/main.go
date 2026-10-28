@@ -14,6 +14,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/apus-run/gala/components/db"
 	"github.com/apus-run/gala/components/db/page"
 	"github.com/apus-run/gala/components/db/store"
 	"github.com/apus-run/gala/components/db/where"
@@ -74,10 +75,11 @@ func listUsers(ctx context.Context, users *store.Store[User], q listQuery) (page
 
 func main() {
 	ctx := context.Background()
-	db := open()
-	seed(db)
+	provider := open(ctx)
+	defer provider.Close()
+	seed(provider.DB(ctx))
 
-	users := store.NewStore[User](dbProvider{db: db})
+	users := store.NewStore[User](provider)
 
 	// 1. 活跃用户，按注册时间倒序。
 	run(ctx, users, "活跃用户，按注册时间倒序", listQuery{
@@ -126,22 +128,16 @@ func run(ctx context.Context, users *store.Store[User], title string, q listQuer
 	fmt.Println()
 }
 
-func open() *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file:userlist?mode=memory&cache=shared"), &gorm.Config{})
+func open(ctx context.Context) db.Provider {
+	provider, err := db.NewDB(sqlite.Open("file:userlist?mode=memory&cache=shared"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	sqlDB, err := db.DB()
-	if err != nil {
+	if err = provider.DB(ctx).AutoMigrate(&User{}); err != nil {
 		log.Fatal(err)
 	}
-	sqlDB.SetMaxOpenConns(1)
-
-	if err = db.AutoMigrate(&User{}); err != nil {
-		log.Fatal(err)
-	}
-	return db
+	return provider
 }
 
 func seed(db *gorm.DB) {
@@ -163,32 +159,4 @@ func seed(db *gorm.DB) {
 	if err := db.Create(&rows).Error; err != nil {
 		log.Fatal(err)
 	}
-}
-
-type txKey struct{}
-
-// dbProvider 把 *gorm.DB 适配成 store.Provider。
-type dbProvider struct {
-	db *gorm.DB
-}
-
-func (p dbProvider) DB(ctx context.Context, wheres ...where.Where) *gorm.DB {
-	session := p.db
-	if tx, ok := ctx.Value(txKey{}).(*gorm.DB); ok {
-		session = tx
-	}
-	session = session.WithContext(ctx)
-
-	for _, whr := range wheres {
-		if whr != nil {
-			session = whr.Where(session)
-		}
-	}
-	return session
-}
-
-func (p dbProvider) TX(ctx context.Context, fn func(context.Context) error) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(context.WithValue(ctx, txKey{}, tx))
-	})
 }
