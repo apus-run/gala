@@ -2,6 +2,8 @@ package captcha
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -10,176 +12,341 @@ import (
 
 	"github.com/mojocn/base64Captcha"
 
+	"github.com/apus-run/gala/components/cache"
 	"github.com/apus-run/gala/components/cache/memory"
 )
 
-func TestDigitEndToEnd(t *testing.T) {
-	SetStore(NewCacheStore(memory.New(), 10*time.Minute))
+var ctx = context.Background()
 
-	id, _, answer, err := DriverDigitFunc()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !Verify(id, answer, true) {
-		t.Fatal("answer should verify")
-	}
-	if Verify(id, answer, false) {
-		t.Fatal("cleared captcha must not verify twice")
+// both 对数字与字符串两种验证码各跑一遍 fn。
+func both(t *testing.T, c cache.Cache, fn func(t *testing.T, cp *Captcha)) {
+	t.Helper()
+	for name, cp := range map[string]*Captcha{"digit": NewDigit(c), "string": NewString(c)} {
+		t.Run(name, func(t *testing.T) { fn(t, cp) })
 	}
 }
 
-func TestStringGenerate(t *testing.T) {
-	SetStore(NewCacheStore(memory.New(), 10*time.Minute))
-
-	id, b64s, answer, err := DriverStringFunc()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id == "" || b64s == "" || answer == "" {
-		t.Fatalf("empty result: id=%q b64s=%q answer=%q", id, b64s, answer)
-	}
-	if !Verify(id, answer, true) {
-		t.Fatal("answer should verify")
-	}
-}
-
-func TestCacheStoreClear(t *testing.T) {
-	s := NewCacheStore(memory.New(), time.Minute)
-
-	if err := s.Set("id1", "1234"); err != nil {
-		t.Fatal(err)
-	}
-	if got := s.Get("id1", false); got != "1234" {
-		t.Fatalf("get = %q, want 1234", got)
-	}
-	if got := s.Get("id1", true); got != "1234" {
-		t.Fatalf("get clear = %q, want 1234", got)
-	}
-	if got := s.Get("id1", false); got != "" {
-		t.Fatalf("cleared = %q, want empty", got)
-	}
-}
-
-// 空答案绕过：store 对不存在的 id 返回空串，空答案曾经能通过校验。
-func TestVerifyRejectsEmpty(t *testing.T) {
-	for name, s := range map[string]base64Captcha.Store{
-		"cacheStore": NewCacheStore(memory.New(), time.Minute),
-		"memStore":   base64Captcha.NewMemoryStore(100, time.Minute),
-	} {
-		t.Run(name, func(t *testing.T) {
-			SetStore(s)
-			for _, c := range []struct{ id, code string }{
-				{"no-such-id", ""}, {"", ""}, {"", "1234"}, {"no-such-id", "   "},
-			} {
-				if Verify(c.id, c.code, true) {
-					t.Errorf("Verify(%q, %q) = true, want false", c.id, c.code)
-				}
-			}
-			if s.Verify("no-such-id", "", true) {
-				t.Error("store.Verify with an empty answer must fail")
-			}
-		})
-	}
-}
-
-// 字符串验证码答案是小写：用户输大写或带首尾空白也应通过，与 base64Captcha 自带 store 一致。
-func TestVerifyIgnoresCaseAndSpace(t *testing.T) {
-	SetStore(NewCacheStore(memory.New(), time.Minute))
-	for _, variant := range []func(string) string{strings.ToUpper, func(s string) string { return " " + s + "\t" }} {
-		id, _, ans, err := DriverStringFunc()
+func TestGenerateAndVerify(t *testing.T) {
+	both(t, memory.New(), func(t *testing.T, cp *Captcha) {
+		id, b64s, answer, err := cp.generate(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !Verify(id, variant(ans), true) {
-			t.Fatalf("Verify(%q) should accept %q", ans, variant(ans))
+		if id == "" || answer == "" {
+			t.Fatalf("empty id or answer: %q %q", id, answer)
+		}
+		png, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(b64s, "data:image/png;base64,"))
+		if err != nil || !strings.HasPrefix(string(png), "\x89PNG") {
+			t.Fatalf("b64s is not a base64 PNG: err=%v prefix=%q", err, b64s[:min(len(b64s), 32)])
+		}
+
+		ok, err := cp.Verify(ctx, id, answer)
+		if err != nil || !ok {
+			t.Fatalf("Verify(answer) = %v, %v, want true", ok, err)
+		}
+	})
+}
+
+// Generate 不把答案交给调用方。
+func TestGenerateDoesNotReturnAnswer(t *testing.T) {
+	cp := NewDigit(memory.New())
+	id, b64s, err := cp.Generate(ctx)
+	if err != nil || id == "" || b64s == "" {
+		t.Fatalf("Generate = %q, %d bytes, %v", id, len(b64s), err)
+	}
+}
+
+// 一次作废：答对之后、答错之后都不能再用。
+func TestVerifyIsOneShot(t *testing.T) {
+	both(t, memory.New(), func(t *testing.T, cp *Captcha) {
+		id, _, answer, _ := cp.generate(ctx)
+		if ok, _ := cp.Verify(ctx, id, answer); !ok {
+			t.Fatal("first Verify should pass")
+		}
+		if ok, _ := cp.Verify(ctx, id, answer); ok {
+			t.Fatal("a used captcha must not verify again")
+		}
+
+		id, _, answer, _ = cp.generate(ctx)
+		if ok, _ := cp.Verify(ctx, id, "wrong"); ok {
+			t.Fatal("wrong answer verified")
+		}
+		if ok, _ := cp.Verify(ctx, id, answer); ok {
+			t.Fatal("a wrong attempt must spend the captcha (no brute force)")
+		}
+	})
+}
+
+// 空答案永远不对：不拦截时，存的若是空串（或取不到值）空答案就会匹配上。
+// 空答案同样让题作废，不给反复试探的机会。
+func TestVerifyEmptyAnswer(t *testing.T) {
+	c := memory.New()
+	cp := NewDigit(c)
+	_ = c.Set(ctx, keyPrefix+"blank", "", time.Minute)
+
+	for _, code := range []string{"", "   "} {
+		if ok, err := cp.Verify(ctx, "blank", code); ok || err != nil {
+			t.Errorf("Verify(blank, %q) = %v, %v, want false, nil", code, ok, err)
+		}
+	}
+	if ok, _ := cp.Verify(ctx, "no-such-id", ""); ok {
+		t.Error("empty answer for an unknown id verified")
+	}
+
+	id, _, answer, _ := cp.generate(ctx)
+	if ok, _ := cp.Verify(ctx, id, ""); ok {
+		t.Fatal("empty answer verified")
+	}
+	if ok, _ := cp.Verify(ctx, id, answer); ok {
+		t.Fatal("an empty attempt must spend the captcha too")
+	}
+}
+
+// 空 id 不碰 cache：否则会去读、去删 "captcha:" 这个 key。
+func TestVerifyEmptyID(t *testing.T) {
+	c := memory.New()
+	_ = c.Set(ctx, keyPrefix, "1234", time.Minute)
+	if ok, err := NewDigit(c).Verify(ctx, "", "1234"); ok || err != nil {
+		t.Fatalf("Verify(\"\", 1234) = %v, %v, want false, nil", ok, err)
+	}
+	if !c.Contains(ctx, keyPrefix) {
+		t.Fatal("empty id must not delete the bare prefix key")
+	}
+}
+
+// 去掉首尾空白，不区分大小写（字符串验证码的答案是小写）。
+func TestVerifyIgnoresCaseAndSpace(t *testing.T) {
+	cp := NewString(memory.New())
+	for _, variant := range []func(string) string{
+		strings.ToUpper,
+		func(s string) string { return " " + s + "\t" },
+	} {
+		id, _, answer, _ := cp.generate(ctx)
+		if ok, err := cp.Verify(ctx, id, variant(answer)); !ok || err != nil {
+			t.Fatalf("Verify(%q) as %q = %v, %v", answer, variant(answer), ok, err)
 		}
 	}
 }
 
-// 答错也作废（clear=true），防止对同一个验证码暴力枚举。
-func TestWrongAnswerClears(t *testing.T) {
-	SetStore(NewCacheStore(memory.New(), time.Minute))
-	id, _, ans, _ := DriverDigitFunc()
-	if Verify(id, "wrong", true) {
-		t.Fatal("wrong answer verified")
-	}
-	if Verify(id, ans, true) {
-		t.Fatal("captcha must be spent after a wrong attempt")
-	}
-}
-
-// 并发校验同一个验证码只能成功一次（单实例 memory 后端）。
+// 并发提交同一个验证码只有一次成功。
 func TestConcurrentVerifyOnlyOnce(t *testing.T) {
-	SetStore(NewCacheStore(memory.New(), time.Minute))
+	cp := NewDigit(memory.New())
 	for range 50 {
-		id, _, ans, _ := DriverDigitFunc()
-		if n := verifyConcurrently(func(int) bool { return Verify(id, ans, true) }, 32); n != 1 {
+		id, _, answer, _ := cp.generate(ctx)
+		if n := verifyConcurrently(32, func(int) bool {
+			ok, _ := cp.Verify(ctx, id, answer)
+			return ok
+		}); n != 1 {
 			t.Fatalf("one captcha verified %d times, want 1", n)
 		}
 	}
 }
 
-// SetStore 与生成、校验并发调用：不能有数据竞争（配合 -race），也不再改写第三方全局变量。
-func TestSetStoreConcurrentAndIsolated(t *testing.T) {
-	before := base64Captcha.DefaultMemStore
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Add(2)
-		go func() { defer wg.Done(); SetStore(NewCacheStore(memory.New(), time.Minute)) }()
-		go func() {
-			defer wg.Done()
-			id, _, ans, err := DriverDigitFunc()
-			if err == nil {
-				_ = Verify(id, ans, true)
-			}
-		}()
-	}
-	wg.Wait()
-	if base64Captcha.DefaultMemStore != before {
-		t.Fatal("SetStore must not overwrite base64Captcha.DefaultMemStore")
+// 过期后校验失败，且不是后端错误。
+func TestVerifyExpired(t *testing.T) {
+	cp := NewDigit(memory.New(), WithTTL(time.Second))
+	id, _, answer, _ := cp.generate(ctx)
+	time.Sleep(2100 * time.Millisecond) // memory 的时间戳精度是秒
+	if ok, err := cp.Verify(ctx, id, answer); ok || err != nil {
+		t.Fatalf("expired Verify = %v, %v, want false, nil", ok, err)
 	}
 }
 
-// key 有命名空间：调用方传入的 id 只能命中验证码，删不掉共享 cache 里的其他 key。
-func TestCacheStoreKeyNamespace(t *testing.T) {
+// key 有命名空间：调用方传入的 id 只能命中验证码，碰不到共享 cache 里的其他 key。
+func TestKeyNamespace(t *testing.T) {
 	c := memory.New()
-	ctx := context.Background()
 	if err := c.Set(ctx, "session:42", "secret", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	SetStore(NewCacheStore(c, time.Minute))
-
-	if Verify("session:42", "secret", true) {
+	cp := NewDigit(c)
+	if ok, _ := cp.Verify(ctx, "session:42", "secret"); ok {
 		t.Fatal("Verify must not read arbitrary cache keys")
 	}
 	if v, err := c.Get(ctx, "session:42"); err != nil || v != "secret" {
 		t.Fatalf("unrelated key was touched: %v, %v", v, err)
 	}
 
-	id, _, _, err := DriverDigitFunc()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.Contains(ctx, "captcha:"+id) {
+	id, _, _ := cp.Generate(ctx)
+	if !c.Contains(ctx, keyPrefix+id) {
 		t.Fatal("captcha should be stored under the captcha: prefix")
 	}
 }
 
-// expiration<=0 不能变成永不过期。
-func TestCacheStoreDefaultExpiration(t *testing.T) {
-	for _, exp := range []time.Duration{0, -time.Second} {
-		s := NewCacheStore(memory.New(), exp).(*cacheStore)
-		if s.expiration != base64Captcha.Expiration {
-			t.Fatalf("NewCacheStore(%v).expiration = %v, want %v", exp, s.expiration, base64Captcha.Expiration)
+func TestWithTTL(t *testing.T) {
+	c := memory.New()
+	for _, tc := range []struct {
+		opt  []Option
+		want time.Duration
+	}{
+		{nil, DefaultTTL},
+		{[]Option{WithTTL(0)}, DefaultTTL},
+		{[]Option{WithTTL(-time.Second)}, DefaultTTL},
+		{[]Option{WithTTL(time.Minute)}, time.Minute},
+	} {
+		if got := NewDigit(c, tc.opt...).ttl; got != tc.want {
+			t.Errorf("ttl = %v, want %v", got, tc.want)
 		}
-	}
-	if s := NewCacheStore(memory.New(), time.Minute).(*cacheStore); s.expiration != time.Minute {
-		t.Fatalf("explicit expiration overridden: %v", s.expiration)
 	}
 }
 
+// 实例互不影响：同一个 cache 上的两个 Captcha 各自工作，没有全局状态。
+func TestInstancesAreIndependent(t *testing.T) {
+	c := memory.New()
+	digit, str := NewDigit(c, WithTTL(time.Minute)), NewString(c, WithTTL(time.Hour))
+	if digit.ttl == str.ttl {
+		t.Fatal("options leaked between instances")
+	}
+	id, _, answer, _ := digit.generate(ctx)
+	// 同一个 cache 下 id 通用：用哪个实例校验都行，但只能成功一次。
+	if ok, _ := str.Verify(ctx, id, answer); !ok {
+		t.Fatal("instances on the same cache should share captchas")
+	}
+	if ok, _ := digit.Verify(ctx, id, answer); ok {
+		t.Fatal("captcha must be spent across instances")
+	}
+
+	other := NewDigit(memory.New())
+	id, _, answer, _ = digit.generate(ctx)
+	if ok, _ := other.Verify(ctx, id, answer); ok {
+		t.Fatal("an instance on a different cache must not see the captcha")
+	}
+}
+
+// ---- 后端故障：必须作为 error 返回，不能伪装成「答错」 ----
+
+var errBackend = errors.New("backend down")
+
+// faultyCache 包装真实 cache，按需让某个操作失败。
+type faultyCache struct {
+	cache.Cache
+	failSet, failGet, failDeletes bool
+}
+
+func (f *faultyCache) Set(ctx context.Context, k string, v any, exp time.Duration) error {
+	if f.failSet {
+		return errBackend
+	}
+	return f.Cache.Set(ctx, k, v, exp)
+}
+
+func (f *faultyCache) Get(ctx context.Context, k string) (any, error) {
+	if f.failGet {
+		return nil, errBackend
+	}
+	return f.Cache.Get(ctx, k)
+}
+
+func (f *faultyCache) Deletes(ctx context.Context, keys ...string) (int64, error) {
+	if f.failDeletes {
+		return 0, errBackend
+	}
+	return f.Cache.Deletes(ctx, keys...)
+}
+
+func TestBackendErrors(t *testing.T) {
+	t.Run("Generate", func(t *testing.T) {
+		cp := NewDigit(&faultyCache{Cache: memory.New(), failSet: true})
+		if id, b64s, err := cp.Generate(ctx); !errors.Is(err, errBackend) || id != "" || b64s != "" {
+			t.Fatalf("Generate = %q, %d bytes, %v, want empty + errBackend", id, len(b64s), err)
+		}
+	})
+	t.Run("Verify Deletes fails", func(t *testing.T) {
+		fc := &faultyCache{Cache: memory.New()}
+		cp := NewDigit(fc)
+		id, _, answer, _ := cp.generate(ctx)
+		fc.failDeletes = true
+		if ok, err := cp.Verify(ctx, id, answer); ok || !errors.Is(err, errBackend) {
+			t.Fatalf("Verify = %v, %v, want false + errBackend", ok, err)
+		}
+	})
+	t.Run("Verify Get fails", func(t *testing.T) {
+		// Get 失败但删除成功：这道题已作废，不能放行，也不应误报为后端错误以外的成功。
+		fc := &faultyCache{Cache: memory.New()}
+		cp := NewDigit(fc)
+		id, _, answer, _ := cp.generate(ctx)
+		fc.failGet = true
+		if ok, _ := cp.Verify(ctx, id, answer); ok {
+			t.Fatal("Verify must not pass when the answer could not be read")
+		}
+		fc.failGet = false
+		if ok, _ := cp.Verify(ctx, id, answer); ok {
+			t.Fatal("the captcha must still be spent")
+		}
+	})
+}
+
+// failingDriver 让绘图失败：Generate 必须返回错误，并且不把答案写进 cache。
+type failingDriver struct{ base64Captcha.Driver }
+
+func (failingDriver) DrawCaptcha(string) (base64Captcha.Item, error) { return nil, errBackend }
+
+func TestGenerateDrawError(t *testing.T) {
+	c := memory.New()
+	cp := newCaptcha(c, failingDriver{digitDriver()}, nil)
+	if id, b64s, err := cp.Generate(ctx); !errors.Is(err, errBackend) || id != "" || b64s != "" {
+		t.Fatalf("Generate = %q, %d bytes, %v, want empty + errBackend", id, len(b64s), err)
+	}
+	if keys := c.Keys(ctx); len(keys) != 0 {
+		t.Fatalf("a failed draw left keys behind: %v", keys)
+	}
+}
+
+// ctx 一路传到 cache：取消的 ctx 让 redis 等后端立刻返回，而不是无限等待。
+type ctxCheckingCache struct{ cache.Cache }
+
+func (c ctxCheckingCache) Set(ctx context.Context, k string, v any, exp time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Cache.Set(ctx, k, v, exp)
+}
+
+func (c ctxCheckingCache) Deletes(ctx context.Context, keys ...string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.Cache.Deletes(ctx, keys...)
+}
+
+func TestContextIsPropagated(t *testing.T) {
+	cp := NewDigit(ctxCheckingCache{memory.New()})
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+
+	if _, _, err := cp.Generate(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Generate with cancelled ctx = %v, want context.Canceled", err)
+	}
+	id, _, answer, _ := cp.generate(ctx)
+	if _, err := cp.Verify(cancelled, id, answer); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Verify with cancelled ctx = %v, want context.Canceled", err)
+	}
+}
+
+// 并发生成与校验没有数据竞争（配合 -race），共享的 driver 是只读的。
+func TestConcurrentGenerate(t *testing.T) {
+	c := memory.New()
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, cp := range []*Captcha{NewDigit(c), NewString(c)} {
+				id, _, answer, err := cp.generate(ctx)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if ok, err := cp.Verify(ctx, id, answer); !ok || err != nil {
+					t.Errorf("Verify = %v, %v", ok, err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // verifyConcurrently 让 n 个 goroutine 同时起跑调用 verify(i)，返回成功次数。
-func verifyConcurrently(verify func(i int) bool, n int) int32 {
+func verifyConcurrently(n int, verify func(i int) bool) int32 {
 	var ok atomic.Int32
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -198,47 +365,11 @@ func verifyConcurrently(verify func(i int) bool, n int) int32 {
 	return ok.Load()
 }
 
-// naiveStore 不做任何校验：模拟用户经 SetStore 装入的自定义 store。
-// 包级 Verify 的空值拦截与去空白必须不依赖 store 自己做。
-type naiveStore struct{ m sync.Map }
-
-func (s *naiveStore) Set(id, v string) error { s.m.Store(id, v); return nil }
-func (s *naiveStore) Get(id string, clear bool) string {
-	v, _ := s.m.Load(id)
-	if clear {
-		s.m.Delete(id)
-	}
-	sv, _ := v.(string)
-	return sv
-}
-func (s *naiveStore) Verify(id, answer string, clear bool) bool { return s.Get(id, clear) == answer }
-
-func TestVerifyGuardsDoNotDependOnStore(t *testing.T) {
-	SetStore(&naiveStore{})
-	if Verify("no-such-id", "", true) {
-		t.Fatal("empty answer must fail even with a store that does not check")
-	}
-	id, _, ans, err := DriverDigitFunc()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !Verify(id, " "+ans+" ", true) {
-		t.Fatal("surrounding spaces must be trimmed before reaching the store")
-	}
-
-	// 默认内存 store 不去空白，同样要通过。
-	SetStore(base64Captcha.NewMemoryStore(100, time.Minute))
-	id, _, ans, _ = DriverDigitFunc()
-	if !Verify(id, "\t"+ans+" ", true) {
-		t.Fatal("surrounding spaces must be trimmed for the default memory store")
-	}
-}
-
-func BenchmarkDriverString(b *testing.B) {
-	SetStore(NewCacheStore(memory.New(), time.Minute))
+func BenchmarkGenerateString(b *testing.B) {
+	cp := NewString(memory.New())
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, _, _, err := DriverStringFunc(); err != nil {
+		if _, _, err := cp.Generate(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
