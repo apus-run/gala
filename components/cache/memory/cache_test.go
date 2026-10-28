@@ -54,7 +54,8 @@ func TestCache(t *testing.T) {
 		require.Nil(t, r)
 	})
 
-	// 亚秒级 TTL 在到期前必须仍然可读（向下取整时它写入即过期）。
+	// 亚秒级 TTL 刚写入时必须可读（向下取整时它写入即过期）。TTL 是秒级精度，
+	// 不能再等一会儿后断言仍然有效：时间戳更新落在这段时间里就会过期。
 	t.Run("CacheGetValid", func(t *testing.T) {
 		c := memory.New()
 		e := 25 * time.Millisecond
@@ -63,7 +64,6 @@ func TestCache(t *testing.T) {
 			t.Error(err)
 		}
 
-		<-time.After(20 * time.Millisecond)
 		r, err := c.Get(ctx, key)
 
 		require.NoError(t, err)

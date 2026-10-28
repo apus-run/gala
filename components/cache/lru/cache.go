@@ -135,7 +135,7 @@ func (s *Cache) Keys(ctx context.Context) []string {
 	defer s.mux.RUnlock()
 
 	keys := s.data.Keys()
-	result := make([]string, 0, len(keys))
+	var result []string // 没有有效 key 时返回 nil，与 memory、redis 一致
 	for _, k := range keys {
 		if item, ok := s.data.Peek(k); ok && !item.Expired() {
 			result = append(result, k)

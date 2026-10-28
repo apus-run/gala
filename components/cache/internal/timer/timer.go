@@ -19,8 +19,11 @@ func Timestamp() int64 {
 
 // ExpireAt 返回 exp 之后的过期时间戳（秒）；exp<=0 返回 0，表示永不过期。
 //
-// 时间戳是秒级的，所以向上取整：向下取整会让 500ms 的 TTL 写入即过期、
-// 1.5s 只活 1s。向上取整保证至少活满 exp。
+// 时间戳每秒才更新一次（见 StartTimeStampUpdater），所以 TTL 只有秒级精度：
+// 先向上取整为 c=⌈exp⌉ 秒，实际寿命落在 (c-1s, c] 之间，取决于写入发生在两次更新
+// 之间的哪个位置。向上取整只保证亚秒 TTL 不会写入即过期（向下取整时 500ms 的 TTL
+// 活 0 秒）；它不保证活满 exp：500ms 的 TTL 可能只活几十毫秒。
+// 需要精确短 TTL 时用 redis。
 func ExpireAt(exp time.Duration) int64 {
 	if exp <= 0 {
 		return 0

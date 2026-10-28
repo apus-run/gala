@@ -54,6 +54,7 @@ case !ok:
 - `(false, nil)` 表示答错、过期或已使用；`err != nil` 表示 cache 后端出错，两者可以分别处理。
 - `ctx` 一路传到 cache：redis 卡住时由调用方的超时或取消兜底。
 - key 带 `captcha:` 前缀，调用方传入的 id 碰不到共享 cache 里的其他 key；`WithTTL` 传 `<=0` 时用默认值，不会变成永不过期。
+- 有效期的精度取决于 cache 后端：memory 是秒级（实际寿命在 (⌈TTL⌉-1s, ⌈TTL⌉] 之间浮动），redis 是毫秒级。验证码的分钟级 TTL 不受影响；不要给验证码设置秒级以下的有效期。
 
 ## 测试
 

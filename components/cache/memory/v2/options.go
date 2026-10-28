@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/apus-run/gala/components/cache/internal/timer"
@@ -47,9 +48,12 @@ func WithGCInterval[K comparable, V any](d time.Duration) Option[K, V] {
 }
 
 // Data initializes the cache with preconfigured items.
+//
+// 复制 items：直接持有调用方的 map，调用方事后改它就等于绕过缓存的锁。nil 视为空。
 func Data[K comparable, V any](items map[K]Item[V]) Option[K, V] {
 	return func(o *Options[K, V]) {
-		o.Data = items
+		o.Data = make(map[K]Item[V], len(items))
+		maps.Copy(o.Data, items)
 	}
 }
 

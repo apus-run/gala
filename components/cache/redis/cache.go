@@ -50,6 +50,9 @@ func (s *Cache) Delete(ctx context.Context, key string) error {
 }
 
 func (s *Cache) Deletes(ctx context.Context, keys ...string) (int64, error) {
+	if len(keys) == 0 { // DEL 不带 key 会被 redis 拒绝；与 memory、lru 一致，返回 0
+		return 0, nil
+	}
 	return s.client.Del(ctx, keys...).Result()
 }
 

@@ -94,7 +94,9 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
-// 亚秒 TTL 不会写入即过期，并且至少活满 TTL。
+// 亚秒 TTL 不会写入即过期（向下取整时会）。TTL 只有秒级精度：寿命在 (⌈ttl⌉-1s, ⌈ttl⌉]
+// 之间浮动，所以只能断言「刚写入就能读到」和「过了 ⌈ttl⌉ 一定过期」，
+// 不能断言「活满 ttl」。
 func TestSubSecondTTL(t *testing.T) {
 	c := memory.New()
 	defer c.Close()
@@ -102,9 +104,9 @@ func TestSubSecondTTL(t *testing.T) {
 	if _, err := c.Get(rctx, "k"); err != nil {
 		t.Fatalf("Get right after Set(500ms) = %v", err)
 	}
-	time.Sleep(400 * time.Millisecond)
-	if _, err := c.Get(rctx, "k"); err != nil {
-		t.Fatalf("Get after 400ms of a 500ms TTL = %v", err)
+	time.Sleep(1600 * time.Millisecond) // ⌈500ms⌉ = 1s，留足调度余量
+	if _, err := c.Get(rctx, "k"); !errors.Is(err, errs.ErrItemExpired) {
+		t.Fatalf("Get after 1.6s of a 500ms TTL = %v, want ErrItemExpired", err)
 	}
 }
 
@@ -132,5 +134,59 @@ func TestNonPositiveGCIntervalIsIgnored(t *testing.T) {
 			t.Fatalf("WithGCInterval(%v) broke the cache", d)
 		}
 		_ = c.Close()
+	}
+}
+
+// Data 复制传入的 map：调用方事后修改自己的 map，不能影响（也不能绕过锁地修改）缓存。
+func TestDataCopiesInput(t *testing.T) {
+	src := map[string]memory.Item{"a": {Val: 1}}
+	c := memory.New(memory.Data(src))
+	defer c.Close()
+
+	src["b"] = memory.Item{Val: 2}
+	delete(src, "a")
+	if c.Contains(rctx, "b") {
+		t.Fatal("a key added to the caller's map leaked into the cache")
+	}
+	if v, err := c.Get(rctx, "a"); err != nil || v != 1 {
+		t.Fatalf("a key deleted from the caller's map vanished from the cache: %v, %v", v, err)
+	}
+}
+
+// Data(nil) 曾经让第一次 Set 因写 nil map 而 panic。
+func TestDataNil(t *testing.T) {
+	c := memory.New(memory.Data(nil))
+	defer c.Close()
+	if err := c.Set(rctx, "k", 1, 0); err != nil || !c.Contains(rctx, "k") {
+		t.Fatalf("Data(nil) cache unusable: %v", err)
+	}
+}
+
+// Keys 没有有效 key 时返回 nil（与 lru、redis 一致）；过期的 key 不算。
+func TestKeysEmptyIsNil(t *testing.T) {
+	c := memory.New()
+	defer c.Close()
+	if keys := c.Keys(rctx); keys != nil {
+		t.Fatalf("Keys on an empty cache = %#v, want nil", keys)
+	}
+	_ = c.Set(rctx, "k", 1, 0)
+	if keys := c.Keys(rctx); len(keys) != 1 {
+		t.Fatalf("Keys = %v", keys)
+	}
+}
+
+// Delete 与 Deletes 对不存在的 key 不报错；Deletes 返回实际删除的个数。
+func TestDeleteMissingAndCount(t *testing.T) {
+	c := memory.New()
+	defer c.Close()
+	_ = c.Set(rctx, "a", 1, 0)
+	if err := c.Delete(rctx, "nope"); err != nil {
+		t.Fatalf("Delete(missing) = %v", err)
+	}
+	if n, err := c.Deletes(rctx); n != 0 || err != nil {
+		t.Fatalf("Deletes() = %d, %v", n, err)
+	}
+	if n, err := c.Deletes(rctx, "a", "a", "nope"); n != 1 || err != nil {
+		t.Fatalf("Deletes(a, a, nope) = %d, %v, want 1", n, err)
 	}
 }

@@ -99,3 +99,34 @@ func TestNonPositiveGCIntervalIsIgnored(t *testing.T) {
 		_ = c.Close()
 	}
 }
+
+func TestDataCopiesInput(t *testing.T) {
+	src := map[string]memory.Item[int]{"a": {Val: 1}}
+	c := memory.New[string, int](memory.Data(src))
+	defer c.Close()
+
+	src["b"] = memory.Item[int]{Val: 2}
+	delete(src, "a")
+	if c.Contains(rctx, "b") {
+		t.Fatal("a key added to the caller's map leaked into the cache")
+	}
+	if v, err := c.Get(rctx, "a"); err != nil || v != 1 {
+		t.Fatalf("a key deleted from the caller's map vanished from the cache: %v, %v", v, err)
+	}
+}
+
+func TestDataNil(t *testing.T) {
+	c := memory.New[string, int](memory.Data[string, int](nil))
+	defer c.Close()
+	if err := c.Set(rctx, "k", 1, 0); err != nil || !c.Contains(rctx, "k") {
+		t.Fatalf("Data(nil) cache unusable: %v", err)
+	}
+}
+
+func TestKeysEmptyIsNil(t *testing.T) {
+	c := memory.New[string, int]()
+	defer c.Close()
+	if keys := c.Keys(rctx); keys != nil {
+		t.Fatalf("Keys on an empty cache = %#v, want nil", keys)
+	}
+}

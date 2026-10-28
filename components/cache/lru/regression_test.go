@@ -52,7 +52,7 @@ func TestExpiredGetDoesNotDeleteFreshValue(t *testing.T) {
 	for round := range 100 {
 		c := lru.New()
 		_ = c.Set(rctx, "k", "old", time.Nanosecond)
-		time.Sleep(1100 * time.Millisecond * time.Duration(boolInt(round == 0))) // 第一轮确保真的过期
+		time.Sleep(1500 * time.Millisecond * time.Duration(boolInt(round == 0))) // 第一轮确保真的过期
 		_, _ = c.Get(rctx, "k")
 		_ = c.Set(rctx, "k", "new", time.Hour)
 		time.Sleep(time.Millisecond)
@@ -103,7 +103,7 @@ func TestGetAnyErrorsMatchGet(t *testing.T) {
 		t.Fatalf("GetAny(miss) err = %v", v.Error)
 	}
 	_ = c.Set(rctx, "old", "v", time.Nanosecond)
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
 	if v := c.GetAny(rctx, "old"); !errors.Is(v.Error, errs.ErrItemExpired) {
 		t.Fatalf("GetAny(expired) err = %v, want ErrItemExpired", v.Error)
 	}
@@ -145,5 +145,33 @@ func TestNonPositiveGCIntervalIsIgnored(t *testing.T) {
 			t.Fatalf("WithGCInterval(%v) broke the cache", d)
 		}
 		c.Close()
+	}
+}
+
+// Keys 没有有效 key 时返回 nil（lru 曾经返回空切片，与 memory、redis 不一致）。
+func TestKeysEmptyIsNil(t *testing.T) {
+	c := lru.New()
+	defer c.Close()
+	if keys := c.Keys(rctx); keys != nil {
+		t.Fatalf("Keys on an empty cache = %#v, want nil", keys)
+	}
+	_ = c.Set(rctx, "old", 1, time.Nanosecond)
+	time.Sleep(1500 * time.Millisecond)
+	if keys := c.Keys(rctx); keys != nil {
+		t.Fatalf("Keys with only expired entries = %#v, want nil", keys)
+	}
+	_ = c.Set(rctx, "k", 1, 0)
+	if keys := c.Keys(rctx); len(keys) != 1 {
+		t.Fatalf("Keys = %v", keys)
+	}
+}
+
+func TestDataCopiesInput(t *testing.T) {
+	src := map[string]lru.Item{"a": {Val: 1}}
+	c := lru.New(lru.Data(src))
+	defer c.Close()
+	src["b"] = lru.Item{Val: 2}
+	if c.Contains(rctx, "b") {
+		t.Fatal("a key added to the caller's map leaked into the cache")
 	}
 }
