@@ -2,12 +2,16 @@ package where
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/apus-run/gala/components/db/page"
 )
@@ -139,13 +143,6 @@ func TestOptions_F(t *testing.T) {
 			initial:  map[any]any{},
 			input:    []any{"key1", "value1", "key2", "value2"},
 			expected: map[any]any{"key1": "value1", "key2": "value2"},
-		},
-		{
-			name:       "Uneven key-value pairs",
-			initial:    map[any]any{},
-			input:      []any{"key1", "value1", "key2"},
-			expected:   map[any]any{},
-			shouldSkip: true,
 		},
 		{
 			name:     "Merge with existing filters",
@@ -471,4 +468,139 @@ func TestOptionsWhereNilReceiver(t *testing.T) {
 	if strings.Contains(sql, "WHERE") {
 		t.Fatalf("nil Options must not add conditions: %q", sql)
 	}
+}
+
+func sqlOf(t *testing.T, w Where) string {
+	t.Helper()
+	db := newDryRunDB(t)
+	return db.ToSQL(func(tx *gorm.DB) *gorm.DB { return w.Where(tx).Find(&[]testRow{}) })
+}
+
+// 链式 C / WithClauses 追加的条件最终出现在 SQL 里，且包级入口 O/L/P/C/F 与方法等价。
+func TestOptions_ClausesAndPackageHelpers(t *testing.T) {
+	cond := clause.Gt{Column: "age", Value: 18}
+
+	sql := sqlOf(t, C(cond))
+	if !strings.Contains(sql, "`age` > 18") {
+		t.Fatalf("C: %q", sql)
+	}
+	sql = sqlOf(t, NewWhere(WithClauses(cond, clause.Lt{Column: "age", Value: 60})))
+	if !strings.Contains(sql, "`age` > 18") || !strings.Contains(sql, "`age` < 60") {
+		t.Fatalf("WithClauses: %q", sql)
+	}
+
+	if o := O(7); o.Offset != 7 {
+		t.Fatalf("O(7).Offset = %d", o.Offset)
+	}
+	if o := L(7); o.Limit != 7 {
+		t.Fatalf("L(7).Limit = %d", o.Limit)
+	}
+	if o := P(3, 10); o.Offset != 20 || o.Limit != 10 {
+		t.Fatalf("P(3,10) = %d/%d", o.Offset, o.Limit)
+	}
+	if o := F("name", "bob"); o.Filters["name"] != "bob" {
+		t.Fatalf("F: %v", o.Filters)
+	}
+}
+
+func TestWithOptions(t *testing.T) {
+	o := NewWhere(WithOptions(func(o *Options) { o.Offset, o.Limit = 4, 9 }))
+	if o.Offset != 4 || o.Limit != 9 {
+		t.Fatalf("WithOptions = %d/%d, want 4/9", o.Offset, o.Limit)
+	}
+}
+
+func TestOptions_C_Chain(t *testing.T) {
+	o := NewWhere().C(clause.Gt{Column: "a", Value: 1}).C(clause.Lt{Column: "a", Value: 9})
+	if len(o.Clauses) != 2 {
+		t.Fatalf("len(Clauses) = %d, want 2", len(o.Clauses))
+	}
+}
+
+// RegisterTenant 之后包级 T(ctx) 带上租户过滤；方法 T 同理。
+func TestTenant_PackageT(t *testing.T) {
+	type k struct{}
+	RegisterTenant("tenant_id", func(ctx context.Context) string { return ctx.Value(k{}).(string) })
+	t.Cleanup(func() { RegisterTenant("", nil) })
+
+	ctx := context.WithValue(context.Background(), k{}, "t-42")
+	if v := T(ctx).Filters["tenant_id"]; v != "t-42" {
+		t.Fatalf("T(ctx).Filters = %v", T(ctx).Filters)
+	}
+}
+
+// 奇数个参数：不 panic、不添加任何过滤条件，错误在执行时返回，查询不会执行。
+func TestOptions_F_OddArgsReturnsError(t *testing.T) {
+	for _, kvs := range [][]any{{"k"}, {"a", 1, "b"}} {
+		var o *Options
+		if !didNotPanic(func() { o = NewWhere().F(kvs...) }) {
+			t.Fatalf("F(%v) must not panic", kvs)
+		}
+		if len(o.Filters) != 0 {
+			t.Fatalf("F(%v) added filters despite the error: %v", kvs, o.Filters)
+		}
+
+		db := newDryRunDB(t)
+		got := o.Where(db)
+		if !errors.Is(got.Error, ErrInvalidFilter) {
+			t.Fatalf("Where().Error = %v, want ErrInvalidFilter", got.Error)
+		}
+		if db.Error != nil {
+			t.Fatalf("Where polluted the shared db: %v", db.Error)
+		}
+		if err := got.Find(&[]testRow{}).Error; !errors.Is(err, ErrInvalidFilter) {
+			t.Fatalf("Find err = %v, want ErrInvalidFilter", err)
+		}
+	}
+	if o := NewWhere().F(); len(o.Filters) != 0 || o.err != nil {
+		t.Fatalf("F() with no args should be a no-op, got %v / %v", o.Filters, o.err)
+	}
+}
+
+// 错误是粘性的：之后再链式调用 F/Q/P，错误不会消失；只记录第一个错误。
+func TestOptions_F_ErrorIsSticky(t *testing.T) {
+	o := NewWhere().F("a").F("b", 1).P(1, 5).Q("x = ?", 1)
+	if !errors.Is(o.err, ErrInvalidFilter) || !strings.Contains(o.err.Error(), "got 1 arguments") {
+		t.Fatalf("err = %v, want the first ErrInvalidFilter", o.err)
+	}
+	if err := o.Where(newDryRunDB(t)).Find(&[]testRow{}).Error; !errors.Is(err, ErrInvalidFilter) {
+		t.Fatalf("Find err = %v", err)
+	}
+}
+
+func didNotPanic(fn func()) (ok bool) {
+	defer func() { ok = recover() == nil }()
+	fn()
+	return
+}
+
+// 没有注册租户时，包级 T 与方法 T 一致：不报错也不加过滤条件。
+func TestTenant_UnregisteredIsNoOp(t *testing.T) {
+	RegisterTenant("", nil)
+	t.Cleanup(func() { RegisterTenant("", nil) })
+
+	if o := T(context.Background()); len(o.Filters) != 0 {
+		t.Fatalf("T() without a registered tenant added filters: %v", o.Filters)
+	}
+	if o := NewWhere().T(context.Background()); len(o.Filters) != 0 {
+		t.Fatalf("(*Options).T() without a registered tenant added filters: %v", o.Filters)
+	}
+}
+
+// 并发注册与读取租户不能有数据竞争（配合 -race 运行）。
+func TestTenant_ConcurrentRegisterAndRead(t *testing.T) {
+	t.Cleanup(func() { RegisterTenant("", nil) })
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			RegisterTenant("tenant_id", func(context.Context) string { return fmt.Sprint(i) })
+		}()
+		go func() {
+			defer wg.Done()
+			_ = T(context.Background())
+		}()
+	}
+	wg.Wait()
 }

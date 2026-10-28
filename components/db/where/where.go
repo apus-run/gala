@@ -5,6 +5,8 @@ package where
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"gorm.io/gorm"
@@ -17,6 +19,9 @@ const (
 	// defaultLimit defines the default limit for pagination.
 	defaultLimit = -1
 )
+
+// ErrInvalidFilter 表示 F 的参数不是成对的 key/value。
+var ErrInvalidFilter = errors.New("where: invalid filter")
 
 // Tenant represents a tenant with a key and a function to retrieve its value.
 type Tenant struct {
@@ -68,6 +73,10 @@ type Options struct {
 	// Orders defines the ORDER BY columns, usually produced by Sortable.Parse.
 	// +optional
 	Orders []clause.OrderByColumn
+
+	// err 记录构造过程中的参数错误（目前只有 F）。链式方法没有 error 返回值，
+	// 错误留到 Where 时挂到查询上，随执行结果返回。
+	err error
 }
 
 // DefaultOptions .
@@ -214,9 +223,16 @@ func (whr *Options) T(ctx context.Context) *Options {
 }
 
 // F adds filters to the query.
+//
+// kvs 必须成对出现。奇数个参数时不添加任何过滤条件，并记录 ErrInvalidFilter：
+// 该错误会在查询执行时（List/Get/Count/Delete 等）作为普通 error 返回，查询不会执行。
+// 不能静默忽略：丢掉的若是租户过滤，查询会返回不该返回的行；也不 panic：参数错误
+// 不该让整个进程崩溃。
 func (whr *Options) F(kvs ...any) *Options {
 	if len(kvs)%2 != 0 {
-		// Handle error: uneven number of key-value pairs
+		if whr.err == nil {
+			whr.err = fmt.Errorf("%w: need key/value pairs, got %d arguments", ErrInvalidFilter, len(kvs))
+		}
 		return whr
 	}
 
@@ -237,6 +253,12 @@ func (whr *Options) F(kvs ...any) *Options {
 // interface, where the usual nil check cannot catch it.
 func (whr *Options) Where(db *gorm.DB) *gorm.DB {
 	if whr == nil {
+		return db
+	}
+	if whr.err != nil {
+		// 先 Session 成独立实例：传入的 db 可能是共享的，直接 AddError 会污染它。
+		db = db.Session(&gorm.Session{})
+		_ = db.AddError(whr.err)
 		return db
 	}
 
@@ -273,8 +295,9 @@ func C(conds ...clause.Expression) *Options {
 }
 
 // T is a convenience function to create a new Options with tenant.
+// 与 (*Options).T 行为一致：未注册租户时不添加过滤条件。
 func T(ctx context.Context) *Options {
-	return NewWhere().F(registeredTenant.Key, registeredTenant.ValueFunc(ctx))
+	return NewWhere().T(ctx)
 }
 
 // F is a convenience function to create a new Options with filters.
