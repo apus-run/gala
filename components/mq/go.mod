@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/mq
 go 1.27
 
 require (
-	github.com/apus-run/gala/pkg/lang v0.15.0
+	github.com/apus-run/gala/pkg/lang v0.15.1
 	go.uber.org/mock v0.6.0
 )
 

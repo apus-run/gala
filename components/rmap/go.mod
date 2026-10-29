@@ -5,7 +5,7 @@ go 1.27
 replace github.com/apus-run/gala/components/rmap => ../rmap
 
 require (
-	github.com/apus-run/gala/pkg/lang v0.15.0
+	github.com/apus-run/gala/pkg/lang v0.15.1
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/stretchr/testify v1.11.1
 )

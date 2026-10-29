@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/db/integration
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/db v0.15.0
+	github.com/apus-run/gala/components/db v0.15.1
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0

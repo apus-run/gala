@@ -3,8 +3,8 @@ module github.com/apus-run/gala/components/token
 go 1.27
 
 require (
-	github.com/apus-run/gala/pkg/jwtx v0.15.0
-	github.com/apus-run/gala/pkg/option v0.15.0
+	github.com/apus-run/gala/pkg/jwtx v0.15.1
+	github.com/apus-run/gala/pkg/option v0.15.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/stretchr/testify v1.11.1
 )

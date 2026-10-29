@@ -3,8 +3,8 @@ module github.com/apus-run/gala/components/mq/nsq
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/mq v0.15.0
-	github.com/apus-run/gala/pkg/lang v0.15.0
+	github.com/apus-run/gala/components/mq v0.15.1
+	github.com/apus-run/gala/pkg/lang v0.15.1
 	github.com/nsqio/go-nsq v1.1.0
 )
 

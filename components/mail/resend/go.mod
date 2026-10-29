@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/mail/resend
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/mail v0.15.0
+	github.com/apus-run/gala/components/mail v0.15.1
 	github.com/resend/resend-go/v3 v3.10.1
 )
 

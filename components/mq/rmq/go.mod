@@ -4,8 +4,8 @@ go 1.27
 
 require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
-	github.com/apus-run/gala/components/mq v0.15.0
-	github.com/apus-run/gala/pkg/lang v0.15.0
+	github.com/apus-run/gala/components/mq v0.15.1
+	github.com/apus-run/gala/pkg/lang v0.15.1
 	github.com/stretchr/testify v1.11.1
 )
 
