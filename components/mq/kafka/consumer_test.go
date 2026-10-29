@@ -18,11 +18,20 @@ type handlerFunc func(context.Context, *mq.MessageExt) error
 func (f handlerFunc) HandleMessage(ctx context.Context, m *mq.MessageExt) error { return f(ctx, m) }
 
 type fakeConsumer struct {
-	poll   func(context.Context, int) kgo.Fetches
-	commit func(context.Context, ...*kgo.Record) error
-	seek   func(map[string]map[int32]kgo.EpochOffset)
-	allow  func()
-	close  func()
+	poll    func(context.Context, int) kgo.Fetches
+	commit  func(context.Context, ...*kgo.Record) error
+	seek    func(map[string]map[int32]kgo.EpochOffset)
+	allow   func()
+	close   func()
+	produce func(...*kgo.Record) error
+}
+
+func (f *fakeConsumer) ProduceSync(_ context.Context, rs ...*kgo.Record) kgo.ProduceResults {
+	var err error
+	if f.produce != nil {
+		err = f.produce(rs...)
+	}
+	return kgo.ProduceResults{{Record: rs[0], Err: err}}
 }
 
 func (f *fakeConsumer) PollRecords(ctx context.Context, n int) kgo.Fetches { return f.poll(ctx, n) }
@@ -245,4 +254,96 @@ func TestConsumerCloseBeforeStart(t *testing.T) {
 	if err := c.Start(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("start after close=%v", err)
 	}
+}
+
+// poisonClient serves offset 0 (poison) then offset 1, rewinding on SetOffsets.
+func poisonClient(commits *[]int64, produce func(...*kgo.Record) error) *fakeConsumer {
+	var next int64
+	return &fakeConsumer{
+		poll: func(ctx context.Context, _ int) kgo.Fetches {
+			if next == 2 {
+				<-ctx.Done()
+				return nil
+			}
+			r := &kgo.Record{Topic: "events", Offset: next, Value: []byte{byte('a' + next)}}
+			next++
+			return kgo.Fetches{{Topics: []kgo.FetchTopic{{Topic: "events", Partitions: []kgo.FetchPartition{{Records: []*kgo.Record{r}}}}}}}
+		},
+		commit: func(_ context.Context, rs ...*kgo.Record) error {
+			*commits = append(*commits, rs[0].Offset)
+			return nil
+		},
+		seek:    func(os map[string]map[int32]kgo.EpochOffset) { next = os["events"][0].Offset },
+		produce: produce,
+	}
+}
+
+func runPoison(t *testing.T, c *Consumer) (handled []string) {
+	c.RegisterHandler(handlerFunc(func(_ context.Context, m *mq.MessageExt) error {
+		handled = append(handled, m.MsgID)
+		if m.MsgID == "events:0:0" {
+			return errors.New("poison")
+		}
+		return nil
+	}))
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	synctest.Wait()
+	_ = c.Close()
+	return handled
+}
+
+func TestConsumerDeadLettersAfterMaxRetries(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var commits []int64
+		var dead []*kgo.Record
+		client := poisonClient(&commits, func(rs ...*kgo.Record) error { dead = append(dead, rs...); return nil })
+		c := &Consumer{client: client, timeout: time.Second, maxRetries: 2, deadLetter: "events.dlq"}
+
+		handled := runPoison(t, c)
+		// 1 attempt + 2 retries, then the partition moves on
+		if !reflect.DeepEqual(handled, []string{"events:0:0", "events:0:0", "events:0:0", "events:0:1"}) {
+			t.Fatalf("handled=%v", handled)
+		}
+		if !reflect.DeepEqual(commits, []int64{0, 1}) {
+			t.Fatalf("commits=%v", commits)
+		}
+		if len(dead) != 1 || dead[0].Topic != "events.dlq" || string(dead[0].Value) != "a" {
+			t.Fatalf("dead letters=%v", dead)
+		}
+		h := map[string]string{}
+		for _, x := range dead[0].Headers {
+			h[x.Key] = string(x.Value)
+		}
+		if h["dlq-source"] != "events:0:0" || h["dlq-error"] != "poison" {
+			t.Fatalf("headers=%v", h)
+		}
+	})
+}
+
+func TestConsumerKeepsRetryingWhenDeadLetterFails(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var commits []int64
+		client := poisonClient(&commits, func(...*kgo.Record) error { return errors.New("broker down") })
+		c := &Consumer{client: client, timeout: time.Second, maxRetries: 1, deadLetter: "events.dlq"}
+		if handled := runPoison(t, c); len(handled) < 3 || handled[len(handled)-1] != "events:0:0" {
+			t.Fatalf("handled=%v, want the poison record retried", handled)
+		}
+		if len(commits) != 0 {
+			t.Fatalf("committed %v although the dead-letter forward failed", commits)
+		}
+	})
+}
+
+func TestConsumerSkipsWithoutDeadLetterTopic(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var commits []int64
+		c := &Consumer{client: poisonClient(&commits, nil), timeout: time.Second, maxRetries: 1}
+		runPoison(t, c)
+		if !reflect.DeepEqual(commits, []int64{0, 1}) {
+			t.Fatalf("commits=%v", commits)
+		}
+	})
 }

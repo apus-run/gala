@@ -19,6 +19,7 @@ type consumerClient interface {
 	SetOffsets(map[string]map[int32]kgo.EpochOffset)
 	AllowRebalance()
 	CloseAllowingRebalance()
+	ProduceSync(context.Context, ...*kgo.Record) kgo.ProduceResults
 }
 
 type Consumer struct {
@@ -31,6 +32,13 @@ type Consumer struct {
 	closed      bool
 	err         error
 	closeClient sync.Once
+
+	maxRetries int
+	deadLetter string
+	// failing/attempts track the record currently being retried. Records are
+	// processed one at a time, so a single slot is enough.
+	failing  string
+	attempts int
 }
 
 // RegisterHandler sets the handler for the next Start. The running loop keeps its snapshot.
@@ -101,6 +109,9 @@ func (c *Consumer) run(ctx context.Context, handler mq.ConsumerHandler) {
 		var failed bool
 		for _, record := range fetches.Records() {
 			if err := c.process(ctx, handler, record); err != nil {
+				if c.skip(ctx, record, err) {
+					continue
+				}
 				// Rewind while rebalance is blocked and no commit is in flight.
 				// Never poll past a failed record and later commit over its offset.
 				c.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{
@@ -124,6 +135,37 @@ func (c *Consumer) run(ctx context.Context, handler mq.ConsumerHandler) {
 			}
 		}
 	}
+}
+
+// skip reports whether a failed record has used up its retries and was moved
+// aside (dead-lettered or dropped) and committed. On false the caller retries it.
+func (c *Consumer) skip(ctx context.Context, record *kgo.Record, cause error) bool {
+	if c.maxRetries <= 0 || ctx.Err() != nil { // shutdown is not the record's fault
+		return false
+	}
+	id := recordID(record)
+	if id != c.failing {
+		c.failing, c.attempts = id, 0
+	}
+	if c.attempts++; c.attempts <= c.maxRetries {
+		return false
+	}
+	if c.deadLetter != "" {
+		dead := &kgo.Record{Topic: c.deadLetter, Key: record.Key, Value: record.Value,
+			Headers: append(append([]kgo.RecordHeader(nil), record.Headers...),
+				kgo.RecordHeader{Key: "dlq-source", Value: []byte(id)},
+				kgo.RecordHeader{Key: "dlq-error", Value: []byte(cause.Error())})}
+		if err := c.client.ProduceSync(ctx, dead).FirstErr(); err != nil {
+			slog.ErrorContext(ctx, "kafka dead-letter failed, will retry", "message_id", id, "error", err)
+			return false
+		}
+	}
+	if err := c.client.CommitRecords(ctx, record); err != nil {
+		return false
+	}
+	slog.WarnContext(ctx, "kafka message skipped after retries", "message_id", id, "dead_letter", c.deadLetter, "error", cause)
+	c.failing = ""
+	return true
 }
 
 func (c *Consumer) process(ctx context.Context, handler mq.ConsumerHandler, record *kgo.Record) (err error) {

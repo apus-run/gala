@@ -10,9 +10,30 @@ import (
 	"github.com/apus-run/gala/components/mq"
 )
 
-type Factory struct{}
+type Factory struct {
+	maxRetries int
+	deadLetter string
+}
 
-func NewFactory() mq.Factory { return &Factory{} }
+type Option func(*Factory)
+
+// WithMaxRetries caps redeliveries of a failing record (after the first
+// attempt). When exhausted the record is forwarded to the dead-letter topic,
+// or logged and skipped if none is set, so it no longer blocks its partition.
+// n <= 0 keeps the default: retry forever.
+func WithMaxRetries(n int) Option { return func(f *Factory) { f.maxRetries = n } }
+
+// WithDeadLetterTopic sets where exhausted records go. The offset is committed
+// only after the forward succeeds, so a failed forward retries instead of losing it.
+func WithDeadLetterTopic(topic string) Option { return func(f *Factory) { f.deadLetter = topic } }
+
+func NewFactory(opts ...Option) mq.Factory {
+	f := &Factory{}
+	for _, opt := range opts {
+		opt(f)
+	}
+	return f
+}
 
 func (f *Factory) NewProducer(cfg mq.ProducerConfig) (mq.Producer, error) {
 	if len(cfg.Addr) == 0 {
@@ -72,5 +93,5 @@ func (f *Factory) NewConsumer(cfg mq.ConsumerConfig) (mq.Consumer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Consumer{client: client, timeout: timeout}, nil
+	return &Consumer{client: client, timeout: timeout, maxRetries: f.maxRetries, deadLetter: f.deadLetter}, nil
 }
