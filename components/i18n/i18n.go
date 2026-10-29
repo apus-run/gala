@@ -110,6 +110,9 @@ func (i *I18n) Add(f string) {
 	}
 	if info.IsDir() {
 		filepath.Walk(f, func(path string, fi os.FileInfo, errBack error) (err error) {
+			if errBack != nil { // 子项不可访问：停止遍历，而不是在读不到的目录上继续或静默跳过
+				return errBack
+			}
 			if !fi.IsDir() {
 				_, err := i.bundle.LoadMessageFile(path)
 				if err != nil {

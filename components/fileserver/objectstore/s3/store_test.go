@@ -840,3 +840,30 @@ func (a *nilHeadLen) HeadObject(ctx context.Context, in *awss3.HeadObjectInput, 
 	}
 	return out, err
 }
+
+// 配置了 MaxObjectSize 时，预签名上传必须带上不超限的 Content-Length：
+// S3 只强制执行已签名的长度，不带长度的 URL 可以上传任意大小的对象。
+func TestSignUploadEnforcesMaxObjectSize(t *testing.T) {
+	api := newMemAPI()
+	s := newTestStore(t, api, Config{Presigner: api, MaxObjectSize: 100})
+	ctx := t.Context()
+
+	if _, err := s.SignUploadReq(ctx, "k"); !errors.Is(err, fileserver.ErrInvalidArgument) {
+		t.Fatalf("no content length with a size cap: err = %v, want ErrInvalidArgument", err)
+	}
+	if _, err := s.SignUploadReq(ctx, "k", objectstore.WithContentLength(101)); !errors.Is(err, fileserver.ErrTooLarge) {
+		t.Fatalf("101 bytes with a 100 byte cap: err = %v, want ErrTooLarge", err)
+	}
+	if api.sign.calls != 0 {
+		t.Fatalf("a rejected request was still signed (%d calls)", api.sign.calls)
+	}
+	if _, err := s.SignUploadReq(ctx, "k", objectstore.WithContentLength(100)); err != nil {
+		t.Fatalf("exactly at the cap: %v", err)
+	}
+
+	// 没配上限时保持原行为：长度仍是可选的
+	free := newTestStore(t, newMemAPI(), Config{Presigner: api})
+	if _, err := free.SignUploadReq(ctx, "k"); err != nil {
+		t.Fatalf("without a cap the length must stay optional: %v", err)
+	}
+}

@@ -59,7 +59,8 @@ func (g *JsonCache[T]) Get(ctx context.Context, k string) (*T, error) {
 }
 
 func (g *JsonCache[T]) Delete(ctx context.Context, k string) error {
-	if err := g.cache.Del(ctx, k).Err(); err != nil {
+	// Save/Get 都带 prefix，Delete 也必须带：不带的话删的是别的 key，原 key 永远删不掉
+	if err := g.cache.Del(ctx, g.prefix+k).Err(); err != nil {
 		return fmt.Errorf("failed to delete key %s: %w", k, err)
 	}
 	return nil

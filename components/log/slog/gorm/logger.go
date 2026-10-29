@@ -36,6 +36,15 @@ func NewLogger(options ...Option) *Logger {
 	}
 }
 
+// ParamsFilter 实现 gorm.ParamsFilter：gorm 渲染日志里的 SQL 之前会调用它。
+// 返回 nil 参数，渲染出来的 SQL 里只剩占位符，参数值不会进日志。
+func (l *Logger) ParamsFilter(_ context.Context, sql string, params ...any) (string, []any) {
+	if l.LogParams {
+		return sql, params
+	}
+	return sql, nil
+}
+
 func (l *Logger) LogMode(level logger.LogLevel) logger.Interface {
 	return l
 }

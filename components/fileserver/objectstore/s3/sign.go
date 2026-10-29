@@ -30,11 +30,23 @@ func (s *Store) SignUploadReq(ctx context.Context, key string, opts ...objectsto
 		return objectstore.SignedRequest{}, opErr(op, key, err)
 	}
 
+	// 配置了 MaxObjectSize 时，签名里必须带上长度并且不超限：S3 只会强制执行「已签名的」Content-Length，
+	// 不带长度的预签名 URL 可以上传任意大小的对象，绕过直接上传路径（upload.go）上同样的上限。
+	n, hasLen := so.ContentLength()
+	if s.maxObject > 0 {
+		if !hasLen {
+			return objectstore.SignedRequest{}, opErr(op, key, invalidArgument("content length is required when MaxObjectSize is configured"))
+		}
+		if n > s.maxObject {
+			return objectstore.SignedRequest{}, opErr(op, key, tooLarge())
+		}
+	}
+
 	in := &awss3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objKey)}
 	if ct := so.ContentType(); ct != "" {
 		in.ContentType = aws.String(ct)
 	}
-	if n, ok := so.ContentLength(); ok {
+	if hasLen {
 		in.ContentLength = aws.Int64(n)
 	}
 	req, err := s.presign.PresignPutObject(ctx, in, expires(so.Expiry()))
