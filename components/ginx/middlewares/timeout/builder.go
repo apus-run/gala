@@ -31,18 +31,15 @@ func (b *Builder) Build() gin.HandlerFunc {
 			// cancel to clear resources after finished
 			cancel()
 
-			// check if context timeout was reached
-			if ctx.Err() == context.DeadlineExceeded {
-
-				// 记录操作日志
-				log.Panicln(c, "server timeout", nil)
+			// 已经写出响应头时不能再改状态码，否则会在已发出的响应体后追加一段 JSON
+			if ctx.Err() == context.DeadlineExceeded && !c.Writer.Written() {
+				log.Println("server timeout:", c.Request.Method, c.Request.URL.Path)
 
 				// write response and abort the request
 				c.AbortWithStatusJSON(http.StatusGatewayTimeout, gin.H{
 					"code":    504,
 					"message": http.StatusText(http.StatusGatewayTimeout),
 				})
-
 			}
 		}()
 

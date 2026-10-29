@@ -66,8 +66,10 @@ type gzipHandler struct {
 }
 
 func newGzipHandler(level int, options ...GzipOption) *gzipHandler {
+	// 复制一份：setter 会就地修改，直接用全局 DefaultOptions 会让多个 Build 互相覆盖
+	opts := *DefaultOptions
 	handler := &gzipHandler{
-		GzipOptions: DefaultOptions,
+		GzipOptions: &opts,
 		gzPool: sync.Pool{
 			New: func() any {
 				gz, err := gzip.NewWriterLevel(io.Discard, level)

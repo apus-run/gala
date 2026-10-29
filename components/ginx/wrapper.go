@@ -30,8 +30,9 @@ func ProxyHandle(fn ProxyHandlerFunc) gin.HandlerFunc {
 		c := WrapContext(ginCtx)
 		proxy, err := fn(c)
 
-		if err != nil {
-			c.Data(http.StatusOK, "text/text", []byte(err.Error()))
+		if err != nil || proxy == nil {
+			// 内部错误不回显给客户端，状态码也不能是 200，否则监控看不到失败
+			c.Data(http.StatusBadGateway, "text/plain; charset=utf-8", []byte(http.StatusText(http.StatusBadGateway)))
 			c.Abort()
 		} else {
 			proxy.ServeHTTP(c.Writer, c.Request)

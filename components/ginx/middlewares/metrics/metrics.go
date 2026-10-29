@@ -137,7 +137,12 @@ func Metrics(r *gin.Engine, opts ...Option) gin.HandlerFunc {
 		// no response content will return -1
 		respSize := max(c.Writer.Size(), 0)
 
-		lvs := []string{strconv.Itoa(c.Writer.Status()), c.Request.URL.Path, c.Request.Method}
+		// 用路由模板而不是原始路径，否则任意路径都会新增一组时间序列；未匹配的路由归到同一个标签
+		path := c.FullPath()
+		if path == "" {
+			path = "unmatched"
+		}
+		lvs := []string{strconv.Itoa(c.Writer.Status()), path, c.Request.Method}
 		reqCount.WithLabelValues(lvs...).Inc()
 		reqDuration.WithLabelValues(lvs...).Observe(time.Since(start).Seconds())
 		reqSizeBytes.WithLabelValues(lvs...).Observe(calcRequestSize(c.Request))

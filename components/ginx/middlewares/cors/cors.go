@@ -132,7 +132,8 @@ func (m *CORS) Build() gin.HandlerFunc {
 		}
 
 		if c.Request.Method == http.MethodOptions {
-			c.JSON(http.StatusNoContent, nil)
+			// 预检请求到此为止，不能继续执行业务 handler
+			c.AbortWithStatus(http.StatusNoContent)
 
 			return
 		}
