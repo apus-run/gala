@@ -15,7 +15,7 @@ func Example() {
 	fmt.Println(Map(OK(1), strconv.Itoa).Get()) // "1" true
 
 	// Output:
-	// 1
+	// 1 <nil>
 	// true
 	// 10
 	// true

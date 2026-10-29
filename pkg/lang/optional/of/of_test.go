@@ -497,9 +497,9 @@ func TestOIfOK(t *testing.T) {
 }
 
 func TestOIfNil(t *testing.T) {
-	assert.True(t, of.OK(10).IsNil())
-	assert.True(t, of.OK(0).IsNil())
-	assert.False(t, of.Nil[int]().IsNil())
+	assert.False(t, of.OK(10).IsNil())
+	assert.False(t, of.OK(0).IsNil())
+	assert.True(t, of.Nil[int]().IsNil())
 }
 
 func TestOty(t *testing.T) {

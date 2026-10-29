@@ -476,13 +476,13 @@ func TestClone(t *testing.T) {
 	var nilMap map[int]int
 	assert.Equal(t, map[int]int{}, Clone(map[int]int{}))
 	assert.NotEqual(t, nil, Clone(map[int]int{}))
-	assert.Equal(t, nil, Clone(nilMap))
+	assert.Nil(t, Clone(nilMap))
 	assert.NotEqual(t, map[int]int{}, Clone(nilMap))
 
 	// Test new type.
 	type I2I map[int]int
 	assert.Equal(t, I2I{1: 1, 2: 2}, Clone(I2I{1: 1, 2: 2}))
-	assert.Equal(t, "gmap.I2I", fmt.Sprintf("%T", Clone(I2I{})))
+	assert.Equal(t, "maputils.I2I", fmt.Sprintf("%T", Clone(I2I{})))
 
 	// Test shallow clone.
 	src := map[int]*int{1: new(1), 2: new(2)}
@@ -576,11 +576,11 @@ func TestContainsAll(t *testing.T) {
 }
 
 func TestLoadAll(t *testing.T) {
-	assert.Equal(t, nil, LoadAll(map[int]int{}, 1, 2, 3))
-	assert.Equal(t, nil, LoadAll(map[int]string{1: "1", 2: "2"}))
+	assert.Nil(t, LoadAll(map[int]int{}, 1, 2, 3))
+	assert.Nil(t, LoadAll(map[int]string{1: "1", 2: "2"}))
 	assert.Equal(t, []string{"1", "2"},
 		LoadAll(map[int]string{1: "1", 2: "2", 3: "3"}, 1, 2))
-	assert.Equal(t, nil,
+	assert.Nil(t,
 		LoadAll(map[int]string{1: "1", 2: "2", 3: "3"}, 1, 4))
 }
 
@@ -598,8 +598,8 @@ func TestLoadAny(t *testing.T) {
 }
 
 func TestLoadSome(t *testing.T) {
-	assert.Equal(t, nil, LoadSome(map[int]int{}, 1, 2, 3))
-	assert.Equal(t, nil, LoadSome(map[int]string{1: "1", 2: "2"}))
+	assert.Nil(t, LoadSome(map[int]int{}, 1, 2, 3))
+	assert.Nil(t, LoadSome(map[int]string{1: "1", 2: "2"}))
 	assert.Equal(t, []string{"1", "2"},
 		LoadSome(map[int]string{1: "1", 2: "2", 3: "3"}, 1, 2))
 	assert.Equal(t, []string{"1"},
