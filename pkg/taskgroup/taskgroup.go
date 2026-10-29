@@ -2,6 +2,7 @@ package taskgroup
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 
@@ -23,7 +24,7 @@ type taskGroup struct {
 func NewTaskGroup(ctx context.Context, concurrentCount int) TaskGroup {
 	t := &taskGroup{}
 	t.errGroup, t.ctx = errgroup.WithContext(ctx)
-	t.errGroup.SetLimit(concurrentCount)
+	t.errGroup.SetLimit(max(concurrentCount, 1)) // 0 会让 Go 永久阻塞
 	t.execAllTask.Store(false)
 
 	return t
@@ -33,17 +34,19 @@ func NewTaskGroup(ctx context.Context, concurrentCount int) TaskGroup {
 func NewUninterruptibleTaskGroup(ctx context.Context, concurrentCount int) TaskGroup {
 	t := &taskGroup{}
 	t.errGroup, t.ctx = errgroup.WithContext(ctx)
-	t.errGroup.SetLimit(concurrentCount)
+	t.errGroup.SetLimit(max(concurrentCount, 1)) // 0 会让 Go 永久阻塞
 	t.execAllTask.Store(true)
 
 	return t
 }
 
 func (t *taskGroup) Go(f func() error) {
-	t.errGroup.Go(func() error {
+	t.errGroup.Go(func() (err error) {
 		defer func() {
-			if err := recover(); err != nil {
-				slog.ErrorContext(t.ctx, "[TaskGroup] exec panic recover:%+v", err)
+			if r := recover(); r != nil {
+				slog.ErrorContext(t.ctx, "[TaskGroup] exec panic recover", "panic", r)
+				// panic 的任务不能被当作成功，否则 Wait 返回 nil 而任务做了一半
+				err = fmt.Errorf("taskgroup: task panicked: %v", r)
 			}
 		}()
 

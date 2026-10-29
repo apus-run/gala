@@ -55,6 +55,10 @@ func WithMaxMessageWaitPeriod(period time.Duration) ServerOption {
 }
 
 // WithNoClientPingTimeout sets the timeout for the client to send a ping message, if timeout, the connection will be closed.
+//
+// 只有客户端发来的 ping 控制帧会续期读超时，普通的应用层消息不会：一个一直在发数据、但不发 ping 的
+// 连接，也会在 timeout 之后被关闭。浏览器 JS 发不了 ping 控制帧，面向浏览器的服务不要设置这个选项，
+// 改用应用层心跳；gala 的 ws 客户端用 ws.WithPing 即可。
 func WithNoClientPingTimeout(timeout time.Duration) ServerOption {
 	return func(o *serverOptions) {
 		o.noClientPingTimeout = timeout

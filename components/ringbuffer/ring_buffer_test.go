@@ -2182,3 +2182,32 @@ type result struct {
 	data string
 	err  error
 }
+
+// overwrite 模式下写入量超过剩余空间时，读出的必须是真正写入过的数据
+// （超长写入保留前 size 字节，与 TwiceFull 一致），不能读到从未写入的零字节。
+func TestRingBuffer_OverwriteMode_PartialOverflowReadsWrittenBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		size   int
+		writes []string
+		want   string
+	}{
+		{"fill then overflow by 3", 4, []string{"ab", "cdefg"}, "cdef"},
+		{"single write larger than buffer", 4, []string{"abcdef"}, "abcd"},
+		{"overflow by one", 4, []string{"abc", "de"}, "bcde"},
+		{"exactly full then more", 4, []string{"abcd", "ef"}, "cdef"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rb := New(tt.size).SetOverwrite(true)
+			for _, w := range tt.writes {
+				_, _ = rb.Write([]byte(w))
+			}
+			got := make([]byte, tt.size)
+			n, _ := rb.Read(got)
+			if string(got[:n]) != tt.want {
+				t.Fatalf("read %q, want %q", got[:n], tt.want)
+			}
+		})
+	}
+}

@@ -106,6 +106,9 @@ func (l *Limiter) redisAllow(ctx context.Context, key string, max int) (bool, er
 // StartCleanup runs periodic eviction for the local fallback map. The fallback
 // remains available even when Redis is configured, so cleanup is useful in
 // either mode.
+//
+// 必须调用：不调用时本地回退的 map 只增不减，每个出现过的 key（按 IP、用户限流时就是每个
+// IP、每个用户）都会永久占用一个条目。典型用法是启动时 go l.StartCleanup(stop)，进程退出前 close(stop)。
 func (l *Limiter) StartCleanup(stopCh <-chan struct{}) {
 	l.local.startCleanup(l.window, stopCh)
 }

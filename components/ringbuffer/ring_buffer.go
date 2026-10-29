@@ -625,6 +625,11 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 func (r *RingBuffer) write(p []byte) (n int, err error) {
 	// In overwrite mode, we always allow writing by discarding old data
 	if r.overwrite && len(p) > 0 {
+		// 一次写入超过总容量时，按既有约定只保留前 size 字节（见 TwiceFull 测试）；
+		// 先截断再推进读指针，否则推进后可用空间仍不足，会把从未写入的槽位读出来
+		if len(p) > r.size {
+			p = p[:r.size]
+		}
 		var avail int
 		if r.w == r.r && r.isFull {
 			// Buffer is full, no space available

@@ -64,6 +64,16 @@ func backoffFn(ctx context.Context, fn func() error, policy *backoff.Exponential
 	return backoff.Retry(fn, backoffCtx)
 }
 
+// RetryWithMaxTimes 最多重试 max 次（首次调用之外），重试之间不等待。
+// max<=0 表示不重试；ctx 取消后立即返回 ctx.Err()。
 func RetryWithMaxTimes(ctx context.Context, max int, fn func() error) error {
-	return backoff.Retry(fn, backoff.WithMaxRetries(&backoff.ZeroBackOff{}, uint64(max)))
+	if max <= 0 {
+		// cenk/backoff 的 WithMaxRetries(0) 表示不限次数，不能交给它处理
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fn()
+	}
+	policy := backoff.WithContext(backoff.WithMaxRetries(&backoff.ZeroBackOff{}, uint64(max)), ctx)
+	return backoff.Retry(fn, policy)
 }

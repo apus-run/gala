@@ -16,8 +16,9 @@ func Register(p Plugin) {
 	if p == nil {
 		return
 	}
+	name := p.Name() // 用户代码，必须在持锁之前调用：它 panic 时锁不能留在加锁状态
 	mu.Lock()
-	registry[p.Name()] = p
+	registry[name] = p
 	mu.Unlock()
 }
 

@@ -315,6 +315,9 @@ func (c *Cron) Stop() {
 // is returned and the remaining jobs keep running in the background).
 //
 // Don't call Start() concurrently with or after Shutdown().
+//
+// 不要在任务（job）里调用 Shutdown：它要等所有运行中的任务返回，包括调用它的这一个，
+// 传 context.Background() 会永久阻塞，传带超时的 ctx 会白等到超时。任务想让调度器停下来时调用 Stop。
 func (c *Cron) Shutdown(ctx context.Context) error {
 	c.Stop()
 

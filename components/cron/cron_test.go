@@ -521,3 +521,29 @@ func TestCronConcurrentUse(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// 任务里调用 Stop 来停掉调度器是安全的：Stop 不等待运行中的任务。
+func TestCronStopFromInsideJobDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	c := New()
+	stopped := make(chan struct{})
+	c.MustAdd("self-stop", "* * * * *", func() {
+		c.Stop()
+		close(stopped)
+	})
+	c.Start()
+	c.runDue(time.Now())
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop called from inside a job blocked")
+	}
+	if c.HasStarted() {
+		t.Fatal("Stop from inside a job did not stop the ticker")
+	}
+	if err := c.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
