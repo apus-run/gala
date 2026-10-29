@@ -1,7 +1,7 @@
-github.com/apus-run/gala/pkg/chain v0.14.0 h1:DNf2LHD7zvsC6LaFy9mFqe0yEENfx4P47PUsMdpm//8=
-github.com/apus-run/gala/pkg/chain v0.14.0/go.mod h1:FznEYDyyRJLBbt0Sur7FGrXO1OtzO62UgkZseh84w7w=
-github.com/apus-run/gala/pkg/ctxkey v0.14.0 h1:ttRgZPAUGvX+cJuBsCHsBAMLFiz5b66RjttaBT2ZS9o=
-github.com/apus-run/gala/pkg/ctxkey v0.14.0/go.mod h1:PN7sCV7zyJB1yDnT0W6ssKXWhMKAt+TBvzyp4lpfKFA=
+github.com/apus-run/gala/pkg/chain v0.15.0 h1:y7J0WpL9kCn/jfwzq4hkPnEiKxJPfZDnBqkphfk3xqY=
+github.com/apus-run/gala/pkg/chain v0.15.0/go.mod h1:FznEYDyyRJLBbt0Sur7FGrXO1OtzO62UgkZseh84w7w=
+github.com/apus-run/gala/pkg/ctxkey v0.15.0 h1:pEpVr/tbJ2mdWt35JdZLFBL2wCUN9W+F8LHTenXmLLY=
+github.com/apus-run/gala/pkg/ctxkey v0.15.0/go.mod h1:PN7sCV7zyJB1yDnT0W6ssKXWhMKAt+TBvzyp4lpfKFA=
 github.com/bytedance/gopkg v0.1.3 h1:TPBSwH8RsouGCBcMBktLt1AymVo2TVsBVCY4b6TnZ/M=
 github.com/bytedance/gopkg v0.1.3/go.mod h1:576VvJ+eJgyCzdjS+c4+77QF3p7ubbtiKARP3TxducM=
 github.com/bytedance/sonic v1.15.0 h1:/PXeWFaR5ElNcVE84U0dOHjiMHQOwNIx3K4ymzh/uSE=

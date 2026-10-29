@@ -4,12 +4,12 @@ go 1.27
 
 require (
 	github.com/a-h/templ v0.3.1070
-	github.com/apus-run/gala/components/conf v0.14.0
-	github.com/apus-run/gala/components/db v0.14.0
-	github.com/apus-run/gala/components/fileserver v0.14.0
-	github.com/apus-run/gala/components/fileserver/objectstore/s3 v0.14.0
-	github.com/apus-run/gala/components/ginx v0.14.0
-	github.com/apus-run/gala/pkg/errorsx v0.14.0
+	github.com/apus-run/gala/components/conf v0.15.0
+	github.com/apus-run/gala/components/db v0.15.0
+	github.com/apus-run/gala/components/fileserver v0.15.0
+	github.com/apus-run/gala/components/fileserver/objectstore/s3 v0.15.0
+	github.com/apus-run/gala/components/ginx v0.15.0
+	github.com/apus-run/gala/pkg/errorsx v0.15.0
 	github.com/aws/aws-sdk-go-v2 v1.47.3
 	github.com/aws/aws-sdk-go-v2/config v1.31.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
@@ -21,7 +21,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
-	github.com/apus-run/gala/pkg/lang v0.14.0 // indirect
+	github.com/apus-run/gala/pkg/lang v0.15.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.10 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.6 // indirect

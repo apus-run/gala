@@ -1,7 +1,7 @@
-github.com/apus-run/gala/components/cache v0.14.0 h1:C1F8QkokMUNiYtqUbOngwGLTMTmeGHtVwXUxktWIfqo=
-github.com/apus-run/gala/components/cache v0.14.0/go.mod h1:Ef3gFevCBBKJLHk0+DkCwzpZueboBLNq7Jf8KFedIvo=
-github.com/apus-run/gala/pkg/lang v0.14.0 h1:GGthgz/B0OzRLrEmstMnW/ell7vzSEjDY7Xq098M18c=
-github.com/apus-run/gala/pkg/lang v0.14.0/go.mod h1:lQnG6KrWb855DtSxRyCToAaGOilnXLGA+BNkmi6BYbw=
+github.com/apus-run/gala/components/cache v0.15.0 h1:lj5+qbD40WZetVw3Kh3yj5CZTonmEgweFLBYhi5tqU8=
+github.com/apus-run/gala/components/cache v0.15.0/go.mod h1:dUfffT9azh56voIYNn5h7k8q6ueichG00TsqP5f7Ua4=
+github.com/apus-run/gala/pkg/lang v0.15.0 h1:Tn5WyPyvNRTOufhi1hLQdnkknbXLN5MZ96uJgxnxlV4=
+github.com/apus-run/gala/pkg/lang v0.15.0/go.mod h1:lQnG6KrWb855DtSxRyCToAaGOilnXLGA+BNkmi6BYbw=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=

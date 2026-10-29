@@ -5,8 +5,8 @@ go 1.27
 replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
-	github.com/apus-run/gala/pkg/chain v0.14.0
-	github.com/apus-run/gala/pkg/ctxkey v0.14.0
+	github.com/apus-run/gala/pkg/chain v0.15.0
+	github.com/apus-run/gala/pkg/ctxkey v0.15.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3
 	github.com/stretchr/testify v1.11.1

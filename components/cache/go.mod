@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/cache
 go 1.27
 
 require (
-	github.com/apus-run/gala/pkg/lang v0.14.0
+	github.com/apus-run/gala/pkg/lang v0.15.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/stretchr/testify v1.11.1
