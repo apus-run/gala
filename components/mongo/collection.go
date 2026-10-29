@@ -272,6 +272,8 @@ func (c *Collection) DeleteOne(ctx context.Context, filter any, opts ...*options
 	return
 }
 
+// Remove deletes every document matching q. It returns mongo.ErrNoDocuments
+// when nothing matched, the same as RemoveId.
 func (c *Collection) Remove(ctx context.Context, q any) (err error) {
 	var res *DeleteResult
 	err = c.processor(func(cmd *cmd) error {
@@ -279,7 +281,13 @@ func (c *Collection) Remove(ctx context.Context, q any) (err error) {
 		logCmd(c.logMode, c.cmd(cmd), "Remove", res, q)
 		return err
 	})
-	return
+	if err != nil {
+		return err
+	}
+	if res != nil && res.DeletedCount == 0 {
+		return mongo.ErrNoDocuments
+	}
+	return nil
 }
 
 func (c *Collection) RemoveId(ctx context.Context, id any) error {
@@ -301,8 +309,10 @@ func (c *Collection) RemoveAll(ctx context.Context, q any) (*ChangeInfo, error) 
 		logCmd(c.logMode, c.cmd(cmd), "RemoveAll", res)
 		return err
 	})
-
-	return &ChangeInfo{Removed: int(res.DeletedCount)}, err
+	if err != nil {
+		return nil, err
+	}
+	return &ChangeInfo{Removed: int(res.DeletedCount)}, nil
 }
 
 func (c *Collection) Distinct(ctx context.Context, fieldName string, filter any, opts ...*options.DistinctOptions) (res []any, err error) {

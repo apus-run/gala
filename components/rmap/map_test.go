@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -600,7 +601,13 @@ func TestReconnect(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:16379", Password: redisPwd})
 	ctx := context.Background()
 
+	// map.go logs through the slog default logger; route it into buf so the
+	// assertions below can observe the disconnect and reconnect messages.
 	var buf Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	m, err := Join(ctx, "test", rdb)
 	require.NoError(t, err)
 	defer cleanup(t, m)

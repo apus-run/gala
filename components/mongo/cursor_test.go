@@ -41,7 +41,8 @@ func TestCursor(t *testing.T) {
 
 	var res QueryTestItem
 
-	// if query has 1 record，cursor can run Next one time， Next time return false
+	// "Alice" matches two records (id1, id2). Find sets no sort, so the order is
+	// unspecified: check the set of ids, not their order.
 	filter1 := bson.M{
 		"name": "Alice",
 	}
@@ -49,11 +50,14 @@ func TestCursor(t *testing.T) {
 	cursor := cli.Find(context.Background(), filter1)
 	ast.NoError(cursor.Err())
 
-	val := cursor.Next(&res)
-	ast.Equal(true, val)
-	ast.Equal(id2, res.Id)
+	seen := map[primitive.ObjectID]bool{}
+	for i := 0; i < 2; i++ {
+		ast.True(cursor.Next(&res))
+		seen[res.Id] = true
+	}
+	ast.Equal(map[primitive.ObjectID]bool{id1: true, id2: true}, seen)
 
-	val = cursor.Next(&res)
+	val := cursor.Next(&res)
 	ast.Equal(false, val)
 
 	cursor.Close()
