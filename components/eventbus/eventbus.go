@@ -299,7 +299,16 @@ func cancelSubscription(eb *EventBus, eventType EventType, handler Handler) func
 }
 
 // Close closes the event bus and cleans up resources
+//
+// Close 等待已经开始的发布完成。在 handler 里调用 Close 时没有 ctx 可用，等待会把自己
+// 算进去而永久阻塞，所以请在 handler 之外关闭，或用 CloseContext 传入 handler 收到的 ctx。
 func (eb *EventBus) Close() error {
+	return eb.CloseContext(context.Background())
+}
+
+// CloseContext 与 Close 相同。传入的 ctx 是 handler 收到的那个时，认出调用方就在本总线的分发里：
+// 此时拒绝新任务并清空订阅，但不等待正在运行的发布（其中包括调用方自己），否则会自己等自己。
+func (eb *EventBus) CloseContext(ctx context.Context) error {
 	eb.mu.Lock()
 	if eb.closed {
 		eb.mu.Unlock()
@@ -311,6 +320,10 @@ func (eb *EventBus) Close() error {
 	eb.onceHandlers = make(map[EventType][]Handler)
 	eb.mu.Unlock()
 
+	if dispatchingBus(ctx) == eb {
+		eb.logger.Info("Event bus closed from inside a handler; not waiting for in-flight dispatches")
+		return nil
+	}
 	eb.asyncWG.Wait()
 	eb.dispatchWG.Wait()
 	eb.logger.Info("Event bus closed")

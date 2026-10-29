@@ -279,8 +279,9 @@ func (sm *Map) SetAndWait(ctx context.Context, key, value string) (string, error
 		}
 		sm.wlock.Unlock()
 
-		// Now safe to close channel as no more sends will occur
-		close(notifyCh)
+		// 不能 close(notifyCh)：run() 在释放 wlock 之后才向 waiter.ch 发送（它取的是 waiter 快照），
+		// 与这里并发就是向已关闭的 channel 发送，直接 panic。发送方的 select 里有 waiter.ctx.Done()，
+		// 上面 cancel() 之后不会再阻塞；channel 没有读者之后交给 GC 回收。
 	}()
 
 	// Prepare new waiters list under lock
@@ -675,6 +676,7 @@ func (sm *Map) run() {
 							select {
 							case waiter.ch <- *notification:
 							case <-sm.done:
+								sm.shutdownRun()
 								return
 							case <-waiter.ctx.Done():
 								// Waiter was cancelled or timed out
@@ -686,21 +688,27 @@ func (sm *Map) run() {
 			}
 
 		case <-sm.done:
-			slog.Info("closed")
-			// no need to lock, stopping is true
-			for _, c := range sm.chans {
-				close(c)
-			}
-			if err := sm.sub.Unsubscribe(context.Background(), sm.chankey); err != nil {
-				slog.Error("failed to unsubscribe: %w", slog.Any("err", err))
-			}
-			if err := sm.sub.Close(); err != nil {
-				slog.Error("failed to close subscription", slog.Any("err", err))
-			}
-			sm.wait.Done()
+			sm.shutdownRun()
 			return
 		}
 	}
+}
+
+// shutdownRun 是 run() 的唯一退出路径：释放订阅并通知 Close。
+// 任何 return 都必须先经过它，否则 sm.wait.Done() 被跳过，Close 会永久阻塞。
+func (sm *Map) shutdownRun() {
+	slog.Info("closed")
+	// no need to lock, stopping is true
+	for _, c := range sm.chans {
+		close(c)
+	}
+	if err := sm.sub.Unsubscribe(context.Background(), sm.chankey); err != nil {
+		slog.Error("failed to unsubscribe", slog.Any("err", err))
+	}
+	if err := sm.sub.Close(); err != nil {
+		slog.Error("failed to close subscription", slog.Any("err", err))
+	}
+	sm.wait.Done()
 }
 
 // runLuaScript runs the given Lua script, the first argument must be the key.

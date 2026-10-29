@@ -13,10 +13,14 @@ type TinyCache struct {
 	opts       *Options
 	stopChan   chan struct{}
 	closedChan chan struct{}
+	closeOnce  sync.Once
 }
 
 func New(opts ...Option) *TinyCache {
 	options := Apply(opts...)
+	if options.CleanupInterval <= 0 { // NewTicker 对非正值会 panic，且发生在后台协程里无法 recover
+		options.CleanupInterval = DefaultOptions().CleanupInterval
+	}
 	c := &TinyCache{
 		opts:       options,
 		stopChan:   make(chan struct{}),
@@ -112,8 +116,13 @@ func (c *TinyCache) Clear(_ context.Context) {
 		})
 	}
 
-	c.data = sync.Map{}
-	(&c.itemCount).Store(0)
+	// 不能用 c.data = sync.Map{} 整体覆盖：后台清理协程在并发读它，那是数据竞争
+	c.data.Range(func(key, _ any) bool {
+		if _, loaded := c.data.LoadAndDelete(key); loaded {
+			c.itemCount.Add(-1)
+		}
+		return true
+	})
 }
 
 // Size returns the number of items in the cache.
@@ -123,15 +132,9 @@ func (c *TinyCache) Size() int64 {
 
 // Close stops the cache cleanup goroutine.
 func (c *TinyCache) Close() error {
-	select {
-	case <-c.stopChan:
-		// Already closed
-		return nil
-	default:
-		close(c.stopChan)
-		<-c.closedChan // Wait for cleanup goroutine to exit
-		return nil
-	}
+	c.closeOnce.Do(func() { close(c.stopChan) })
+	<-c.closedChan // Wait for cleanup goroutine to exit
+	return nil
 }
 
 // cleanupLoop periodically cleans up expired items.
