@@ -30,7 +30,7 @@ func (d *Database) SetLogMode(logMode bool) {
 
 func (d *Database) Client() *Client {
 	d.mu.Lock()
-	defer d.mu.Lock()
+	defer d.mu.Unlock()
 
 	cc := d.database.Client()
 	if cc == nil {

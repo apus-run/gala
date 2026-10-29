@@ -105,9 +105,12 @@ func (bw *BufferedWriterMongo) Write(rec any) error {
 // Flush writes everything left in buffer to mongo
 func (bw *BufferedWriterMongo) Flush() error {
 	err := bw.synced(func() error {
-		err := bw.writeBuffer()
+		if err := bw.writeBuffer(); err != nil {
+			// 保留 buffer，调用方可以重试；清空会让整批数据静默丢失
+			return err
+		}
 		bw.buffer = bw.buffer[0:0]
-		return err
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to flush to %s/%s, %v", bw.db, bw.collection, err)
@@ -119,6 +122,9 @@ func (bw *BufferedWriterMongo) Flush() error {
 func (bw *BufferedWriterMongo) Close() (err error) {
 	return bw.synced(func() error {
 		err = bw.writeBuffer()
+		if err == nil {
+			bw.buffer = bw.buffer[0:0]
+		}
 		if bw.flushDuration > 0 {
 			bw.cancel()
 			<-bw.ctx.Done()
@@ -134,8 +140,12 @@ func (bw *BufferedWriterMongo) writeBuffer() (err error) {
 		return nil
 	}
 
+	ctx := bw.ctx
+	if ctx == nil { // 只有 WithAutoFlush 才会初始化 ctx
+		ctx = context.Background()
+	}
 	coll := bw.client.Database(bw.db).Collection(bw.collection)
-	_, err = coll.InsertMany(bw.ctx, bw.buffer)
+	_, err = coll.InsertMany(ctx, bw.buffer)
 	return err
 }
 

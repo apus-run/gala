@@ -75,20 +75,18 @@ func (q *MongoQuery[T]) WhereNotNull(field string) Query[T] {
 
 // OrWhere adds an OR WHERE condition
 func (q *MongoQuery[T]) OrWhere(field string, value any) Query[T] {
-	// Convert existing filter to $and if needed
-	if _, hasOr := q.filter["$or"]; !hasOr {
-		if len(q.filter) > 0 {
-			// Move existing conditions to $and
-			andConditions := []bson.M{q.filter}
-			q.filter = bson.M{"$and": andConditions}
-		}
+	cond := bson.M{field: value}
+	if len(q.filter) == 0 {
+		q.filter = bson.M{"$or": []bson.M{cond}}
+		return q
 	}
-
-	// Add OR condition
-	orConditions, _ := q.filter["$or"].([]bson.M)
-	orConditions = append(orConditions, bson.M{field: value})
-	q.filter["$or"] = orConditions
-
+	// 与 SQL 的 `a OR b` 一致：把已有条件整体作为第一个分支，新条件作为第二个分支。
+	// 顶层同时放 $and 与 $or 会变成「原条件 且 新条件」。
+	if or, ok := q.filter["$or"].([]bson.M); ok && len(q.filter) == 1 {
+		q.filter["$or"] = append(or, cond)
+		return q
+	}
+	q.filter = bson.M{"$or": []bson.M{q.filter, cond}}
 	return q
 }
 

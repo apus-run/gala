@@ -134,12 +134,17 @@ func (c *Client) ServerVersion() string {
 func (c *Client) Client() *mongo.Client { return c.client }
 
 func (c *Client) StartSession(opts ...*options.SessionOptions) (ss Session, err error) {
+	var ms mongo.Session
 	err = c.processor(func(cmd *cmd) error {
-		ss, err = c.client.StartSession(opts...)
-		logCmd(c.logMode, cmd, "StartSession", ss)
-		return err
+		var serr error
+		ms, serr = c.client.StartSession(opts...)
+		logCmd(c.logMode, cmd, "StartSession", ms)
+		return serr
 	})
-	return &session{Session: ss, logMode: c.logMode, processor: c.processor}, nil
+	if err != nil {
+		return nil, err
+	}
+	return &session{Session: ms, logMode: c.logMode, processor: c.processor}, nil
 }
 
 func (c *Client) UseSession(ctx context.Context, fn func(SessionContext) error) error {
