@@ -142,3 +142,15 @@ func TestConfigStructUsesNewDefaults(t *testing.T) {
 		t.Fatal("Expected version error, got nil")
 	}
 }
+
+// 配了证书却没有 CA 时，证书会被丢弃：调用方以为启用了 TLS，实际是明文。必须返回错误。
+func TestConfigCertWithoutCAIsAnError(t *testing.T) {
+	cfg, err := (&Config{Enable: true, Cert: "server.pem", Key: "server-key.pem"}).Config()
+	if err == nil || cfg != nil {
+		t.Fatalf("Expected an error for cert/key without CA, got (%v, %v)", cfg, err)
+	}
+	// 只开 Insecure 的组合不受影响
+	if cfg, err := (&Config{Enable: true, Insecure: true, Cert: "c", Key: "k"}).Config(); err != nil || cfg == nil {
+		t.Fatalf("Insecure config must keep working, got (%v, %v)", cfg, err)
+	}
+}

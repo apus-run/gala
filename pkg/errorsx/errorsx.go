@@ -43,6 +43,9 @@ func New(code int, status string) *Error {
 
 // Error 实现 error 接口中的 `Error` 方法.
 func (e *Error) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
 	if e.cause != nil {
 		return fmt.Sprintf("error: code = %d, status = %s, message = %s, cause = %v", e.Code, e.Status, e.Message, e.cause)
 	}
@@ -69,6 +72,10 @@ func (e *Error) WithDetails(details any) *Error {
 }
 
 // KV 使用 key-value 对设置详细信息
+//
+// 原地修改 e：包级的 Err* 模板是共享的，必须先 Clone 再调用，否则并发调用会
+// 触发 concurrent map writes，并且一个请求写入的 Details 会出现在其他请求里。
+// Details 已被 WithDetails 设置成其他类型时，不覆盖它，原样返回。
 func (e *Error) KV(kvs ...string) *Error {
 	if len(kvs)%2 != 0 {
 		return e
@@ -76,10 +83,12 @@ func (e *Error) KV(kvs ...string) *Error {
 	if e.Details == nil {
 		e.Details = make(map[string]string)
 	}
-	for i := 0; i < len(kvs); i += 2 {
-		if i+1 < len(kvs) {
-			e.Details.(map[string]string)[kvs[i]] = kvs[i+1]
-		}
+	details, ok := e.Details.(map[string]string)
+	if !ok {
+		return e
+	}
+	for i := 0; i+1 < len(kvs); i += 2 {
+		details[kvs[i]] = kvs[i+1]
 	}
 	return e
 }
@@ -168,6 +177,9 @@ func (e *Error) GRPCStatus() *status.Status {
 
 // Unwrap 返回原始错误，便于使用 errors.Is 和 errors.As 进行错误链的遍历和匹配.
 func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.cause
 }
 
@@ -175,8 +187,11 @@ func (e *Error) Unwrap() error {
 // 它会比较 Error 实例的 Code 和 Status 字段.
 // 如果 Code 和 Status 均相等，则返回 true；否则返回 false.
 func (e *Error) Is(target error) bool {
+	if e == nil {
+		return false
+	}
 	if targetErr, ok := errors.AsType[*Error](target); ok {
-		return targetErr.Code == e.Code && targetErr.Status == e.Status
+		return targetErr != nil && targetErr.Code == e.Code && targetErr.Status == e.Status
 	}
 	return errors.Is(e.cause, target)
 }
@@ -239,8 +254,12 @@ func FromError(err error) *Error {
 		return nil
 	}
 
-	// 处理自定义错误类型
+	// 处理自定义错误类型。接口里装着 (*Error)(nil) 时 AsType 也会返回 ok，
+	// 此时 target 为 nil，直接返回会让 Code/Status 解引用 nil
 	if target, ok := errors.AsType[*Error](err); ok {
+		if target == nil {
+			return &Error{Code: http.StatusInternalServerError, Status: "InternalError", Message: "nil error"}
+		}
 		return target
 	}
 

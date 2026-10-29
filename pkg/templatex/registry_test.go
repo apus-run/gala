@@ -1,10 +1,8 @@
 package templatex
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -61,8 +59,7 @@ func TestRegistryLoadFiles(t *testing.T) {
 	t.Run("invalid or missing files", func(t *testing.T) {
 		r.LoadFiles("file1.missing", "file2.missing")
 
-		key := "file1.missing,file2.missing"
-		renderer, _ := r.cache.Get(key)
+		renderer, _ := r.cache.Get(filesKey([]string{"file1.missing", "file2.missing"}))
 
 		if renderer == nil {
 			t.Fatal("Expected renderer to be initialized even if invalid, got nil")
@@ -95,7 +92,7 @@ func TestRegistryLoadFiles(t *testing.T) {
 
 		r.LoadFiles(files...)
 
-		renderer, _ := r.cache.Get(strings.Join(files, ","))
+		renderer, _ := r.cache.Get(filesKey(files))
 
 		if renderer == nil {
 			t.Fatal("Expected renderer to be initialized even if invalid, got nil")
@@ -129,7 +126,7 @@ func TestRegistryLoadString(t *testing.T) {
 
 		r.LoadString(txt)
 
-		renderer, _ := r.cache.Get(txt)
+		renderer, _ := r.cache.Get(stringKey(txt))
 
 		if renderer == nil {
 			t.Fatal("Expected renderer to be initialized even if invalid, got nil")
@@ -149,7 +146,7 @@ func TestRegistryLoadString(t *testing.T) {
 
 		r.LoadString(txt)
 
-		renderer, _ := r.cache.Get(txt)
+		renderer, _ := r.cache.Get(stringKey(txt))
 
 		if renderer == nil {
 			t.Fatal("Expected renderer to be initialized even if invalid, got nil")
@@ -237,7 +234,7 @@ func TestRegistryLoadFS(t *testing.T) {
 
 		files := []string{"missing1", "missing2"}
 
-		key := fmt.Sprintf("%v%#v", fs, files)
+		key := fsKey(fs, files)
 
 		r.LoadFS(fs, files...)
 
@@ -274,7 +271,7 @@ func TestRegistryLoadFS(t *testing.T) {
 
 		files := []string{"base.html", "content.html"}
 
-		key := fmt.Sprintf("%v%#v", fs, files)
+		key := fsKey(fs, files)
 
 		r.LoadFS(fs, files...)
 
@@ -302,4 +299,30 @@ func TestRegistryLoadFS(t *testing.T) {
 			t.Fatalf("Expected Render() result %q, got %q", expected, result)
 		}
 	})
+}
+
+// LoadString 的模板文本恰好等于一个已加载的文件路径时，不能命中文件模板的缓存。
+func TestLoadStringDoesNotCollideWithFilePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "page.tpl")
+	if err := os.WriteFile(path, []byte("from-file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewRegistry()
+	if got, err := r.LoadFiles(path).Render(nil); err != nil || got != "from-file" {
+		t.Fatalf("LoadFiles = %q, %v", got, err)
+	}
+	got, err := r.LoadString(path).Render(nil)
+	if err != nil || got != path {
+		t.Fatalf("LoadString(path) = %q, %v; want the string itself, not the cached file template", got, err)
+	}
+}
+
+// "a,b"（一个文件名）和 "a","b"（两个文件）必须得到不同的缓存 key：
+// 用逗号拼接文件名时，这两种加载会取到同一个缓存条目。
+func TestLoadFilesKeyKeepsFilenameBoundaries(t *testing.T) {
+	if filesKey([]string{"a,b"}) == filesKey([]string{"a", "b"}) {
+		t.Fatal("one file named 'a,b' and the two files 'a','b' map to the same cache key")
+	}
 }

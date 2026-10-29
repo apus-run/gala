@@ -381,9 +381,12 @@ func Diff[T any](slice1, slice2 []T, lessFunc func(a, b T) bool) (aOnly, bOnly [
 }
 
 // Without returns the slice of elements in the first slice that aren't in the second slice.
+//
+// 结果去重（每个值只保留第一次出现），并且总是一个新切片：修改结果不会影响 slice1。
+// 两个切片之一为空时也是如此，与非空时的行为一致。
 func Without[T comparable](slice1, slice2 []T) []T {
-	if len(slice1) == 0 || len(slice2) == 0 {
-		return slice1
+	if len(slice1) == 0 {
+		return nil
 	}
 
 	blockedElems := make(map[T]struct{}, len(slice2))

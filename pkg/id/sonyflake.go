@@ -16,6 +16,10 @@ type Sonyflake struct {
 // NewSonyflake constructs a generator using the legacy option semantics:
 // WithSonyflakeMachineId ignores nonpositive values. Check Error after construction.
 // The application must ensure that active generators have distinct machine IDs.
+//
+// ⚠️ 不传 WithSonyflakeMachineId 时机器号固定为 1：两个副本都用默认值，同一毫秒内会生成相同的 ID。
+// 多实例部署必须给每个实例设置不同的机器号（例如从实例序号或 IP 派生）。
+// 默认值没有改成别的数：任何固定的默认值都有同样的问题，而改它会让已有部署的 ID 序列发生变化。
 func NewSonyflake(options ...func(*SonyflakeOptions)) *Sonyflake {
 	return newSonyflake(false, options...)
 }

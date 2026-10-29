@@ -196,3 +196,17 @@ func TestUnique(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, sliceutils.Unique([]string{"a", "a", "b", "a", "b"}))
 	assert.Equal(t, []string{}, sliceutils.Unique([]string{}))
 }
+
+func TestWithoutNeverAliasesAndAlwaysDeduplicates(t *testing.T) {
+	// slice2 为空：原实现直接返回 slice1，改结果就改了入参
+	in := []int{1, 2, 3}
+	out := sliceutils.Without(in, nil)
+	out[0] = 99
+	assert.Equal(t, 1, in[0], "Without returned its input slice")
+
+	// 去重行为不能因 slice2 是否为空而不同
+	assert.Equal(t, []int{1, 2}, sliceutils.Without([]int{1, 1, 2}, []int{3}))
+	assert.Equal(t, []int{1, 2}, sliceutils.Without([]int{1, 1, 2}, nil))
+	assert.Equal(t, []int{1, 3}, sliceutils.Without([]int{1, 2, 3}, []int{2}))
+	assert.Empty(t, sliceutils.Without[int](nil, []int{1}))
+}

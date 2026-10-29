@@ -28,7 +28,6 @@ import (
 	"io/fs"
 	"maps"
 	"path/filepath"
-	"strings"
 
 	"github.com/hashicorp/golang-lru/v2"
 )
@@ -85,6 +84,14 @@ func (r *Registry) AddFuncs(funcs map[string]any) *Registry {
 	return r
 }
 
+// 缓存 key 带来源前缀：文件、字符串、FS 三种来源共用一个缓存，不加前缀的话，
+// 模板文本恰好等于某个文件路径时会取到文件模板。%#v 保留了文件名之间的边界。
+func filesKey(filenames []string) string { return fmt.Sprintf("files:%#v", filenames) }
+func stringKey(text string) string       { return "string:" + text }
+func fsKey(fsys fs.FS, patterns []string) string {
+	return fmt.Sprintf("fs:%v%#v", fsys, patterns)
+}
+
 // LoadFiles caches (if not already) the specified filenames set as a
 // single template and returns a ready to use Renderer instance.
 //
@@ -94,7 +101,9 @@ func (r *Registry) LoadFiles(filenames ...string) *Renderer {
 		return &Renderer{parseError: errors.New("at least 1 filename is required")}
 	}
 
-	key := strings.Join(filenames, ",")
+	// 前缀把文件、字符串、FS 三种来源的 key 空间分开；%#v 保留了文件名之间的边界，
+	// "a,b"（一个文件）和 "a","b"（两个文件）不会得到同一个 key
+	key := filesKey(filenames)
 
 	v, ok := r.cache.Get(key)
 	if ok {
@@ -112,15 +121,17 @@ func (r *Registry) LoadFiles(filenames ...string) *Renderer {
 // LoadString caches (if not already) the specified inline string as a
 // single template and returns a ready to use Renderer instance.
 func (r *Registry) LoadString(text string) *Renderer {
-	v, ok := r.cache.Get(text)
+	// 不能直接拿模板文本当 key：文本恰好等于某个文件名时，会命中 LoadFiles 缓存的文件模板
+	key := stringKey(text)
+	v, ok := r.cache.Get(key)
 	if ok {
 		return v
 	}
 
-	// parse and cache (using the text as key)
+	// parse and cache
 	tpl, err := template.New("").Funcs(r.funcs).Parse(text)
 	v = &Renderer{template: tpl, parseError: err}
-	r.cache.Add(text, v)
+	r.cache.Add(key, v)
 
 	return v
 }
@@ -132,7 +143,7 @@ func (r *Registry) LoadString(text string) *Renderer {
 // (note that most file names serves as glob patterns matching themselves).
 func (r *Registry) LoadFS(fsys fs.FS, globPatterns ...string) *Renderer {
 	// %#v keeps distinct pattern sets distinct: %v renders ["x y"] and ["x", "y"] identically
-	key := fmt.Sprintf("%v%#v", fsys, globPatterns)
+	key := fsKey(fsys, globPatterns)
 
 	v, ok := r.cache.Get(key)
 	if ok {

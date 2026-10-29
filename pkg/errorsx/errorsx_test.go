@@ -420,3 +420,26 @@ func TestEnableStackCapture(t *testing.T) {
 		t.Error("stack trace should be empty when EnableStackCapture is false")
 	}
 }
+
+// Details 已被设置成非 map 类型时，KV 不能因为类型断言 panic。
+func TestKVWithNonMapDetailsDoesNotPanic(t *testing.T) {
+	e := New(400, "X").WithDetails([]string{"a"}).KV("k", "v")
+	if got, ok := e.Details.([]string); !ok || len(got) != 1 {
+		t.Fatalf("details were overwritten: %#v", e.Details)
+	}
+}
+
+// 接口里装着 (*Error)(nil) 时，Code/Status 不能解引用 nil。
+func TestTypedNilErrorDoesNotPanic(t *testing.T) {
+	var typedNil *Error
+	var err error = typedNil
+	if got := Code(err); got != http.StatusInternalServerError {
+		t.Fatalf("Code(typed nil) = %d, want 500", got)
+	}
+	if got := Status(err); got == "" {
+		t.Fatal("Status(typed nil) is empty")
+	}
+	if errors.Is(err, New(404, "NotFound")) {
+		t.Fatal("typed nil must not match a real error")
+	}
+}

@@ -137,3 +137,28 @@ func TestCheckedCodeUsesLastOptionValue(t *testing.T) {
 		}
 	}
 }
+
+// 超出 byte 范围的字符表或长度不能让旧实现除零 panic。
+func TestNewCodeDoesNotPanicOnOutOfRangeOptions(t *testing.T) {
+	big := make([]rune, 256)
+	for i := range big {
+		big[i] = rune('a' + i%26 + (i/26)*100)
+	}
+	for name, opts := range map[string][]func(*CodeOptions){
+		"alphabet of 256": {WithCodeChars(big)},
+		"length 256":      {WithCodeL(256)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("NewCode panicked: %v", r)
+				}
+			}()
+			_ = NewCode(42, opts...)
+		})
+	}
+	// 正常参数下的输出不变
+	if got := NewCode(1); got == "" {
+		t.Fatal("default options must still produce a code")
+	}
+}

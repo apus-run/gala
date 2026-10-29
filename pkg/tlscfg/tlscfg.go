@@ -241,6 +241,11 @@ func (t *Config) Config() (*tls.Config, error) {
 
 	if t.CA == "" {
 		if !t.Insecure {
+			// 没有 CA 且不跳过校验：按约定返回 nil（不使用 TLS）。但配了证书或私钥却被静默丢弃，
+			// 调用方会以为在用 TLS 实际是明文，这是配置错误，必须报出来
+			if t.Cert != "" || t.Key != "" {
+				return nil, errors.New("tlscfg: cert/key are set but ca is empty; set ca, or clear cert/key to run without TLS")
+			}
 			return nil, nil
 		}
 		return New(func(c *tls.Config) error {

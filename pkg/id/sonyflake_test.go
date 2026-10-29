@@ -148,3 +148,25 @@ func TestSonyflakeMachineIDCompatibility(t *testing.T) {
 		})
 	}
 }
+
+// 固定默认机器号 1 是已知的坑：两个都用默认值的副本会生成相同的 ID。
+// 这个测试把这个事实写下来；真的要改默认值时它会失败，提醒同时处理已有部署的 ID 序列。
+func TestDefaultMachineIDIsSharedAcrossInstances(t *testing.T) {
+	a := NewSonyflake()
+	b := NewSonyflake()
+	if a.Error != nil || b.Error != nil {
+		t.Fatal(a.Error, b.Error)
+	}
+	if a.ops.machineId != 1 || b.ops.machineId != 1 {
+		t.Fatalf("default machine ids = %d, %d; the documented default is 1", a.ops.machineId, b.ops.machineId)
+	}
+
+	// 显式设置不同机器号就不会撞
+	c := NewSonyflake(WithSonyflakeMachineId(2))
+	d := NewSonyflake(WithSonyflakeMachineId(3))
+	x, _ := c.NextID()
+	y, _ := d.NextID()
+	if x == y {
+		t.Fatalf("distinct machine ids produced the same id %d", x)
+	}
+}
