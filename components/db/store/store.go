@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"regexp"
 
 	"gorm.io/gorm"
 
@@ -11,6 +12,12 @@ import (
 	"github.com/apus-run/gala/components/db/page"
 	"github.com/apus-run/gala/components/db/where"
 )
+
+// ErrInvalidColumn 表示列名不是合法的标识符。
+var ErrInvalidColumn = errors.New("store: invalid column name")
+
+// validColumn 匹配 `name` 或 `table.name`。
+var validColumn = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$`)
 
 // Store represents a generic data store.
 //
@@ -46,9 +53,17 @@ func (s *Store[T]) Create(ctx context.Context, obj *T) error {
 }
 
 // Update modifies an existing object in the database.
+//
+// 只更新已存在的行：主键不存在时返回 gorm.ErrRecordNotFound，不会像 Save 那样悄悄插入新行
+// （那会让调用方拿一个别人的、或不存在的主键凭空造出一条记录）。零值字段也会写入。
+// Update 不带 where 条件：需要限制范围（租户、归属）时先用 Get(ctx, opts) 取出对象再更新。
 func (s *Store[T]) Update(ctx context.Context, obj *T) error {
-	if err := s.db(ctx).Save(obj).Error; err != nil {
-		return err
+	res := s.db(ctx).Select("*").Updates(obj)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
@@ -64,6 +79,9 @@ func (s *Store[T]) Delete(ctx context.Context, opts *where.Options) error {
 
 // Get retrieves a single object from the database based on the provided where options.
 // 未命中时返回 gorm.ErrRecordNotFound，调用方用 errors.Is 判断。
+//
+// opts 为 nil 表示不加任何条件，返回表里的第一行。多租户场景下必须传 where.T(ctx)，
+// 或自己的归属条件；从请求构造 opts 时先检查它不是 nil。
 func (s *Store[T]) Get(ctx context.Context, opts *where.Options) (*T, error) {
 	var obj T
 	if err := s.db(ctx, opts).First(&obj).Error; err != nil {
@@ -112,7 +130,13 @@ func (s *Store[T]) Count(ctx context.Context, opts *where.Options) (count int64,
 }
 
 // Pluck retrieves a list of values for a specific column from the database based on the provided where options.
+//
+// column 必须是单个列名（可带表名前缀）：它会作为原始 SQL 片段交给 gorm，带空格或标点的
+// 字符串不会被加引号，调用方一旦把请求字段传进来就是 SQL 注入。
 func (s *Store[T]) Pluck(ctx context.Context, column string, opts *where.Options) (rets []any, err error) {
+	if !validColumn.MatchString(column) {
+		return nil, ErrInvalidColumn
+	}
 	err = s.db(ctx, opts).Model(new(T)).Pluck(column, &rets).Error
 	if err != nil {
 		return nil, err

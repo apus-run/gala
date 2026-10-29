@@ -668,7 +668,7 @@ func (a *Adapter) RemovePolicy(sec string, ptype string, rule []string) error {
 // RemovePolicyCtx removes a policy rule from the storage.
 func (a *Adapter) RemovePolicyCtx(ctx context.Context, sec string, ptype string, rule []string) error {
 	line := a.savePolicyLine(ptype, rule)
-	err := a.rawDelete(ctx, a.db, line) //can't use db.Delete as we're not using primary key https://gorm.io/docs/update.html
+	err := a.exactDelete(ctx, a.db, line) //can't use db.Delete as we're not using primary key https://gorm.io/docs/update.html
 	return err
 }
 
@@ -862,7 +862,9 @@ func (a *Adapter) RemovePoliciesCtx(ctx context.Context, sec string, ptype strin
 	return a.db.Transaction(func(tx *gorm.DB) error {
 		for _, rule := range rules {
 			line := a.savePolicyLine(ptype, rule)
-			if err := a.rawDelete(ctx, tx, line); err != nil { //can't use db.Delete as we're not using primary key https://gorm.io/docs/update.html
+			// can't use db.Delete as we're not using primary key https://gorm.io/docs/update.html
+			if err := a.exactDelete(ctx, tx, line); err != nil {
+				return err // 返回错误才会回滚整个事务；吞掉它会让调用方以为规则已删除
 			}
 		}
 		return nil
@@ -882,6 +884,11 @@ func (a *Adapter) RemoveFilteredPolicyCtx(ctx context.Context, sec string, ptype
 
 	if fieldIndex == -1 {
 		return a.rawDelete(ctx, a.db, *line)
+	}
+	// 合法范围是 [0, 5]；越界时一个字段都不会被赋值，rawDelete 退化成只按 ptype 删，
+	// 整类规则都没了。-1 以外的负数同理。
+	if fieldIndex < 0 || fieldIndex > 5 {
+		return fmt.Errorf("fieldIndex %d out of range [0, 5]", fieldIndex)
 	}
 
 	err := checkQueryField(fieldValues)
@@ -919,6 +926,15 @@ func checkQueryField(fieldValues []string) error {
 		}
 	}
 	return errors.New("the query field cannot all be empty string (\"\"), please check")
+}
+
+// exactDelete 精确删除一条规则：v0..v5 全部参与匹配，空字符串只匹配空值。
+// rawDelete 把空字段当成「不限制」，那是 RemoveFilteredPolicy 的过滤语义；
+// 用在精确删除上，删 (bob,"",GET) 会连 (bob,/y,GET) 一起删掉。
+func (a *Adapter) exactDelete(ctx context.Context, db *gorm.DB, line CasbinRule) error {
+	return db.WithContext(ctx).Delete(a.getTableInstance(),
+		"ptype = ? AND v0 = ? AND v1 = ? AND v2 = ? AND v3 = ? AND v4 = ? AND v5 = ?",
+		line.Ptype, line.V0, line.V1, line.V2, line.V3, line.V4, line.V5).Error
 }
 
 func (a *Adapter) rawDelete(ctx context.Context, db *gorm.DB, line CasbinRule) error {

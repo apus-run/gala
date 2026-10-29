@@ -660,6 +660,12 @@ func TestTenantIsolation(t *testing.T) {
 		require.Len(t, rows, 1)
 		require.Equal(t, 1, rows[0].Balance)
 
+		// 取不到租户（值为空）时必须报错，不能生成 name = '' 的过滤条件
+		ctxNone := context.WithValue(ctx, k{}, "")
+		_, rows, err = s.List(ctx, where.T(ctxNone))
+		require.ErrorIs(t, err, where.ErrEmptyTenant)
+		require.Empty(t, rows)
+
 		require.NotPanics(t, func() { _ = where.F("name") })
 		_, rows, err = s.List(ctx, where.F("name"))
 		require.ErrorIs(t, err, where.ErrInvalidFilter)

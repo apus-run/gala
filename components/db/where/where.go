@@ -20,6 +20,9 @@ const (
 	defaultLimit = -1
 )
 
+// ErrEmptyTenant 表示已注册的租户取值函数返回了空字符串。
+var ErrEmptyTenant = errors.New("where: tenant value is empty")
+
 // ErrInvalidFilter 表示 F 的参数不是成对的 key/value。
 var ErrInvalidFilter = errors.New("where: invalid filter")
 
@@ -217,7 +220,16 @@ func (whr *Options) T(ctx context.Context) *Options {
 	defer tenantMutex.RUnlock()
 
 	if registeredTenant.Key != "" && registeredTenant.ValueFunc != nil {
-		whr.F(registeredTenant.Key, registeredTenant.ValueFunc(ctx))
+		v := registeredTenant.ValueFunc(ctx)
+		if v == "" {
+			// 取不到租户（如匿名请求）时不能生成 tenant = ''：那会匹配空租户行，或在库里没有空租户时
+			// 悄悄返回空集，两种都掩盖了「这次请求没有租户」。和 F 参数不成对一样，记成错误让查询不执行。
+			if whr.err == nil {
+				whr.err = ErrEmptyTenant
+			}
+			return whr
+		}
+		whr.F(registeredTenant.Key, v)
 	}
 	return whr
 }

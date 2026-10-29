@@ -234,6 +234,34 @@ func TestStore_Update(t *testing.T) {
 	assert.Equal(t, "New Name", result.Name)
 }
 
+// Update 不能把不存在的主键变成一次插入。
+func TestStore_UpdateDoesNotInsertMissingRow(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+
+	err := store.Update(context.Background(), &UserModel{ID: 9999, Name: "ghost"})
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	var n int64
+	db.Model(&UserModel{}).Count(&n)
+	assert.EqualValues(t, 0, n, "Update must not create a row")
+}
+
+// 零值字段必须能被更新（Updates(struct) 默认会跳过零值）。
+func TestStore_UpdateWritesZeroValues(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+
+	obj := &UserModel{Name: "named"}
+	db.Create(obj)
+	obj.Name = ""
+	assert.NoError(t, store.Update(context.Background(), obj))
+
+	var got UserModel
+	assert.NoError(t, db.First(&got, obj.ID).Error)
+	assert.Equal(t, "", got.Name)
+}
+
 func TestStore_Delete(t *testing.T) {
 	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)
@@ -305,6 +333,29 @@ func TestStore_Pluck(t *testing.T) {
 	assert.Len(t, values, 2)
 	assert.Contains(t, values, "Item 1")
 	assert.Contains(t, values, "Item 2")
+}
+
+func TestStore_PluckRejectsNonIdentifierColumn(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	db.Create(&UserModel{Name: "Item 1"})
+
+	for _, col := range []string{
+		"name FROM user_models UNION SELECT name",
+		"name; DROP TABLE user_models",
+		"name,id",
+		"",
+		"1=1",
+		"name--",
+	} {
+		_, err := store.Pluck(context.Background(), col, nil)
+		assert.ErrorIs(t, err, genericStore.ErrInvalidColumn, "column %q must be rejected", col)
+	}
+
+	// 合法写法不受影响
+	values, err := store.Pluck(context.Background(), "user_models.name", nil)
+	assert.NoError(t, err)
+	assert.Len(t, values, 1)
 }
 
 // ----------------------------------------------------------------------------
