@@ -6,10 +6,10 @@ replace gopkg.in/fsnotify.v1 => github.com/fsnotify/fsnotify v1.4.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/apus-run/gala/components/authn v0.15.2
-	github.com/apus-run/gala/components/ecache v0.15.1
-	github.com/apus-run/gala/pkg/errorsx v0.15.1
-	github.com/apus-run/gala/pkg/lang v0.15.1
+	github.com/apus-run/gala/components/authn v0.16.0
+	github.com/apus-run/gala/components/ecache v0.16.0
+	github.com/apus-run/gala/pkg/errorsx v0.16.0
+	github.com/apus-run/gala/pkg/lang v0.16.0
 	github.com/gavv/httpexpect/v2 v2.17.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -29,9 +29,9 @@ require (
 	github.com/TylerBrock/colorjson v0.0.0-20200706003622-8a50f05110d2 // indirect
 	github.com/ajg/form v1.5.1 // indirect
 	github.com/andybalholm/brotli v1.0.4 // indirect
-	github.com/apus-run/gala/components/token v0.15.1 // indirect
-	github.com/apus-run/gala/pkg/jwtx v0.15.1 // indirect
-	github.com/apus-run/gala/pkg/option v0.15.1 // indirect
+	github.com/apus-run/gala/components/token v0.16.0 // indirect
+	github.com/apus-run/gala/pkg/jwtx v0.16.0 // indirect
+	github.com/apus-run/gala/pkg/option v0.16.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect

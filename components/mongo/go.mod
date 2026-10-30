@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/mongo
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/log v0.15.1
+	github.com/apus-run/gala/components/log v0.16.0
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.17.9
 )

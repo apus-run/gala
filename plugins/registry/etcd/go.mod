@@ -5,7 +5,7 @@ go 1.27
 replace github.com/apus-run/gala => ../../..
 
 require (
-	github.com/apus-run/gala v0.15.1
+	github.com/apus-run/gala v0.16.0
 	go.etcd.io/etcd/api/v3 v3.6.12
 	go.etcd.io/etcd/client/v3 v3.6.12
 )

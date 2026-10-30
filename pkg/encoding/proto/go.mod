@@ -3,7 +3,7 @@ module github.com/apus-run/gala/pkg/encoding/proto
 go 1.27
 
 require (
-	github.com/apus-run/gala/pkg/encoding v0.15.1
+	github.com/apus-run/gala/pkg/encoding v0.16.0
 	google.golang.org/protobuf v1.36.11
 )
 

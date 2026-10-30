@@ -1,5 +1,5 @@
-github.com/apus-run/gala/pkg/lang v0.15.1 h1:LmAUPkVRXi3AsYBwIzZKGCDZc1bHkLw5HwMgVI6p638=
-github.com/apus-run/gala/pkg/lang v0.15.1/go.mod h1:lQnG6KrWb855DtSxRyCToAaGOilnXLGA+BNkmi6BYbw=
+github.com/apus-run/gala/pkg/lang v0.16.0 h1:gCEVtUJ3/x09XdZPn/x78mmpIhKprz/o9MrAJBXccM4=
+github.com/apus-run/gala/pkg/lang v0.16.0/go.mod h1:lQnG6KrWb855DtSxRyCToAaGOilnXLGA+BNkmi6BYbw=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/guregu/null v4.0.0+incompatible h1:4zw0ckM7ECd6FNNddc3Fu4aty9nTlpkkzH7dPn4/4Gw=

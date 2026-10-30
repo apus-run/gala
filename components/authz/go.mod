@@ -4,8 +4,8 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/apus-run/gala/components/authz/adapter/gorm v0.15.1
-	github.com/apus-run/gala/components/authz/adapter/redis v0.15.1
+	github.com/apus-run/gala/components/authz/adapter/gorm v0.16.0
+	github.com/apus-run/gala/components/authz/adapter/redis v0.16.0
 	github.com/casbin/casbin/v3 v3.10.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/redis/go-redis/v9 v9.23.0
