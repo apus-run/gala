@@ -40,7 +40,7 @@ type cache[K comparable, V any] struct {
 // Default TTL is 10 years, sane value for expirable cache is 5 minutes.
 // Default eviction mode is LRC, WithLRU option changes it to LRU.
 func New[K comparable, V any](opts ...Option) Cache[K, V] {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	c := &cache[K, V]{
 		items:     map[K]*list.Element{},

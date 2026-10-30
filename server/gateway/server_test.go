@@ -132,6 +132,6 @@ func TestGateway(t *testing.T) {
 }
 
 func TestWithShutdownFuncNilIsNoop(t *testing.T) {
-	opts := Apply(WithShutdownFunc(nil))
+	opts := NewOptions(WithShutdownFunc(nil))
 	opts.shutdownFunc()
 }

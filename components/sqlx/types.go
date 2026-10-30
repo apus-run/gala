@@ -57,7 +57,16 @@ type Options struct {
 	connMaxIdleTime time.Duration
 }
 
-type Option func(*Options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 // DefaultOptions returns an independent default configuration.
 func DefaultOptions() *Options {
@@ -69,48 +78,54 @@ func DefaultOptions() *Options {
 	}
 }
 
-func Apply(opts ...Option) *Options {
+// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+func NewOptions(opts ...Option) *Options {
 	o := DefaultOptions()
-	for _, fn := range opts {
-		fn(o)
-	}
+	o.Apply(opts...)
 	return o
 }
 
-func WithDSN(dsn string) Option {
-	return func(o *Options) {
-		o.dsn = dsn
+// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+func (o *Options) Apply(opts ...Option) {
+	for _, opt := range opts {
+		opt.apply(o)
 	}
+}
+
+func WithDSN(dsn string) Option {
+	return OptionFunc(func(o *Options) {
+		o.dsn = dsn
+	})
 }
 
 // WithMaxOpenConns sets the maximum number of open connections (default 25).
 // A non-positive value means unlimited, as in database/sql.
 func WithMaxOpenConns(n int) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.maxOpenConns = n
-	}
+	})
 }
 
 // WithMaxIdleConns sets the maximum number of idle connections (default 5).
 // A non-positive value disables idle connection retention, as in database/sql.
 func WithMaxIdleConns(n int) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.maxIdleConns = n
-	}
+	})
 }
 
 // WithConnMaxLifetime sets the maximum connection lifetime (default 30 minutes).
 // A non-positive value disables expiration by age, as in database/sql.
 func WithConnMaxLifetime(d time.Duration) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.connMaxLifetime = d
-	}
+	})
 }
 
 // WithConnMaxIdleTime sets the maximum idle duration (default 5 minutes).
 // A non-positive value disables expiration by idle time, as in database/sql.
 func WithConnMaxIdleTime(d time.Duration) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.connMaxIdleTime = d
-	}
+	})
 }

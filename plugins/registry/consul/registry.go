@@ -20,7 +20,7 @@ var _ registry.Registry = (*Registry)(nil)
 // The caller owns any HTTP client supplied through WithHTTPClient.
 type Registry struct {
 	c         *client
-	opts      options
+	opts      Options
 	life      *lifetime
 	mu        sync.Mutex // serializes registration changes
 	entries   map[string]*entry

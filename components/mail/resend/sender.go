@@ -30,12 +30,21 @@ type Client interface {
 }
 
 // Option 配置 Sender。
-type Option func(*Sender)
+type Option interface {
+	apply(*Sender)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Sender)
+
+func (f OptionFunc) apply(o *Sender) {
+	f(o)
+}
 
 // WithMaxMessageBytes 调整近似原始消息预算。提高预算不能绕过
 // Resend 的硬限制；应用还必须按该预算限制并发发送数。
 func WithMaxMessageBytes(n int64) Option {
-	return func(s *Sender) { s.maxMessageBytes = n }
+	return OptionFunc(func(s *Sender) { s.maxMessageBytes = n })
 }
 
 // Sender 通过 Resend 发送邮件。构造后不可变，可并发使用。
@@ -53,7 +62,7 @@ func New(client Client, options ...Option) (*Sender, error) {
 	}
 	s := &Sender{client: client, maxMessageBytes: DefaultMaxMessageBytes}
 	for _, option := range options {
-		option(s)
+		option.apply(s)
 	}
 	if s.maxMessageBytes <= 0 {
 		return nil, errors.New("mail/resend: max message bytes must be positive")

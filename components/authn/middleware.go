@@ -22,20 +22,29 @@ type middlewareOptions struct {
 }
 
 // MiddlewareOption customizes Middleware behavior.
-type MiddlewareOption func(*middlewareOptions)
+type MiddlewareOption interface {
+	apply(*middlewareOptions)
+}
+
+// MiddlewareOptionFunc adapts a plain function to MiddlewareOption.
+type MiddlewareOptionFunc func(*middlewareOptions)
+
+func (f MiddlewareOptionFunc) apply(o *middlewareOptions) {
+	f(o)
+}
 
 // WithErrorHandler replaces the default auth error response. The default maps
 // errors with StatusOf, sets WWW-Authenticate when applicable, and writes the
 // corresponding HTTP status.
 func WithErrorHandler(fn func(http.ResponseWriter, *http.Request, error)) MiddlewareOption {
-	return func(o *middlewareOptions) { o.onError = fn }
+	return MiddlewareOptionFunc(func(o *middlewareOptions) { o.onError = fn })
 }
 
 // NewMiddleware creates an authentication middleware.
 func NewMiddleware[T any](auth AuthFunc[T], opts ...MiddlewareOption) *Middleware[T] {
 	o := middlewareOptions{onError: defaultAuthError}
 	for _, opt := range opts {
-		opt(&o)
+		opt.apply(&o)
 	}
 	return &Middleware[T]{auth: auth, onError: o.onError}
 }

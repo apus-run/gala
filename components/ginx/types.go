@@ -63,7 +63,7 @@ type Options struct {
 	afterStop   []func(context.Context) error
 }
 
-// DefaultOptions .
+// DefaultOptions returns a new Options holding the package defaults.
 func DefaultOptions() *Options {
 	return &Options{
 		mode:         "dev",
@@ -73,15 +73,24 @@ func DefaultOptions() *Options {
 	}
 }
 
-func Apply(opts ...Option) *Options {
-	options := DefaultOptions()
+// NewOptions builds Options from the defaults, then applies opts in order.
+// It returns the first option error, so an invalid option is never silently dropped.
+func NewOptions(opts ...Option) (*Options, error) {
+	o := DefaultOptions()
+	if err := o.Apply(opts...); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// Apply 按顺序原地应用选项；遇到第一个错误即停止并返回该错误，之后的选项不再应用。
+func (o *Options) Apply(opts ...Option) error {
 	for _, opt := range opts {
-		err := opt(options)
-		if err != nil {
-			return nil
+		if err := opt(o); err != nil {
+			return err
 		}
 	}
-	return options
+	return nil
 }
 
 // WithMode .

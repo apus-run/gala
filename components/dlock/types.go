@@ -37,7 +37,16 @@ type Options struct {
 }
 
 // Option is a function that modifies Options.
-type Option func(o *Options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 // NewOptions initializes Options with default values.
 func NewOptions() *Options {
@@ -53,7 +62,7 @@ func NewOptions() *Options {
 func ApplyOptions(opts ...Option) *Options {
 	o := NewOptions() // Create a new Options instance with default values
 	for _, opt := range opts {
-		opt(o) // Apply each option to the Options instance
+		opt.apply(o) // Apply each option to the Options instance
 	}
 
 	return o // Return the configured Options
@@ -61,21 +70,21 @@ func ApplyOptions(opts ...Option) *Options {
 
 // WithLockName sets the lock name in Options.
 func WithLockName(name string) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.LockName = name // Set the lock name
-	}
+	})
 }
 
 // WithLockTimeout sets the lock timeout in Options.
 func WithLockTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.LockTimeout = timeout // Set the lock timeout
-	}
+	})
 }
 
 // WithOwnerID sets the owner ID in Options.
 func WithOwnerID(ownerID string) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.OwnerID = ownerID // Set the owner ID
-	}
+	})
 }

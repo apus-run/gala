@@ -17,7 +17,7 @@ var _ registry.Discovery = (*Discovery)(nil)
 // Discovery reads and watches the healthy instances of a service.
 type Discovery struct {
 	c    *client
-	opts options
+	opts Options
 
 	life *lifetime
 }

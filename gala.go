@@ -25,7 +25,7 @@ type Service struct {
 
 // New create an application lifecycle manager.
 func New(opts ...Option) *Service {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 	if options.id == "" {
 		options.id = uuid.NewV4().String()
 	}

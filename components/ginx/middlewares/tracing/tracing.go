@@ -23,23 +23,32 @@ type traceConfig struct {
 }
 
 // TraceOption specifies instrumentation configuration options.
-type TraceOption func(*traceConfig)
+type TraceOption interface {
+	apply(*traceConfig)
+}
+
+// TraceOptionFunc adapts a plain function to TraceOption.
+type TraceOptionFunc func(*traceConfig)
+
+func (f TraceOptionFunc) apply(o *traceConfig) {
+	f(o)
+}
 
 // WithPropagators specifies propagators to use for extracting
 // information from the HTTP requests. If none are specified, global
 // ones will be used.
 func WithPropagators(propagators propagation.TextMapPropagator) TraceOption {
-	return func(cfg *traceConfig) {
+	return TraceOptionFunc(func(cfg *traceConfig) {
 		cfg.Propagators = propagators
-	}
+	})
 }
 
 // WithTracerProvider specifies a tracer provider to use for creating a tracer.
 // If none is specified, the global provider is used.
 func WithTracerProvider(provider oteltrace.TracerProvider) TraceOption {
-	return func(cfg *traceConfig) {
+	return TraceOptionFunc(func(cfg *traceConfig) {
 		cfg.TracerProvider = provider
-	}
+	})
 }
 
 // Tracing returns interceptor that will trace incoming requests.
@@ -48,7 +57,7 @@ func WithTracerProvider(provider oteltrace.TracerProvider) TraceOption {
 func Tracing(serviceName string, opts ...TraceOption) gin.HandlerFunc {
 	cfg := traceConfig{}
 	for _, opt := range opts {
-		opt(&cfg)
+		opt.apply(&cfg)
 	}
 	if cfg.TracerProvider == nil {
 		cfg.TracerProvider = otel.GetTracerProvider()

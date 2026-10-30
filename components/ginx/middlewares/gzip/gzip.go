@@ -81,7 +81,7 @@ func newGzipHandler(level int, options ...GzipOption) *gzipHandler {
 		},
 	}
 	for _, setter := range options {
-		setter(handler.GzipOptions)
+		setter.apply(handler.GzipOptions)
 	}
 	return handler
 }
@@ -150,30 +150,39 @@ type GzipOptions struct {
 	DecompressFn         func(c *gin.Context)
 }
 
-type GzipOption func(*GzipOptions)
+type GzipOption interface {
+	apply(*GzipOptions)
+}
+
+// GzipOptionFunc adapts a plain function to GzipOption.
+type GzipOptionFunc func(*GzipOptions)
+
+func (f GzipOptionFunc) apply(o *GzipOptions) {
+	f(o)
+}
 
 func WithGzipExcludedExtensions(args []string) GzipOption {
-	return func(o *GzipOptions) {
+	return GzipOptionFunc(func(o *GzipOptions) {
 		o.ExcludedExtensions = NewExcludedExtensions(args)
-	}
+	})
 }
 
 func WithGzipExcludedPaths(args []string) GzipOption {
-	return func(o *GzipOptions) {
+	return GzipOptionFunc(func(o *GzipOptions) {
 		o.ExcludedPaths = NewExcludedPaths(args)
-	}
+	})
 }
 
 func WithGzipExcludedPathsRegexs(args []string) GzipOption {
-	return func(o *GzipOptions) {
+	return GzipOptionFunc(func(o *GzipOptions) {
 		o.ExcludedPathesRegexs = NewExcludedPathesRegexs(args)
-	}
+	})
 }
 
 func WithGzipDecompressFn(decompressFn func(c *gin.Context)) GzipOption {
-	return func(o *GzipOptions) {
+	return GzipOptionFunc(func(o *GzipOptions) {
 		o.DecompressFn = decompressFn
-	}
+	})
 }
 
 // Using safemap for better lookup performance

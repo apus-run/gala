@@ -263,7 +263,7 @@ func TestOptions_WithOffset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			option := WithOffset(tt.offset)
 			options := &Options{}
-			option(options)
+			option.apply(options)
 
 			if options.Offset != tt.expected {
 				t.Errorf("Expected Offset: %d, got: %d", tt.expected, options.Offset)
@@ -294,7 +294,7 @@ func TestOptions_WithLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			option := WithLimit(tt.limit)
 			options := &Options{}
-			option(options)
+			option.apply(options)
 
 			if options.Limit != tt.expected {
 				t.Errorf("Expected Limit: %d, got: %d", tt.expected, options.Limit)
@@ -352,7 +352,7 @@ func TestOptions_WithPage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			option := WithPage(tt.page, tt.pageSize)
 			options := &Options{}
-			option(options)
+			option.apply(options)
 
 			if options.Offset != tt.expected.Offset || options.Limit != tt.expected.Limit {
 				t.Errorf("Expected Offset: %d, Limit: %d, got Offset: %d, Limit: %d",
@@ -384,7 +384,7 @@ func TestOptions_WithFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			option := WithFilter(tt.filter)
 			options := &Options{}
-			option(options)
+			option.apply(options)
 
 			if !reflect.DeepEqual(options.Filters, tt.expected) {
 				t.Errorf("Expected Filters: %v, got: %v", tt.expected, options.Filters)

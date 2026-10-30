@@ -49,12 +49,12 @@ func NewSessionAuth(s store.SessionStorer, opts ...Option) (*SessionAuth, error)
 	if s == nil {
 		return nil, ErrEmptySessionStore
 	}
-	o := Apply(opts...)
+	o := NewOptions(opts...)
 	if o.claims != nil {
 		return nil, ErrSessionClaimsUnsupported
 	}
-	if o.accessTTL < time.Second || o.refreshTTL < o.accessTTL {
-		return nil, errors.New("session TTLs must satisfy 1s <= access <= refresh")
+	if err := o.Validate(); err != nil {
+		return nil, err
 	}
 	return &SessionAuth{manager: token.NewJwtManager[struct{}](o.jwtOpts...), store: s, accessTTL: o.accessTTL, refreshTTL: o.refreshTTL}, nil
 }

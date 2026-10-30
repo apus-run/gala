@@ -35,7 +35,16 @@ type item struct {
 }
 
 // Option is config option.
-type Option func(*Options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 type Options struct {
 	// DefaultTTL is the default time-to-live for cache entries.
@@ -61,34 +70,40 @@ func DefaultOptions() *Options {
 	}
 }
 
-func Apply(opts ...Option) *Options {
-	options := DefaultOptions()
-	for _, o := range opts {
-		o(options)
+// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+func NewOptions(opts ...Option) *Options {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+func (o *Options) Apply(opts ...Option) {
+	for _, opt := range opts {
+		opt.apply(o)
 	}
-	return options
 }
 
 func WithDefaultTTL(ttl time.Duration) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.DefaultTTL = ttl
-	}
+	})
 }
 
 func WithCleanupInterval(interval time.Duration) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.CleanupInterval = interval
-	}
+	})
 }
 
 func WithMaxItems(maxItems int) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.MaxItems = maxItems
-	}
+	})
 }
 
 func WithOnEviction(onEviction func(key string, value any)) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.OnEviction = onEviction
-	}
+	})
 }

@@ -1,6 +1,7 @@
 package authn
 
 import (
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -9,28 +10,54 @@ import (
 	"github.com/apus-run/gala/pkg/option"
 )
 
-// Option 只覆盖 authn 自己的开关。JWT 的配置面不在这里重复一份 ——
-// 密钥、算法、audience/issuer 校验等直接用 components/token 的选项（WithJWTOptions）。
-type Option func(*Options)
+type (
+	// OptionFunc adapts a plain function to Option.
+	OptionFunc func(*Options)
 
-// Options is authn options.
-type Options struct {
-	accessTTL, refreshTTL time.Duration
-	claims                func() jwt.Claims
-	jwtOpts               []option.Option[token.JwtConfig]
+	// Option 只覆盖 authn 自己的开关。JWT 的配置面不在这里重复一份 ——
+	// 密钥、算法、audience/issuer 校验等直接用 components/token 的选项（WithJWTOptions）。
+	Option interface {
+		apply(*Options)
+	}
+
+	// Options is authn options.
+	Options struct {
+		accessTTL, refreshTTL time.Duration
+		claims                func() jwt.Claims
+		jwtOpts               []option.Option[token.JwtConfig]
+	}
+)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
 }
 
-// DefaultOptions .
+// DefaultOptions returns a new Options holding the package defaults.
 func DefaultOptions() *Options {
 	return &Options{accessTTL: AccessTokenTTL, refreshTTL: RefreshTokenTTL}
 }
 
-func Apply(opts ...Option) *Options {
-	options := DefaultOptions()
-	for _, opt := range opts {
-		opt(options)
+// NewOptions builds Options from the defaults, then applies opts in order.
+func NewOptions(opts ...Option) *Options {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Validate checks the session lifetimes. It does not change the Options.
+// JwtAuth ignores these values, so only NewSessionAuth calls it.
+func (o *Options) Validate() error {
+	if o.accessTTL < time.Second || o.refreshTTL < o.accessTTL {
+		return errors.New("session TTLs must satisfy 1s <= access <= refresh")
 	}
-	return options
+	return nil
+}
+
+// Apply 按顺序应用选项，不重置默认值、不做校验。
+func (o *Options) Apply(opts ...Option) {
+	for _, opt := range opts {
+		opt.apply(o)
+	}
 }
 
 // WithClaims 设置 claims 工厂：签发用它产出 claims，校验用它作为解析目标，所以类型要一致。
@@ -42,21 +69,21 @@ func Apply(opts ...Option) *Options {
 // token.WithExpiry 只作用于 token 自己的内置 claims，对工厂产出的 claims 不生效。
 // 该选项只用于旧 JwtAuth；NewSessionAuth 会返回 ErrSessionClaimsUnsupported。
 func WithClaims(f func() jwt.Claims) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.claims = f
-	}
+	})
 }
 
 // WithJWTOptions 透传 components/token 的 JWT 配置：WithSecretKey/WithAlgorithm 决定怎么签，
 // WithAudience/WithIssuer/WithParserOptions 决定怎么验。不配密钥就签不出来（没有默认密钥）。
 func WithJWTOptions(opts ...option.Option[token.JwtConfig]) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.jwtOpts = append(o.jwtOpts, opts...)
-	}
+	})
 }
 
 // WithSessionTTL configures pair lifetimes; NewSessionAuth validates the values.
 // It does not affect the legacy JwtAuth or components/token configuration.
 func WithSessionTTL(access, refresh time.Duration) Option {
-	return func(o *Options) { o.accessTTL, o.refreshTTL = access, refresh }
+	return OptionFunc(func(o *Options) { o.accessTTL, o.refreshTTL = access, refresh })
 }

@@ -13,7 +13,7 @@ type Mongo struct {
 }
 
 func Open(ctx context.Context, opts ...Option) (*Mongo, error) {
-	cfg := Apply(opts...)
+	cfg := NewOptions(opts...)
 	client, err := client(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("new client fail: %v", err)

@@ -21,7 +21,7 @@ type Logger struct {
 
 func NewLogger(options ...Option) *Logger {
 	// 修改配置
-	config := Apply(options...)
+	config := NewOptions(options...)
 	l := log.NewLogger(log.WithOptions(func(lopts *log.Options) {
 		lopts.LogLevel = config.LogLevel
 		lopts.Format = config.Format

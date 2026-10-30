@@ -20,7 +20,7 @@ type provider struct {
 }
 
 func NewDB(opts ...Option) (Provider, error) {
-	o := Apply(opts...)
+	o := NewOptions(opts...)
 
 	u, err := dburl.Parse(o.dsn)
 	if err != nil {

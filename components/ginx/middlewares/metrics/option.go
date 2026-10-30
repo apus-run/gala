@@ -5,18 +5,27 @@ import (
 )
 
 // Option set the metrics options.
-type Option func(*options)
+type Option interface {
+	apply(*Options)
+}
 
-type options struct {
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
+
+type Options struct {
 	metricsPath          string
 	ignoreStatusCodes    map[int]struct{}
 	ignoreRequestPaths   map[string]struct{}
 	ignoreRequestMethods map[string]struct{}
 }
 
-// defaultOptions default value
-func defaultOptions() *options {
-	return &options{
+// DefaultOptions returns a new Options holding the package defaults.
+func DefaultOptions() *Options {
+	return &Options{
 		metricsPath:          "/metrics",
 		ignoreStatusCodes:    nil,
 		ignoreRequestPaths:   nil,
@@ -24,53 +33,53 @@ func defaultOptions() *options {
 	}
 }
 
-func (o *options) apply(opts ...Option) {
+func (o *Options) apply(opts ...Option) {
 	for _, opt := range opts {
-		opt(o)
+		opt.apply(o)
 	}
 }
 
 // WithMetricsPath set metrics path
 func WithMetricsPath(metricsPath string) Option {
-	return func(o *options) {
+	return OptionFunc(func(o *Options) {
 		o.metricsPath = metricsPath
-	}
+	})
 }
 
 // WithIgnoreStatusCodes ignore status codes
 func WithIgnoreStatusCodes(statusCodes ...int) Option {
-	return func(o *options) {
+	return OptionFunc(func(o *Options) {
 		codeMaps := make(map[int]struct{}, len(statusCodes))
 		for _, code := range statusCodes {
 			codeMaps[code] = struct{}{}
 		}
 		o.ignoreStatusCodes = codeMaps
-	}
+	})
 }
 
 // WithIgnoreRequestPaths ignore request paths
 func WithIgnoreRequestPaths(paths ...string) Option {
-	return func(o *options) {
+	return OptionFunc(func(o *Options) {
 		pathMaps := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
 			pathMaps[path] = struct{}{}
 		}
 		o.ignoreRequestPaths = pathMaps
-	}
+	})
 }
 
 // WithIgnoreRequestMethods ignore request methods
 func WithIgnoreRequestMethods(methods ...string) Option {
-	return func(o *options) {
+	return OptionFunc(func(o *Options) {
 		methodMaps := make(map[string]struct{}, len(methods))
 		for _, method := range methods {
 			methodMaps[strings.ToUpper(method)] = struct{}{}
 		}
 		o.ignoreRequestMethods = methodMaps
-	}
+	})
 }
 
-func (o *options) isIgnoreCodeStatus(statusCode int) bool {
+func (o *Options) isIgnoreCodeStatus(statusCode int) bool {
 	if o.ignoreStatusCodes == nil {
 		return false
 	}
@@ -78,7 +87,7 @@ func (o *options) isIgnoreCodeStatus(statusCode int) bool {
 	return ok
 }
 
-func (o *options) isIgnorePath(path string) bool {
+func (o *Options) isIgnorePath(path string) bool {
 	if o.ignoreRequestPaths == nil {
 		return false
 	}
@@ -86,7 +95,7 @@ func (o *options) isIgnorePath(path string) bool {
 	return ok
 }
 
-func (o *options) checkIgnoreMethod(method string) bool {
+func (o *Options) checkIgnoreMethod(method string) bool {
 	if o.ignoreRequestMethods == nil {
 		return false
 	}

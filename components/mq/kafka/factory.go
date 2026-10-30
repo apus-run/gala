@@ -15,22 +15,33 @@ type Factory struct {
 	deadLetter string
 }
 
-type Option func(*Factory)
+type Option interface {
+	apply(*Factory)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Factory)
+
+func (f OptionFunc) apply(o *Factory) {
+	f(o)
+}
 
 // WithMaxRetries caps redeliveries of a failing record (after the first
 // attempt). When exhausted the record is forwarded to the dead-letter topic,
 // or logged and skipped if none is set, so it no longer blocks its partition.
 // n <= 0 keeps the default: retry forever.
-func WithMaxRetries(n int) Option { return func(f *Factory) { f.maxRetries = n } }
+func WithMaxRetries(n int) Option { return OptionFunc(func(f *Factory) { f.maxRetries = n }) }
 
 // WithDeadLetterTopic sets where exhausted records go. The offset is committed
 // only after the forward succeeds, so a failed forward retries instead of losing it.
-func WithDeadLetterTopic(topic string) Option { return func(f *Factory) { f.deadLetter = topic } }
+func WithDeadLetterTopic(topic string) Option {
+	return OptionFunc(func(f *Factory) { f.deadLetter = topic })
+}
 
 func NewFactory(opts ...Option) mq.Factory {
 	f := &Factory{}
 	for _, opt := range opts {
-		opt(f)
+		opt.apply(f)
 	}
 	return f
 }

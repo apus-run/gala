@@ -47,23 +47,32 @@ func defaultPanicHandler(jobId string, recovered any, stack []byte) {
 }
 
 // Option configures a Cron instance (see New).
-type Option func(*Cron)
+type Option interface {
+	apply(*Cron)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Cron)
+
+func (f OptionFunc) apply(o *Cron) {
+	f(o)
+}
 
 // WithLocation sets the timezone used to evaluate the job schedules
 // (default UTC). A nil location is ignored.
 func WithLocation(l *time.Location) Option {
-	return func(c *Cron) {
+	return OptionFunc(func(c *Cron) {
 		if l != nil {
 			c.location = l
 		}
-	}
+	})
 }
 
 // WithInterval sets the tick interval, see Cron.SetInterval.
 func WithInterval(d time.Duration) Option {
-	return func(c *Cron) {
+	return OptionFunc(func(c *Cron) {
 		c.interval = normalizeInterval(d)
-	}
+	})
 }
 
 // WithPanicHandler replaces the default handler (that logs the panic and
@@ -71,15 +80,24 @@ func WithInterval(d time.Duration) Option {
 //
 // To crash the process on a job panic, panic again from the handler.
 func WithPanicHandler(h PanicHandler) Option {
-	return func(c *Cron) {
+	return OptionFunc(func(c *Cron) {
 		if h != nil {
 			c.onPanic = h
 		}
-	}
+	})
 }
 
 // JobOption configures a single job (see Cron.Add).
-type JobOption func(*job)
+type JobOption interface {
+	apply(*job)
+}
+
+// JobOptionFunc adapts a plain function to JobOption.
+type JobOptionFunc func(*job)
+
+func (f JobOptionFunc) apply(o *job) {
+	f(o)
+}
 
 // SkipIfRunning makes the job skip a due run when its previous run
 // hasn't returned yet.
@@ -87,9 +105,9 @@ type JobOption func(*job)
 // The "running" state follows the job id, so replacing a job with Add
 // doesn't allow the new version to overlap with the old one.
 func SkipIfRunning() JobOption {
-	return func(j *job) {
+	return JobOptionFunc(func(j *job) {
 		j.skipIfRunning = true
-	}
+	})
 }
 
 type job struct {
@@ -142,7 +160,7 @@ func New(opts ...Option) *Cron {
 
 	for _, opt := range opts {
 		if opt != nil {
-			opt(c)
+			opt.apply(c)
 		}
 	}
 
@@ -235,7 +253,7 @@ func (c *Cron) Add(jobId string, cronExpr string, run func(), opts ...JobOption)
 	}
 	for _, opt := range opts {
 		if opt != nil {
-			opt(j)
+			opt.apply(j)
 		}
 	}
 

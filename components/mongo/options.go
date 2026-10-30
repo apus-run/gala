@@ -18,7 +18,16 @@ type Config struct {
 	Debug bool
 }
 
-type Option func(*Config)
+type Option interface {
+	apply(*Config)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Config)
+
+func (f OptionFunc) apply(o *Config) {
+	f(o)
+}
 
 // DefaultOptions .
 func DefaultOptions() *Config {
@@ -37,64 +46,69 @@ func DefaultOptions() *Config {
 	}
 }
 
-func Apply(opts ...Option) *Config {
-	options := DefaultOptions()
+// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+func NewOptions(opts ...Option) *Config {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
 
+// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+func (o *Config) Apply(opts ...Option) {
 	for _, opt := range opts {
-		opt(options)
+		opt.apply(o)
 	}
-	return options
 }
 
 func WithURI(uri string) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.Uri = uri
-	}
+	})
 }
 
 func WithDebug(debug bool) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.Debug = debug
-	}
+	})
 }
 
 func WithInterceptors(interceptors []Interceptor) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.interceptors = interceptors
-	}
+	})
 }
 
 func WithInterceptor(interceptors ...Interceptor) Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		if c.interceptors == nil {
 			c.interceptors = make([]Interceptor, 0)
 		}
 		c.interceptors = append(c.interceptors, interceptors...)
-	}
+	})
 }
 
 func WithDatabaseName(dbname string) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.DatabaseName = dbname
-	}
+	})
 }
 
 func WithCollectionName(collname string) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.CollectionName = collname
-	}
+	})
 }
 
 // WithMongoConfig 设置所有配置
 func WithMongoConfig(fn func(options *Config)) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		fn(config)
-	}
+	})
 }
 
 // WithClientOptions 表示自行配置ClientOptions的配置信息
 func WithClientOptions(options *options.ClientOptions) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.ClientOptions = options
-	}
+	})
 }

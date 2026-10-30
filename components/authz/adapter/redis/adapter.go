@@ -172,19 +172,28 @@ func NewAdapterWithClientAndOptions(client redis.Cmdable, options ...Option) (*A
 		return nil, err
 	}
 	for _, option := range options {
-		option(a)
+		option.apply(a)
 	}
 	return a, nil
 }
 
-type Option func(*Adapter)
+type Option interface {
+	apply(*Adapter)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Adapter)
+
+func (f OptionFunc) apply(o *Adapter) {
+	f(o)
+}
 
 // NewAdapterWithOption creates adapter with options pattern.
 // Deprecated: Use NewAdapter with Config struct instead.
 func NewAdapterWithOption(options ...Option) (*Adapter, error) {
 	a := &Adapter{}
 	for _, option := range options {
-		option(a)
+		option.apply(a)
 	}
 	return NewAdapter(&Config{
 		Network:   a.network,
@@ -197,27 +206,27 @@ func NewAdapterWithOption(options ...Option) (*Adapter, error) {
 }
 
 func WithAddress(address string) Option {
-	return func(a *Adapter) { a.address = address }
+	return OptionFunc(func(a *Adapter) { a.address = address })
 }
 
 func WithUsername(username string) Option {
-	return func(a *Adapter) { a.username = username }
+	return OptionFunc(func(a *Adapter) { a.username = username })
 }
 
 func WithPassword(password string) Option {
-	return func(a *Adapter) { a.password = password }
+	return OptionFunc(func(a *Adapter) { a.password = password })
 }
 
 func WithNetwork(network string) Option {
-	return func(a *Adapter) { a.network = network }
+	return OptionFunc(func(a *Adapter) { a.network = network })
 }
 
 func WithKey(key string) Option {
-	return func(a *Adapter) { a.key = key }
+	return OptionFunc(func(a *Adapter) { a.key = key })
 }
 
 func WithTls(tlsConfig *tls.Config) Option {
-	return func(a *Adapter) { a.tlsConfig = tlsConfig }
+	return OptionFunc(func(a *Adapter) { a.tlsConfig = tlsConfig })
 }
 
 func (a *Adapter) open() error {

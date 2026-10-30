@@ -50,48 +50,62 @@ type Config struct {
 }
 
 // Option 配置 Config。
-type Option func(*Config)
+type Option interface {
+	apply(*Config)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Config)
+
+func (f OptionFunc) apply(o *Config) {
+	f(o)
+}
 
 // DefaultOptions 返回默认配置；宽高留 0，由 New 按类型补默认值。
 func DefaultOptions() *Config {
 	return &Config{TTL: DefaultTTL, Length: 4}
 }
 
-// Apply 从默认配置出发依次应用 opts。
-func Apply(opts ...Option) *Config {
-	cfg := DefaultOptions()
-	for _, o := range opts {
-		o(cfg)
+// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+func NewOptions(opts ...Option) *Config {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+func (o *Config) Apply(opts ...Option) {
+	for _, opt := range opts {
+		opt.apply(o)
 	}
-	return cfg
 }
 
 // WithTTL 设置答案有效期；d<=0 时忽略（0 在 memory 与 redis 上都表示永不过期）。
 func WithTTL(d time.Duration) Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		if d > 0 {
 			c.TTL = d
 		}
-	}
+	})
 }
 
 // WithLength 设置验证码字符数；n<1 时忽略，Math 类型忽略（算式长度固定）。
 func WithLength(n int) Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		if n >= 1 {
 			c.Length = n
 		}
-	}
+	})
 }
 
 // WithSize 设置图片像素宽高；w 或 h <=0 时忽略（用类型的默认宽高）。
 // 字符数加长时记得同步加宽，否则字符挤在一起（宽度不随字符数自动调整）。
 func WithSize(width, height int) Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		if width > 0 && height > 0 {
 			c.Width, c.Height = width, height
 		}
-	}
+	})
 }
 
 // Captcha 生成并校验一种验证码。零个或多个实例可以共用同一个 cache，
@@ -104,7 +118,7 @@ type Captcha struct {
 
 // New 按类型创建验证码，c 注入 cache.Cache（memory 或 redis），多实例可共用。
 func New(kind Kind, c cache.Cache, opts ...Option) *Captcha {
-	cfg := Apply(opts...)
+	cfg := NewOptions(opts...)
 	// WithSize 忽略非法值，宽为 0 即未设置，补类型默认宽高。
 	if cfg.Width == 0 {
 		switch kind {

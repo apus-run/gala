@@ -57,7 +57,16 @@ type Query struct {
 }
 
 // Option defines a function type that modifies Options.
-type Option func(*Options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 // Options holds the options for GORM's Where query conditions.
 type Options struct {
@@ -92,39 +101,45 @@ func DefaultOptions() *Options {
 	}
 }
 
-func Apply(opts ...Option) *Options {
-	options := DefaultOptions()
+// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+func NewOptions(opts ...Option) *Options {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+func (o *Options) Apply(opts ...Option) {
 	for _, opt := range opts {
-		opt(options) // Apply each Option to the opts.
+		opt.apply(o)
 	}
-	return options
 }
 
 // NewWhere constructs a new Options object, applying the given where options.
 func NewWhere(opts ...Option) *Options {
-	whr := Apply(opts...)
+	whr := NewOptions(opts...)
 
 	return whr
 }
 
 // WithOffset initializes the Offset field in Options with the given offset value.
 func WithOffset(offset int64) Option {
-	return func(whr *Options) {
+	return OptionFunc(func(whr *Options) {
 		if offset < 0 {
 			offset = 0
 		}
 		whr.Offset = int(offset)
-	}
+	})
 }
 
 // WithLimit initializes the Limit field in Options with the given limit value.
 func WithLimit(limit int64) Option {
-	return func(whr *Options) {
+	return OptionFunc(func(whr *Options) {
 		if limit <= 0 {
 			limit = defaultLimit
 		}
 		whr.Limit = int(limit)
-	}
+	})
 }
 
 // WithPage is a sugar function to convert page and pageSize into limit and offset in Options.
@@ -132,39 +147,39 @@ func WithLimit(limit int64) Option {
 // Normalization is delegated to page.Params, so WithPage and P always agree:
 // pg<1 is page 1, size<1 is page.DefaultSize, size>page.MaxSize is capped.
 func WithPage(pg int, size int) Option {
-	return func(whr *Options) {
+	return OptionFunc(func(whr *Options) {
 		whr.P(pg, size)
-	}
+	})
 }
 
 // WithFilter initializes the Filters field in Options with the given filter criteria.
 func WithFilter(filter map[any]any) Option {
-	return func(whr *Options) {
+	return OptionFunc(func(whr *Options) {
 		whr.Filters = filter
-	}
+	})
 }
 
 // WithClauses appends clauses to the Clauses field in Options.
 func WithClauses(conds ...clause.Expression) Option {
-	return func(whr *Options) {
+	return OptionFunc(func(whr *Options) {
 		whr.Clauses = append(whr.Clauses, conds...)
-	}
+	})
 }
 
 // WithQuery creates an Option that adds a query condition with arguments to the Options struct.
 // The query parameter can be a string, map, struct, or any other type supported by GORM's Where clause.
 // The args parameter contains values that will replace placeholders in the query string.
 func WithQuery(query any, args ...any) Option {
-	return func(whr *Options) {
+	return OptionFunc(func(whr *Options) {
 		whr.Queries = append(whr.Queries, Query{Query: query, Args: args})
-	}
+	})
 }
 
 // WithOptions 设置所有配置
 func WithOptions(fn func(options *Options)) Option {
-	return func(options *Options) {
+	return OptionFunc(func(options *Options) {
 		fn(options)
-	}
+	})
 }
 
 // O sets the offset for the query.

@@ -44,31 +44,40 @@ const (
 )
 
 // Option 配置 Store。它只能由本包构造，不能在外部伪造配置字段。
-type Option func(*config)
+type Option interface {
+	apply(*config)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*config)
+
+func (f OptionFunc) apply(o *config) {
+	f(o)
+}
 
 // WithDurability 设置耐久性策略，默认 SyncFileAndDir。
 func WithDurability(d Durability) Option {
-	return func(c *config) { c.durability = d }
+	return OptionFunc(func(c *config) { c.durability = d })
 }
 
 // WithFileMode 设置发布后对象文件的权限，默认 0o644。权限在发布前精确设置，不受 umask 影响。
 func WithFileMode(m fs.FileMode) Option {
-	return func(c *config) { c.fileMode = m }
+	return OptionFunc(func(c *config) { c.fileMode = m })
 }
 
 // WithDirMode 设置自动创建目录的权限，默认 0o755。目录权限在创建时受进程 umask 影响。
 func WithDirMode(m fs.FileMode) Option {
-	return func(c *config) { c.dirMode = m }
+	return OptionFunc(func(c *config) { c.dirMode = m })
 }
 
 // WithMaxObjectSize 限制单个对象的字节数，超过返回 ErrTooLarge。0 表示不限制。
 func WithMaxObjectSize(n int64) Option {
-	return func(c *config) { c.maxObject = n }
+	return OptionFunc(func(c *config) { c.maxObject = n })
 }
 
 // WithBufferSize 设置拷贝缓冲大小，默认 256 KiB，上限 4 MiB。它决定单次上传或下载的内存上界。
 func WithBufferSize(n int) Option {
-	return func(c *config) { c.bufferSize = n }
+	return OptionFunc(func(c *config) { c.bufferSize = n })
 }
 
 type config struct {
@@ -142,7 +151,7 @@ func New(root string, opts ...Option) (*Store, error) {
 	cfg := defaultConfig()
 	for _, opt := range opts {
 		if opt != nil {
-			opt(&cfg)
+			opt.apply(&cfg)
 		}
 	}
 	if err := cfg.validate(); err != nil {

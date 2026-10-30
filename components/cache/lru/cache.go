@@ -27,7 +27,7 @@ type Cache struct {
 
 // New 创建带过期机制的LRU缓存并启动后台 gc 协程；不再使用时必须 Close，否则协程一直存活。
 func New(opts ...Option) *Cache {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	s := &Cache{
 		gcInterval: options.GCInterval,

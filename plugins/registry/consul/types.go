@@ -43,7 +43,7 @@ const (
 	defaultMinPoll         = 200 * time.Millisecond
 )
 
-type options struct {
+type Options struct {
 	address         string
 	token           string
 	datacenter      string
@@ -63,60 +63,73 @@ type options struct {
 }
 
 // Option configures a Registry or a Discovery.
-type Option func(*options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 // WithAddress sets the Consul agent address, "host:port" or a full URL.
 // Default: $CONSUL_HTTP_ADDR, else http://127.0.0.1:8500.
-func WithAddress(addr string) Option { return func(o *options) { o.address = addr } }
+func WithAddress(addr string) Option { return OptionFunc(func(o *Options) { o.address = addr }) }
 
 // WithToken sets the ACL token. Default: $CONSUL_HTTP_TOKEN.
-func WithToken(token string) Option { return func(o *options) { o.token = token } }
+func WithToken(token string) Option { return OptionFunc(func(o *Options) { o.token = token }) }
 
 // WithDatacenter sets the datacenter to query. Default: the agent's.
-func WithDatacenter(dc string) Option { return func(o *options) { o.datacenter = dc } }
+func WithDatacenter(dc string) Option { return OptionFunc(func(o *Options) { o.datacenter = dc }) }
 
 // WithTTL sets the TTL of the health check. An instance becomes critical
 // this long after its process stops passing the check. Default: 15s.
-func WithTTL(ttl time.Duration) Option { return func(o *options) { o.ttl = ttl } }
+func WithTTL(ttl time.Duration) Option { return OptionFunc(func(o *Options) { o.ttl = ttl }) }
 
 // WithDeregisterCriticalAfter makes Consul remove an instance whose check
 // has been critical this long. Zero disables it. Default: 1m.
 func WithDeregisterCriticalAfter(d time.Duration) Option {
-	return func(o *options) { o.deregisterAfter = d }
+	return OptionFunc(func(o *Options) { o.deregisterAfter = d })
 }
 
 // WithWaitTime sets how long a blocking query waits for a change before
 // returning. Default: 30s.
-func WithWaitTime(d time.Duration) Option { return func(o *options) { o.wait = d } }
+func WithWaitTime(d time.Duration) Option { return OptionFunc(func(o *Options) { o.wait = d }) }
 
 // WithRequestTimeout bounds every non-blocking request. Default: 10s.
-func WithRequestTimeout(d time.Duration) Option { return func(o *options) { o.requestTimeout = d } }
+func WithRequestTimeout(d time.Duration) Option {
+	return OptionFunc(func(o *Options) { o.requestTimeout = d })
+}
 
 // WithBufferSize sets how many events a subscription can queue beyond its
 // initial replay before it is closed as a slow consumer. Default: 64.
-func WithBufferSize(n int) Option { return func(o *options) { o.bufferSize = n } }
+func WithBufferSize(n int) Option { return OptionFunc(func(o *Options) { o.bufferSize = n }) }
 
 // WithHTTPClient sets the HTTP client, e.g. for TLS. Its Timeout must be
 // longer than WithWaitTime, or blocking queries will be cut short.
 func WithHTTPClient(c *http.Client) Option {
-	return func(o *options) {
+	return OptionFunc(func(o *Options) {
 		if c != nil {
 			o.httpClient = c
 		}
-	}
+	})
 }
 
 // WithLogger sets the logger. Default: slog.Default().
 func WithLogger(l *slog.Logger) Option {
-	return func(o *options) {
+	return OptionFunc(func(o *Options) {
 		if l != nil {
 			o.logger = l
 		}
-	}
+	})
 }
 
-func newOptions(opts []Option) (options, error) {
-	o := options{
+// DefaultOptions returns the package defaults. address and token are read from
+// CONSUL_HTTP_ADDR and CONSUL_HTTP_TOKEN, so the result depends on the environment.
+func DefaultOptions() Options {
+	return Options{
 		address:         os.Getenv("CONSUL_HTTP_ADDR"),
 		token:           os.Getenv("CONSUL_HTTP_TOKEN"),
 		ttl:             defaultTTL,
@@ -130,13 +143,17 @@ func newOptions(opts []Option) (options, error) {
 		retryMax:        defaultRetryMax,
 		minPoll:         defaultMinPoll,
 	}
+}
+
+func newOptions(opts []Option) (Options, error) {
+	o := DefaultOptions()
 	for _, opt := range opts {
-		opt(&o)
+		opt.apply(&o)
 	}
 
 	addr, err := normalizeAddress(o.address)
 	if err != nil {
-		return options{}, err
+		return Options{}, err
 	}
 	o.address = addr
 
@@ -176,7 +193,7 @@ func normalizeAddress(addr string) (string, error) {
 }
 
 // interval is how often the TTL check is passed.
-func (o *options) interval() time.Duration {
+func (o *Options) interval() time.Duration {
 	if o.checkInterval > 0 {
 		return o.checkInterval
 	}

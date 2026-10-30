@@ -20,16 +20,25 @@ var (
 )
 
 // Option configures a Registry.
-type Option func(*Registry)
+type Option interface {
+	apply(*Registry)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Registry)
+
+func (f OptionFunc) apply(o *Registry) {
+	f(o)
+}
 
 // WithBufferSize sets how many events a subscription can queue beyond its
 // initial replay before it is closed as a slow consumer. Default: 64.
 func WithBufferSize(n int) Option {
-	return func(r *Registry) {
+	return OptionFunc(func(r *Registry) {
 		if n > 0 {
 			r.bufferSize = n
 		}
-	}
+	})
 }
 
 // Registry is a registry.Registry and registry.Discovery held in memory.
@@ -56,7 +65,7 @@ func New(opts ...Option) *Registry {
 		subs:       make(map[string]map[*subscriber]struct{}),
 	}
 	for _, opt := range opts {
-		opt(r)
+		opt.apply(r)
 	}
 	return r
 }

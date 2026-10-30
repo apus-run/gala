@@ -84,7 +84,7 @@ func New(dialer Dialer, options ...Option) (*Sender, error) {
 	}
 	s := &Sender{dialer: dialer, maxMessageBytes: DefaultMaxMessageBytes}
 	for _, option := range options {
-		option(s)
+		option.apply(s)
 	}
 	if s.maxMessageBytes <= 0 {
 		return nil, errors.New("mail/smtp: max message bytes must be positive")

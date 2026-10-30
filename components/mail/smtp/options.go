@@ -6,12 +6,21 @@ package smtp
 const DefaultMaxMessageBytes int64 = 10 << 20 // 10 MiB
 
 // Option 配置 Sender。
-type Option func(*Sender)
+type Option interface {
+	apply(*Sender)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Sender)
+
+func (f OptionFunc) apply(o *Sender) {
+	f(o)
+}
 
 // WithMaxMessageBytes 调整近似原始消息预算。提高预算不能绕过
 // SMTP 服务器的硬限制；应用还必须按该预算限制并发发送数。
 func WithMaxMessageBytes(n int64) Option {
-	return func(s *Sender) { s.maxMessageBytes = n }
+	return OptionFunc(func(s *Sender) { s.maxMessageBytes = n })
 }
 
 // WithMessageIDGenerator 注入 Message-ID 生成器，返回值不含尖括号，
@@ -19,5 +28,5 @@ func WithMaxMessageBytes(n int64) Option {
 // 形式）。用于自定义 ID 域名或测试确定性；传 nil 恢复默认的
 // go-mail 随机生成。
 func WithMessageIDGenerator(gen func() string) Option {
-	return func(s *Sender) { s.generateMessageID = gen }
+	return OptionFunc(func(s *Sender) { s.generateMessageID = gen })
 }

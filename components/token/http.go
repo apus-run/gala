@@ -16,7 +16,16 @@ const (
 
 // SetOption 微调单次 Set 的投递行为。会话级 cookie 取决于这次登录（"记住我"勾没勾），
 // 所以是调用参数而不是配置。
-type SetOption func(*setOptions)
+type SetOption interface {
+	apply(*setOptions)
+}
+
+// SetOptionFunc adapts a plain function to SetOption.
+type SetOptionFunc func(*setOptions)
+
+func (f SetOptionFunc) apply(o *setOptions) {
+	f(o)
+}
 
 type setOptions struct {
 	sessionOnly bool
@@ -25,9 +34,9 @@ type setOptions struct {
 // WithSessionCookie 这次只写会话级 cookie：不写 Max-Age/Expires，浏览器关掉即登出。
 // 只影响浏览器存多久，token 自身的 exp 不变。
 func WithSessionCookie() SetOption {
-	return func(o *setOptions) {
+	return SetOptionFunc(func(o *setOptions) {
 		o.sessionOnly = true
-	}
+	})
 }
 
 // Set 签发 token 并投递给浏览器：写一个 HttpOnly 的 token cookie 和一个可读的 XSRF
@@ -37,7 +46,7 @@ func WithSessionCookie() SetOption {
 func (jm *JwtManager[T]) Set(w http.ResponseWriter, userID string, data T, opts ...SetOption) (*Claims[T], string, error) {
 	var so setOptions
 	for _, opt := range opts {
-		opt(&so)
+		opt.apply(&so)
 	}
 
 	registered, err := jm.NewRegisteredClaims(userID, time.Now())

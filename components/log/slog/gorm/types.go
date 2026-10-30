@@ -18,9 +18,22 @@ type Config struct {
 	*log.Options
 }
 
-type Option func(*Config)
+type (
+	// Option configures the gorm logger Config.
+	Option interface {
+		apply(*Config)
+	}
 
-func DefaultDBConfig() *Config {
+	// OptionFunc adapts a plain function to Option.
+	OptionFunc func(*Config)
+)
+
+func (f OptionFunc) apply(o *Config) {
+	f(o)
+}
+
+// DefaultOptions returns a new Config holding the package defaults.
+func DefaultOptions() *Config {
 	return &Config{
 		SlowThreshold:             time.Second * 2,
 		IgnoreRecordNotFoundError: true,
@@ -29,50 +42,63 @@ func DefaultDBConfig() *Config {
 	}
 }
 
-func Apply(opts ...Option) *Config {
-	config := DefaultDBConfig()
+// DefaultDBConfig returns a new Config with the package defaults.
+//
+// Deprecated: use DefaultOptions.
+func DefaultDBConfig() *Config {
+	return DefaultOptions()
+}
+
+// NewOptions builds Config from the defaults, then applies opts in order.
+func NewOptions(opts ...Option) *Config {
+	c := DefaultOptions()
+	c.Apply(opts...)
+	return c
+}
+
+// Apply 按顺序原地应用选项，不重置默认值、不做校验。
+func (c *Config) Apply(opts ...Option) {
 	for _, opt := range opts {
-		opt(config)
+		opt.apply(c)
 	}
-	return config
 }
 
 // WithSlowThreshold set slow threshold
 func WithSlowThreshold(threshold time.Duration) Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		c.SlowThreshold = threshold
-	}
+	})
 }
 
 // WithIgnoreRecordNotFoundError ignore record not found error
 func WithIgnoreRecordNotFoundError() Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		c.IgnoreRecordNotFoundError = true
-	}
+	})
 }
 
 // WithLogParams 控制 SQL 日志是否输出绑定参数的值，默认不输出。
 func WithLogParams(on bool) Option {
-	return func(c *Config) { c.LogParams = on }
+	return OptionFunc(func(c *Config) { c.LogParams = on })
 }
 
 // WithLogInfo set log info
 func WithLogInfo(logInfo bool) Option {
-	return func(c *Config) {
+	return OptionFunc(func(c *Config) {
 		c.LogInfo = logInfo
-	}
+	})
 }
 
 // WithConfig set all config
 func WithConfig(fn func(config *Config)) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		fn(config)
-	}
+	})
 }
 
 // WithSlogOptions 设置 slog.Options
 func WithSlogOptions(options *log.Options) Option {
-	return func(conf *Config) {
+	return OptionFunc(func(conf *Config) {
 		conf.Options = options
-	}
+	})
 }

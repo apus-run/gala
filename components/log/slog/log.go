@@ -55,7 +55,7 @@ func NewSlogLogger(l *slog.Logger) Logger {
 }
 
 func NewLogger(opts ...Option) *SlogLogger {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	handler := createHandler(options)
 	logger := slog.New(handler)

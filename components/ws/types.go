@@ -27,69 +27,92 @@ type Dialer interface {
 type ConnConfigureFunc func(conn *websocket.Conn, cancel context.CancelFunc) *websocket.Conn
 
 // Option is a function type that applies a configuration to the concrete Upgrader.
-type Option func(u *websocket.Upgrader)
+type Option interface {
+	apply(*websocket.Upgrader)
+}
 
-func DefaultUpgrader() *websocket.Upgrader {
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*websocket.Upgrader)
+
+func (f OptionFunc) apply(o *websocket.Upgrader) {
+	f(o)
+}
+
+// DefaultOptions returns a new Upgrader holding the package defaults.
+func DefaultOptions() *websocket.Upgrader {
 	return &websocket.Upgrader{
 		HandshakeTimeout: 10 * time.Second,
 	}
 }
 
-func Apply(opts ...Option) *websocket.Upgrader {
-	options := DefaultUpgrader()
+// DefaultUpgrader returns a new Upgrader with the package defaults.
+//
+// Deprecated: use DefaultOptions.
+func DefaultUpgrader() *websocket.Upgrader {
+	return DefaultOptions()
+}
+
+// NewOptions builds an Upgrader from the defaults, then applies opts in order.
+func NewOptions(opts ...Option) *websocket.Upgrader {
+	u := DefaultOptions()
+	applyUpgrader(u, opts...)
+	return u
+}
+
+// applyUpgrader 按顺序原地应用选项，不重置默认值、不做校验。
+func applyUpgrader(u *websocket.Upgrader, opts ...Option) {
 	for _, o := range opts {
-		o(options)
+		o.apply(u)
 	}
-	return options
 }
 
 // WithHandshakeTimeout sets the HandshakeTimeout option.
 func WithHandshakeTimeout(t time.Duration) Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.HandshakeTimeout = t
-	}
+	})
 }
 
 // WithReadBufferSize sets the ReadBufferSize option.
 func WithReadBufferSize(size int) Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.ReadBufferSize = size
-	}
+	})
 }
 
 // WithWriteBufferSize sets the WriteBufferSize option.
 func WithWriteBufferSize(size int) Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.WriteBufferSize = size
-	}
+	})
 }
 
 // WithSubprotocols sets the Subprotocols option.
 func WithSubprotocols(subprotocols ...string) Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.Subprotocols = subprotocols
-	}
+	})
 }
 
 // WithError sets the Error handler option.
 func WithError(fn func(w http.ResponseWriter, r *http.Request, status int, reason error)) Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.Error = fn
-	}
+	})
 }
 
 // WithCheckOrigin sets the CheckOrigin handler option.
 func WithCheckOrigin(fn func(r *http.Request) bool) Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.CheckOrigin = fn
-	}
+	})
 }
 
 // WithCompression enables compression.
 func WithCompression() Option {
-	return func(u *websocket.Upgrader) {
+	return OptionFunc(func(u *websocket.Upgrader) {
 		u.EnableCompression = true
-	}
+	})
 }
 
 // WSUpgrader is a wrapper of gorilla/websocket.Upgrader.
@@ -99,7 +122,7 @@ type WSUpgrader struct {
 
 // NewWSUpgrader creates a new WSUpgrader.
 func NewWSUpgrader(opts ...Option) *WSUpgrader {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	return &WSUpgrader{
 		upgrader: options,

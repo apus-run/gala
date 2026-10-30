@@ -28,7 +28,7 @@ func defaultProcessor(processFn processFn) error {
 
 // NewClient creates MongoDB client
 func NewClient(ctx context.Context, opts ...Option) (*Client, error) {
-	cfg := Apply(opts...)
+	cfg := NewOptions(opts...)
 	return client(ctx, cfg)
 }
 

@@ -67,7 +67,7 @@ func serviceID(name, id string) string { return name + "/" + id }
 // checkID is the ID Consul gives the inline check of a service.
 func checkID(svcID string) string { return "service:" + svcID }
 
-func toAgentService(ins *registry.ServiceInstance, o *options) (*agentService, error) {
+func toAgentService(ins *registry.ServiceInstance, o *Options) (*agentService, error) {
 	meta := make(map[string]string, len(ins.Metadata)+3)
 	for k, v := range ins.Metadata {
 		if strings.HasPrefix(k, metaPrefix) {

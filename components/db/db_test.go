@@ -239,12 +239,12 @@ func TestProvider_Close(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	o := Apply(WithMaster(), Debug(), WithDeleted(), WithSelectForUpdate())
+	o := NewOptions(WithMaster(), Debug(), WithDeleted(), WithSelectForUpdate())
 	if !o.withMaster || !o.debug || !o.withDeleted || !o.selectForUpdate {
 		t.Fatalf("Apply did not set all flags: %+v", o)
 	}
-	if o := Apply(); o.withMaster || o.debug || o.withDeleted || o.selectForUpdate || o.tx != nil {
-		t.Fatalf("Apply() should be the zero Options, got %+v", o)
+	if o := NewOptions(); o.withMaster || o.debug || o.withDeleted || o.selectForUpdate || o.tx != nil {
+		t.Fatalf("NewOptions() should be the zero Options, got %+v", o)
 	}
 }
 

@@ -18,47 +18,71 @@ var (
 	ErrBackpressure = errors.New("redisstream: too many asynchronous sends")
 )
 
-type options struct {
+type Options struct {
 	maxRetries   int
 	pollInterval time.Duration
 	claimIdle    time.Duration
 }
-type Option func(*options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 // WithMaxRetries sets retries after the initial delivery; zero sends the first
 // failed delivery to the group's dead-letter stream. Crashed deliveries count.
-func WithMaxRetries(n int) Option { return func(o *options) { o.maxRetries = n } }
+func WithMaxRetries(n int) Option { return OptionFunc(func(o *Options) { o.maxRetries = n }) }
 
 // WithPollInterval sets the delay scheduler interval and blocking read duration.
-func WithPollInterval(d time.Duration) Option { return func(o *options) { o.pollInterval = d } }
+func WithPollInterval(d time.Duration) Option {
+	return OptionFunc(func(o *Options) { o.pollInterval = d })
+}
 
 // WithClaimIdle sets how long an unacknowledged delivery may be idle before
 // another worker takes it. It must exceed the consumer's handler timeout.
-func WithClaimIdle(d time.Duration) Option { return func(o *options) { o.claimIdle = d } }
+func WithClaimIdle(d time.Duration) Option { return OptionFunc(func(o *Options) { o.claimIdle = d }) }
 
 // Factory borrows client. Close adapters before closing the application-owned
 // client. Addr, compression, producer group and publish retry settings in the
 // common configs are unsupported; connection settings belong to client.
 type Factory struct {
 	client *redis.Client
-	opts   options
+	opts   Options
 }
 
 var _ mq.Factory = (*Factory)(nil)
+
+// DefaultOptions returns the package defaults.
+func DefaultOptions() Options {
+	return Options{maxRetries: 3, pollInterval: time.Second, claimIdle: time.Minute}
+}
+
+// Validate checks the retry count and durations. It does not change the Options.
+func (o *Options) Validate() error {
+	if o.maxRetries < 0 || o.pollInterval < time.Millisecond || o.claimIdle < time.Millisecond {
+		return errors.New("redisstream: invalid retry count or polling/claim duration")
+	}
+	return nil
+}
 
 func NewFactory(client *redis.Client, opts ...Option) (*Factory, error) {
 	if client == nil {
 		return nil, errors.New("redisstream: Redis client is required")
 	}
-	o := options{maxRetries: 3, pollInterval: time.Second, claimIdle: time.Minute}
+	o := DefaultOptions()
 	for _, option := range opts {
 		if option == nil {
 			return nil, errors.New("redisstream: nil option")
 		}
-		option(&o)
+		option.apply(&o)
 	}
-	if o.maxRetries < 0 || o.pollInterval < time.Millisecond || o.claimIdle < time.Millisecond {
-		return nil, errors.New("redisstream: invalid retry count or polling/claim duration")
+	if err := o.Validate(); err != nil {
+		return nil, err
 	}
 	// Redis represents blocking and idle thresholds in whole milliseconds.
 	o.pollInterval = o.pollInterval.Truncate(time.Millisecond)

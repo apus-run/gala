@@ -12,7 +12,16 @@ import (
 type RegisterFunc func(grpc.ServiceRegistrar)
 
 // ServerOption 是一个函数类型，用于设置 ServerOptions 的各个字段。
-type ServerOption func(*ServerOptions)
+type ServerOption interface {
+	apply(*ServerOptions)
+}
+
+// ServerOptionFunc adapts a plain function to ServerOption.
+type ServerOptionFunc func(*ServerOptions)
+
+func (f ServerOptionFunc) apply(o *ServerOptions) {
+	f(o)
+}
 
 // ServerOptions 定义了服务器的配置选项。
 type ServerOptions struct {
@@ -39,7 +48,8 @@ type ServerOptions struct {
 	disableReflection bool
 }
 
-func NewServerOptions() *ServerOptions {
+// DefaultOptions returns a new ServerOptions holding the package defaults.
+func DefaultOptions() *ServerOptions {
 	return &ServerOptions{
 		baseCtx: context.Background(),
 		network: "tcp",
@@ -47,58 +57,71 @@ func NewServerOptions() *ServerOptions {
 	}
 }
 
-func Apply(opts ...ServerOption) *ServerOptions {
-	options := NewServerOptions()
+// NewServerOptions returns a new ServerOptions with the package defaults.
+//
+// Deprecated: use DefaultOptions.
+func NewServerOptions() *ServerOptions {
+	return DefaultOptions()
+}
+
+// NewOptions builds ServerOptions from the defaults, then applies opts in order.
+func NewOptions(opts ...ServerOption) *ServerOptions {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用选项，不重置默认值、不做校验。
+func (o *ServerOptions) Apply(opts ...ServerOption) {
 	for _, opt := range opts {
-		opt(options)
+		opt.apply(o)
 	}
-	return options
 }
 
 // WithNetwork 设置服务器监听的网络类型。
 func WithNetwork(network string) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.network = network
-	}
+	})
 }
 
 // WithAddress 设置服务器监听的地址。
 func WithAddress(address string) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.addr = address
-	}
+	})
 }
 
 // WithTlsConfig 设置服务器的 TLS 配置。
 func WithTlsConfig(tlsConfig *tls.Config) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.tlsConf = tlsConfig
-	}
+	})
 }
 
 func WithDisableReflection(disableReflection bool) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.disableReflection = disableReflection
-	}
+	})
 }
 
 // WithListener 设置服务器的监听器。
 func WithListener(listener net.Listener) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.lis = listener
-	}
+	})
 }
 
 // WithBaseContext 设置服务器的基础上下文。
 func WithBaseContext(baseCtx context.Context) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.baseCtx = baseCtx
-	}
+	})
 }
 
 // WithGrpcOptions 设置 gRPC 服务器的选项。
 func WithGrpcOptions(grpcOpts ...grpc.ServerOption) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.grpcOpts = append(options.grpcOpts, grpcOpts...)
-	}
+	})
 }

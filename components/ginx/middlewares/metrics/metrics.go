@@ -115,7 +115,7 @@ func metricsHandler() gin.HandlerFunc {
 
 // Metrics returns a gin.HandlerFunc for exporting some Web metrics
 func Metrics(r *gin.Engine, opts ...Option) gin.HandlerFunc {
-	o := defaultOptions()
+	o := DefaultOptions()
 	o.apply(opts...)
 
 	// init prometheus

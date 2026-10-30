@@ -17,7 +17,7 @@ type TinyCache struct {
 }
 
 func New(opts ...Option) *TinyCache {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 	if options.CleanupInterval <= 0 { // NewTicker 对非正值会 panic，且发生在后台协程里无法 recover
 		options.CleanupInterval = DefaultOptions().CleanupInterval
 	}

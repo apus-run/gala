@@ -132,7 +132,7 @@ func getUser(t *testing.T, db *DB, id int64) *User {
 // -----------------------------------------------------------------------------
 
 func TestApply_Defaults(t *testing.T) {
-	o := Apply()
+	o := NewOptions()
 	if o.dsn != "" {
 		t.Errorf("default dsn want empty, got %q", o.dsn)
 	}
@@ -151,7 +151,7 @@ func TestApply_Defaults(t *testing.T) {
 }
 
 func TestApply_WithOptions(t *testing.T) {
-	o := Apply(
+	o := NewOptions(
 		WithDSN("sqlite3://:memory:"),
 		WithMaxOpenConns(50),
 		WithMaxIdleConns(10),

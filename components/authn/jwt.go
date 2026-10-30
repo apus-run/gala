@@ -31,19 +31,20 @@ var (
 // JwtAuth implement the authn.Authenticator interface.
 // 签发/校验交给 components/token 的 JwtManager，authn 自己只管吊销名单和客户端交付形态。
 type JwtAuth struct {
-	*Options
+	// 不嵌入 *Options：嵌入会把 Apply 提升到 JwtAuth，调用方就能改掉已构造的实例。
+	options *Options
 	store   rdb.Storer
 	manager *token.JwtManager[struct{}]
 }
 
 func NewJwtAuth(store rdb.Storer, opts ...Option) *JwtAuth {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 	if options.claims == nil {
 		// 没配工厂时留一个返回 nil 的：调用点只需判 claims == nil，不必先判函数本身
 		options.claims = func() jwt.Claims { return nil }
 	}
 	return &JwtAuth{
-		Options: options,
+		options: options,
 		store:   store,
 		// claims 类型由调用方的工厂决定，manager 的泛型参数用不到（只走 GenerateClaims/ParseClaims）
 		manager: token.NewJwtManager[struct{}](options.jwtOpts...),
@@ -51,7 +52,7 @@ func NewJwtAuth(store rdb.Storer, opts ...Option) *JwtAuth {
 }
 
 func (j *JwtAuth) Sign(_ context.Context) (Token, error) {
-	claims := j.claims()
+	claims := j.options.claims()
 	if claims == nil {
 		return nil, ErrMissingClaims
 	}
@@ -107,7 +108,7 @@ func (j *JwtAuth) ParseClaims(ctx context.Context, accessToken string) (jwt.Clai
 		return nil, ErrTokenInvalid
 	}
 
-	claims := j.claims()
+	claims := j.options.claims()
 	if claims == nil {
 		return nil, ErrMissingClaims
 	}
@@ -131,7 +132,7 @@ func (j *JwtAuth) ParseClaims(ctx context.Context, accessToken string) (jwt.Clai
 
 // GenerateToken 只要 token 串时的快捷方式（Sign 会额外给出类型和过期时间）
 func (j *JwtAuth) GenerateToken(_ context.Context) (string, error) {
-	claims := j.claims()
+	claims := j.options.claims()
 	if claims == nil {
 		return "", ErrMissingClaims
 	}

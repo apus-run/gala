@@ -25,7 +25,7 @@ type I18n struct {
 // New creates a new instance of the I18n struct with the given options.
 // It takes a variadic parameter of functional options and returns a pointer to the I18n struct.
 func New(options ...Option) *I18n {
-	opts := Apply(options...)
+	opts := NewOptions(options...)
 
 	bundle := i18n.NewBundle(opts.language)
 	localizer := i18n.NewLocalizer(bundle, opts.language.String())

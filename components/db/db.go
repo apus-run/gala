@@ -70,7 +70,7 @@ func (p *provider) DB(ctx context.Context, opts ...Option) *gorm.DB {
 		session = tx
 	}
 
-	opt := Apply(opts...)
+	opt := NewOptions(opts...)
 
 	if opt.tx != nil {
 		session = opt.tx

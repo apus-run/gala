@@ -23,7 +23,7 @@ var (
 
 // GenerateToken 生成jwt token
 func GenerateToken(keyProvider jwt.Keyfunc, opts ...Option) (string, error) {
-	o := Apply(opts...)
+	o := NewOptions(opts...)
 
 	if keyProvider == nil {
 		return "", ErrNeedTokenProvider
@@ -58,7 +58,7 @@ func GenerateToken(keyProvider jwt.Keyfunc, opts ...Option) (string, error) {
 
 // ParseToken 解析jwt token
 func ParseToken(tokenStr string, keyFunc jwt.Keyfunc, opts ...Option) (token *jwt.Token, err error) {
-	o := Apply(opts...)
+	o := NewOptions(opts...)
 	if keyFunc == nil {
 		return nil, ErrMissingKeyFunc
 	}

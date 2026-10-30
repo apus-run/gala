@@ -19,56 +19,79 @@ type Provider interface {
 	Close() error
 }
 
-type Options struct {
-	tx              *gorm.DB
-	debug           bool
-	withMaster      bool
-	withDeleted     bool
-	selectForUpdate bool
+type (
+	// Option configures a DB call.
+	Option interface {
+		apply(*Options)
+	}
+
+	// OptionFunc adapts a plain function to Option.
+	OptionFunc func(*Options)
+
+	Options struct {
+		tx              *gorm.DB
+		debug           bool
+		withMaster      bool
+		withDeleted     bool
+		selectForUpdate bool
+	}
+)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
 }
 
-type Option func(*Options)
+// DefaultOptions returns a new zero-valued Options.
+func DefaultOptions() *Options {
+	return &Options{}
+}
 
-func Apply(opts ...Option) *Options {
-	o := &Options{}
-	for _, fn := range opts {
-		fn(o)
-	}
+// NewOptions builds Options from the defaults, then applies opts in order.
+func NewOptions(opts ...Option) *Options {
+	o := DefaultOptions()
+	o.Apply(opts...)
 	return o
+}
+
+// Apply 按顺序原地应用选项，不重置默认值、不做校验。
+func (o *Options) Apply(opts ...Option) {
+	for _, opt := range opts {
+		opt.apply(o)
+	}
 }
 
 // WithMaster 强制读主库
 func WithMaster() Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.withMaster = true
-	}
+	})
 }
 
 // WithTransaction 使用一个已有的事务
 func WithTransaction(tx *gorm.DB) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.tx = tx
-	}
+	})
 }
 
 // Debug 启用调试模式
 func Debug() Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.debug = true
-	}
+	})
 }
 
 // WithDeleted 返回软删的数据
 func WithDeleted() Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.withDeleted = true
-	}
+	})
 }
 
 // WithSelectForUpdate 使用 SELECT ... FOR UPDATE 锁定读取的行
 // 注意：只有在事务中使用才有效
 func WithSelectForUpdate() Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.selectForUpdate = true
-	}
+	})
 }

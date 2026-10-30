@@ -20,7 +20,7 @@ import (
 
 // withHook 只供测试使用：在命名步骤注入错误。它是 Store 的私有配置，外部包无法构造。
 func withHook(h func(point string) error) Option {
-	return func(c *config) { c.hook = h }
+	return OptionFunc(func(c *config) { c.hook = h })
 }
 
 // failAt 返回一个钩子：仅在 point 处返回 err。

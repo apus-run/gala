@@ -18,7 +18,8 @@ go get github.com/apus-run/gala/components/ecache
 func New[K comparable, V any](opts ...Option) Cache[K, V]
 
 func DefaultOptions() *Options
-func Apply(opts ...Option) *Options
+func NewOptions(opts ...Option) *Options
+func (o *Options) Apply(opts ...Option)
 
 type Cache[K comparable, V any] interface {
     fmt.Stringer
@@ -54,7 +55,7 @@ type Cache[K comparable, V any] interface {
 | `WithLRU()` | 淘汰模式改为 LRU | LRC |
 | `WithOnEvicted(func(K, V))` | 自动淘汰和手动删除时的回调 | 无 |
 
-`Option` 不是泛型，`K`/`V` 只出现在 `WithOnEvicted`，由传入的函数推断；回调的键值类型必须与缓存一致，否则在首次淘汰时 panic。选项按传入顺序应用，后者覆盖前者。`DefaultOptions` 返回独立默认值，`Apply` 按顺序原地应用。
+`Option` 不是泛型，`K`/`V` 只出现在 `WithOnEvicted`，由传入的函数推断；回调的键值类型必须与缓存一致，否则在首次淘汰时 panic。选项按传入顺序应用，后者覆盖前者。`DefaultOptions` 返回独立默认值，`NewOptions` 基于默认值组合选项，`(*Options).Apply` 按顺序原地应用。自定义选项可用 `OptionFunc(func(*Options){...})` 适配。
 
 `WithTTL(0)` 表示不过期，与仓库里其它 cache 组件（`cache/lru/v2`、`cache/memory/v2`）的语义一致。
 

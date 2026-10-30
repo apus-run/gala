@@ -7,7 +7,16 @@ import (
 )
 
 // Option is config option.
-type Option func(*Options)
+type Option interface {
+	apply(*Options)
+}
+
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Options)
+
+func (f OptionFunc) apply(o *Options) {
+	f(o)
+}
 
 type Options struct {
 	// logger options
@@ -27,40 +36,46 @@ func DefaultOptions() *Options {
 	}
 }
 
-func Apply(opts ...Option) *Options {
-	options := DefaultOptions()
-	for _, o := range opts {
-		o(options)
+// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+func NewOptions(opts ...Option) *Options {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+func (o *Options) Apply(opts ...Option) {
+	for _, opt := range opts {
+		opt.apply(o)
 	}
-	return options
 }
 
 // WithLogLevel 日志级别
 func WithLogLevel(level string) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.LogLevel = level
-	}
+	})
 }
 
 // WithLogGroup 日志分组
 func WithLogGroup(group string) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.LogGroup = group
-	}
+	})
 }
 
 // WithLogAttrs 日志属性
 func WithLogAttrs(attrs []Attr) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.LogAttrs = attrs
-	}
+	})
 }
 
 // WithFormat 日志格式
 func WithFormat(format Format) Option {
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.Format = format
-	}
+	})
 }
 
 // WithWriter 日志输出
@@ -68,14 +83,14 @@ func WithWriter(writer io.Writer) Option {
 	if writer == nil {
 		writer = os.Stdout
 	}
-	return func(o *Options) {
+	return OptionFunc(func(o *Options) {
 		o.Writer = writer
-	}
+	})
 }
 
 // WithOptions 设置所有配置
 func WithOptions(fn func(options *Options)) Option {
-	return func(options *Options) {
+	return OptionFunc(func(options *Options) {
 		fn(options)
-	}
+	})
 }

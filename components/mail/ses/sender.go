@@ -38,7 +38,7 @@ func New(client Client, options ...Option) (*Sender, error) {
 	}
 	s := &Sender{client: client, maxMessageBytes: DefaultMaxMessageBytes}
 	for _, option := range options {
-		option(s)
+		option.apply(s)
 	}
 	if s.maxMessageBytes <= 0 {
 		return nil, errors.New("mail/ses: max message bytes must be positive")

@@ -9,7 +9,16 @@ import (
 )
 
 // ServerOption is a functional option for the Server.
-type ServerOption func(*serverOptions)
+type ServerOption interface {
+	apply(*serverOptions)
+}
+
+// ServerOptionFunc adapts a plain function to ServerOption.
+type ServerOptionFunc func(*serverOptions)
+
+func (f ServerOptionFunc) apply(o *serverOptions) {
+	f(o)
+}
 
 type serverOptions struct {
 	responseHeader      http.Header
@@ -25,33 +34,33 @@ func defaultServerOptions() *serverOptions {
 
 func (o *serverOptions) apply(opts ...ServerOption) {
 	for _, opt := range opts {
-		opt(o)
+		opt.apply(o)
 	}
 }
 
 // WithResponseHeader sets the response header for the WebSocket upgrade response.
 func WithResponseHeader(header http.Header) ServerOption {
-	return func(o *serverOptions) {
+	return ServerOptionFunc(func(o *serverOptions) {
 		o.responseHeader = header
-	}
+	})
 }
 
 // WithUpgrader sets the WebSocket upgrader for the server.
 func WithUpgrader(upgrader *WSUpgrader) ServerOption {
-	return func(o *serverOptions) {
+	return ServerOptionFunc(func(o *serverOptions) {
 		if upgrader == nil {
 			return
 		}
 		o.upgrader = upgrader
-	}
+	})
 }
 
 // WithMaxMessageWaitPeriod sets the maximum waiting period for a message before closing the connection.
 // Deprecated: use WithNoClientPingTimeout instead.
 func WithMaxMessageWaitPeriod(period time.Duration) ServerOption {
-	return func(o *serverOptions) {
+	return ServerOptionFunc(func(o *serverOptions) {
 		o.noClientPingTimeout = period
-	}
+	})
 }
 
 // WithNoClientPingTimeout sets the timeout for the client to send a ping message, if timeout, the connection will be closed.
@@ -60,9 +69,9 @@ func WithMaxMessageWaitPeriod(period time.Duration) ServerOption {
 // 连接，也会在 timeout 之后被关闭。浏览器 JS 发不了 ping 控制帧，面向浏览器的服务不要设置这个选项，
 // 改用应用层心跳；gala 的 ws 客户端用 ws.WithPing 即可。
 func WithNoClientPingTimeout(timeout time.Duration) ServerOption {
-	return func(o *serverOptions) {
+	return ServerOptionFunc(func(o *serverOptions) {
 		o.noClientPingTimeout = timeout
-	}
+	})
 }
 
 // Conn is a WebSocket connection.

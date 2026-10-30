@@ -16,7 +16,7 @@ import (
 
 type Consumer struct {
 	client          *redis.Client
-	opts            options
+	opts            Options
 	topic, group    string
 	timeout         time.Duration
 	workers         int

@@ -24,41 +24,50 @@ var (
 type MiddlewareFunc func(http.Handler) http.Handler
 
 // ServerOption is an HTTP server option.
-type ServerOption func(*Server)
+type ServerOption interface {
+	apply(*Server)
+}
+
+// ServerOptionFunc adapts a plain function to ServerOption.
+type ServerOptionFunc func(*Server)
+
+func (f ServerOptionFunc) apply(o *Server) {
+	f(o)
+}
 
 // Address with server address.
 func Address(addr string) ServerOption {
-	return func(s *Server) {
+	return ServerOptionFunc(func(s *Server) {
 		s.address = addr
-	}
+	})
 }
 
 // Endpoint with server address.
 func Endpoint(endpoint *url.URL) ServerOption {
-	return func(s *Server) {
+	return ServerOptionFunc(func(s *Server) {
 		s.endpoint = endpoint
-	}
+	})
 }
 
 // Middleware with server middleware.
 func Middleware(m MiddlewareFunc) ServerOption {
-	return func(s *Server) {
+	return ServerOptionFunc(func(s *Server) {
 		s.middleware = m
-	}
+	})
 }
 
 // SrvOptions with server options.
 func SrvOptions(opts ...mcpserver.ServerOption) ServerOption {
-	return func(s *Server) {
+	return ServerOptionFunc(func(s *Server) {
 		s.srvOpts = append(s.srvOpts, opts...)
-	}
+	})
 }
 
 // SSEOptions with server SSE options.
 func SSEOptions(opts ...mcpserver.SSEOption) ServerOption {
-	return func(s *Server) {
+	return ServerOptionFunc(func(s *Server) {
 		s.sseOpts = append(s.sseOpts, opts...)
-	}
+	})
 }
 
 // Server is a MCP server.
@@ -82,7 +91,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		middleware: func(next http.Handler) http.Handler { return next },
 	}
 	for _, o := range opts {
-		o(srv)
+		o.apply(srv)
 	}
 	srv.MCPServer = mcpserver.NewMCPServer(name, version, srv.srvOpts...)
 	srv.srv = &http.Server{Addr: srv.address, Handler: srv.middleware(srv)}

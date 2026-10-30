@@ -19,10 +19,19 @@ type (
 		funcs             []HandleFunc
 	}
 
-	HandlerOption func(*Handler)
+	HandlerOption interface {
+		apply(*Handler)
+	}
 
 	HandleFunc func(context.Context, *slog.Record)
 )
+
+// HandlerOptionFunc adapts a plain function to HandlerOption.
+type HandlerOptionFunc func(*Handler)
+
+func (f HandlerOptionFunc) apply(o *Handler) {
+	f(o)
+}
 
 func NewHandler(hdl slog.Handler, opts ...HandlerOption) slog.Handler {
 	nh := &Handler{keyStack: keyStack}
@@ -68,7 +77,7 @@ func (ch *Handler) WithGroup(name string) slog.Handler {
 }
 
 func (ch *Handler) Apply(opt HandlerOption) {
-	opt(ch)
+	opt.apply(ch)
 }
 
 func (ch *Handler) errorLogWithStackTrack(ctx context.Context, r *slog.Record) {
@@ -78,22 +87,22 @@ func (ch *Handler) errorLogWithStackTrack(ctx context.Context, r *slog.Record) {
 }
 
 func WithDisableStackTrace(disabled bool) HandlerOption {
-	return func(ch *Handler) {
+	return HandlerOptionFunc(func(ch *Handler) {
 		ch.disableStackTrace = disabled
-	}
+	})
 }
 
 func WithStackKey(key string) HandlerOption {
-	return func(ch *Handler) {
+	return HandlerOptionFunc(func(ch *Handler) {
 		if key == "" {
 			key = keyStack
 		}
 		ch.keyStack = keyStack
-	}
+	})
 }
 
 func WithHandleFunc(fn HandleFunc) HandlerOption {
-	return func(h *Handler) {
+	return HandlerOptionFunc(func(h *Handler) {
 		h.funcs = append(h.funcs, fn)
-	}
+	})
 }

@@ -39,7 +39,7 @@ func ZapProdConfig() zap.Config {
 
 // NewLogger 包装了 zap 和日志文件切割归档
 func NewLogger(opts ...Option) *ZapLogger {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	// 编码器配置
 	encoder := getEncoder(options)

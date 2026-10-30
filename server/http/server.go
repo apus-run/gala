@@ -24,7 +24,7 @@ type Server struct {
 }
 
 func NewServer(opts ...ServerOption) *Server {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	srv := &Server{
 		opts: options,

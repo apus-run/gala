@@ -63,55 +63,64 @@ type CORS struct {
 }
 
 // CORSOption ...
-type CORSOption func(c *CORS)
+type CORSOption interface {
+	apply(*CORS)
+}
+
+// CORSOptionFunc adapts a plain function to CORSOption.
+type CORSOptionFunc func(*CORS)
+
+func (f CORSOptionFunc) apply(o *CORS) {
+	f(o)
+}
 
 // WithAllowOrigins set AllowOrigins
 func WithAllowOrigins(allowOrigins []string) CORSOption {
-	return func(c *CORS) {
+	return CORSOptionFunc(func(c *CORS) {
 		c.allowOrigins = allowOrigins
-	}
+	})
 }
 
 // WithAllowHeaders set AllowHeaders
 func WithAllowHeaders(allowHeaders []string) CORSOption {
-	return func(c *CORS) {
+	return CORSOptionFunc(func(c *CORS) {
 		c.allowHeaders = allowHeaders
-	}
+	})
 }
 
 // WithAllowMethods set AllowMethods
 func WithAllowMethods(allowMethods []string) CORSOption {
-	return func(c *CORS) {
+	return CORSOptionFunc(func(c *CORS) {
 		c.allowMethods = allowMethods
-	}
+	})
 }
 
 // WithExposeHeaders set ExposeHeaders
 func WithExposeHeaders(exposeHeaders []string) CORSOption {
-	return func(c *CORS) {
+	return CORSOptionFunc(func(c *CORS) {
 		c.exposeHeaders = exposeHeaders
-	}
+	})
 }
 
 // WithAllowCredentials set AllowCredentials
 func WithAllowCredentials(allowCredentials bool) CORSOption {
-	return func(c *CORS) {
+	return CORSOptionFunc(func(c *CORS) {
 		c.allowCredentials = allowCredentials
-	}
+	})
 }
 
 // WithMaxAge set MaxAge
 func WithMaxAge(maxAge time.Duration) CORSOption {
-	return func(c *CORS) {
+	return CORSOptionFunc(func(c *CORS) {
 		c.maxAge = maxAge
-	}
+	})
 }
 
 // NewCORS ...
 func NewCORS(opts ...CORSOption) *CORS {
 	cors := defaultCORS
 	for _, opt := range opts {
-		opt(&cors)
+		opt.apply(&cors)
 	}
 
 	return &cors

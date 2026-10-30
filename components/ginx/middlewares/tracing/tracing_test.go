@@ -114,11 +114,11 @@ func (t *tracerProvider) Fields() []string {
 func TestWithPropagators(t *testing.T) {
 	cfg := &traceConfig{}
 	opt := WithPropagators(&tracerProvider{})
-	opt(cfg)
+	opt.apply(cfg)
 }
 
 func TestWithTracerProvider(t *testing.T) {
 	cfg := &traceConfig{}
 	opt := WithTracerProvider(noop.NewTracerProvider())
-	opt(cfg)
+	opt.apply(cfg)
 }

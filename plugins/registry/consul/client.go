@@ -22,7 +22,7 @@ type client struct {
 	timeout    time.Duration
 }
 
-func newClient(o options) *client {
+func newClient(o Options) *client {
 	return &client{
 		base:       o.address,
 		http:       o.httpClient,

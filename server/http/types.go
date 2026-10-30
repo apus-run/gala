@@ -9,7 +9,16 @@ import (
 )
 
 // ServerOption 是一个函数类型，用于设置 ServerOptions 的各个字段。
-type ServerOption func(*ServerOptions)
+type ServerOption interface {
+	apply(*ServerOptions)
+}
+
+// ServerOptionFunc adapts a plain function to ServerOption.
+type ServerOptionFunc func(*ServerOptions)
+
+func (f ServerOptionFunc) apply(o *ServerOptions) {
+	f(o)
+}
 
 // ServerOptions 定义了服务器的配置选项。
 type ServerOptions struct {
@@ -36,7 +45,8 @@ type ServerOptions struct {
 	maxHeaderBytes int           // 最大请求头大小
 }
 
-func NewServerOptions() *ServerOptions {
+// DefaultOptions returns a new ServerOptions holding the package defaults.
+func DefaultOptions() *ServerOptions {
 	return &ServerOptions{
 		network:        "tcp",
 		addr:           ":0",
@@ -48,83 +58,96 @@ func NewServerOptions() *ServerOptions {
 	}
 }
 
-func Apply(opts ...ServerOption) *ServerOptions {
-	options := NewServerOptions()
+// NewServerOptions returns a new ServerOptions with the package defaults.
+//
+// Deprecated: use DefaultOptions.
+func NewServerOptions() *ServerOptions {
+	return DefaultOptions()
+}
+
+// NewOptions builds ServerOptions from the defaults, then applies opts in order.
+func NewOptions(opts ...ServerOption) *ServerOptions {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用选项，不重置默认值、不做校验。
+func (o *ServerOptions) Apply(opts ...ServerOption) {
 	for _, opt := range opts {
-		opt(options)
+		opt.apply(o)
 	}
-	return options
 }
 
 // WithNetwork 设置服务器监听的网络类型。
 func WithNetwork(network string) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.network = network
-	}
+	})
 }
 
 // WithAddress 设置服务器监听的地址。
 func WithAddress(address string) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.addr = address
-	}
+	})
 }
 
 // WithTlsConfig 设置服务器的 TLS 配置。
 func WithTlsConfig(tlsConfig *tls.Config) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.tlsConf = tlsConfig
-	}
+	})
 }
 
 // WithListener 设置服务器的监听器。
 func WithListener(listener net.Listener) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.lis = listener
-	}
+	})
 }
 
 // WithHandler 设置 HTTP 服务器的处理器。
 func WithHandler(handler http.Handler) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		if handler == nil {
 			return
 		}
 		options.handler = handler
-	}
+	})
 }
 
 // WithReadTimeout 设置读取超时时间。
 func WithReadTimeout(timeout time.Duration) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.readTimeout = timeout
-	}
+	})
 }
 
 // WithWriteTimeout 设置写入超时时间。
 func WithWriteTimeout(timeout time.Duration) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.writeTimeout = timeout
-	}
+	})
 }
 
 // WithIdleTimeout 设置空闲连接超时时间。
 func WithIdleTimeout(timeout time.Duration) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.idleTimeout = timeout
-	}
+	})
 }
 
 // WithMaxHeaderBytes 设置最大请求头大小。
 func WithMaxHeaderBytes(maxBytes int) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		options.maxHeaderBytes = maxBytes
-	}
+	})
 }
 
 // WithCompressionLevel 设置响应压缩级别。
 func WithCompressionLevel(level int) ServerOption {
-	return func(options *ServerOptions) {
+	return ServerOptionFunc(func(options *ServerOptions) {
 		// 保留函数签名，但不再使用
-	}
+	})
 }

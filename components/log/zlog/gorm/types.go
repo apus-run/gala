@@ -19,9 +19,19 @@ type Config struct {
 	*zlog.Options
 }
 
-type Option func(*Config)
+type Option interface {
+	apply(*Config)
+}
 
-func DefaultDBConfig() *Config {
+// OptionFunc adapts a plain function to Option.
+type OptionFunc func(*Config)
+
+func (f OptionFunc) apply(o *Config) {
+	f(o)
+}
+
+// DefaultOptions returns a new Config holding the package defaults.
+func DefaultOptions() *Config {
 	return &Config{
 		SlowThreshold:             time.Second * 2,
 		IgnoreRecordNotFoundError: true,
@@ -30,47 +40,60 @@ func DefaultDBConfig() *Config {
 	}
 }
 
-func Apply(opts ...Option) *Config {
-	config := DefaultDBConfig()
+// DefaultDBConfig returns a new Config with the package defaults.
+//
+// Deprecated: use DefaultOptions.
+func DefaultDBConfig() *Config {
+	return DefaultOptions()
+}
+
+// NewOptions builds Config from the defaults, then applies opts in order.
+func NewOptions(opts ...Option) *Config {
+	c := DefaultOptions()
+	c.Apply(opts...)
+	return c
+}
+
+// Apply 按顺序原地应用选项，不重置默认值、不做校验。
+func (c *Config) Apply(opts ...Option) {
 	for _, opt := range opts {
-		opt(config)
+		opt.apply(c)
 	}
-	return config
 }
 
 func WithSlowThreshold(threshold time.Duration) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.SlowThreshold = threshold
-	}
+	})
 }
 
 func WithIgnoreRecordNotFoundError() Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.IgnoreRecordNotFoundError = true
-	}
+	})
 }
 
 // WithLogParams 控制 SQL 日志是否输出绑定参数的值，默认不输出。
 func WithLogParams(on bool) Option {
-	return func(config *Config) { config.LogParams = on }
+	return OptionFunc(func(config *Config) { config.LogParams = on })
 }
 
 func WithLogInfo(logInfo bool) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		config.LogInfo = logInfo
-	}
+	})
 }
 
 // WithConfig 设置所有配置
 func WithConfig(fn func(config *Config)) Option {
-	return func(config *Config) {
+	return OptionFunc(func(config *Config) {
 		fn(config)
-	}
+	})
 }
 
 // WithZlogOptions 设置 zlog.Options
 func WithZlogOptions(options *zlog.Options) Option {
-	return func(conf *Config) {
+	return OptionFunc(func(conf *Config) {
 		conf.Options = options
-	}
+	})
 }

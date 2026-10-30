@@ -18,7 +18,16 @@ type AnnotatorFunc func(context.Context, *http.Request) metadata.MD
 type HandlerFunc func(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error
 
 // ServerOption 是一个函数类型，用于设置 ServerOptions 的各个字段。
-type ServerOption func(*ServerOptions)
+type ServerOption interface {
+	apply(*ServerOptions)
+}
+
+// ServerOptionFunc adapts a plain function to ServerOption.
+type ServerOptionFunc func(*ServerOptions)
+
+func (f ServerOptionFunc) apply(o *ServerOptions) {
+	f(o)
+}
 
 // ServerOptions 定义了服务器的配置选项。
 type ServerOptions struct {
@@ -43,7 +52,8 @@ type ServerOptions struct {
 	annotators              []AnnotatorFunc
 }
 
-func NewServerOptions() *ServerOptions {
+// DefaultOptions returns a new ServerOptions holding the package defaults.
+func DefaultOptions() *ServerOptions {
 	return &ServerOptions{
 		network:      "tcp",
 		addr:         ":0",
@@ -51,69 +61,82 @@ func NewServerOptions() *ServerOptions {
 	}
 }
 
-func Apply(opts ...ServerOption) *ServerOptions {
-	options := NewServerOptions()
+// NewServerOptions returns a new ServerOptions with the package defaults.
+//
+// Deprecated: use DefaultOptions.
+func NewServerOptions() *ServerOptions {
+	return DefaultOptions()
+}
+
+// NewOptions builds ServerOptions from the defaults, then applies opts in order.
+func NewOptions(opts ...ServerOption) *ServerOptions {
+	o := DefaultOptions()
+	o.Apply(opts...)
+	return o
+}
+
+// Apply 按顺序原地应用选项，不重置默认值、不做校验。
+func (o *ServerOptions) Apply(opts ...ServerOption) {
 	for _, opt := range opts {
-		opt(options)
+		opt.apply(o)
 	}
-	return options
 }
 
 func WithListener(lis net.Listener) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.lis = lis
-	}
+	})
 }
 
 func WithTLSConf(tlsConf *tls.Config) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.tlsConf = tlsConf
-	}
+	})
 }
 
 func WithNetwork(network string) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.network = network
-	}
+	})
 }
 
 func WithAddress(addr string) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.addr = addr
-	}
+	})
 }
 
 func WithShutdownFunc(shutdownFunc func()) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		if shutdownFunc == nil {
 			shutdownFunc = func() {}
 		}
 		o.shutdownFunc = shutdownFunc
-	}
+	})
 }
 
 func WithConn(conn *grpc.ClientConn) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.conn = conn
-	}
+	})
 }
 
 func WithServeMuxOpts(opts ...runtime.ServeMuxOption) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.serveMuxOpts = opts
-	}
+	})
 }
 
 func WithRegisterServiceHandlers(handlers ...HandlerFunc) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.registerServiceHandlers = handlers
-	}
+	})
 }
 
 func WithAnnotators(annotators ...AnnotatorFunc) ServerOption {
-	return func(o *ServerOptions) {
+	return ServerOptionFunc(func(o *ServerOptions) {
 		o.annotators = annotators
-	}
+	})
 }
 
 // CombineAnnotators combines multiple AnnotatorFunc into a single AnnotatorFunc

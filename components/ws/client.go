@@ -14,7 +14,16 @@ var (
 )
 
 // ClientOption is a functional option for the client.
-type ClientOption func(*clientOptions)
+type ClientOption interface {
+	apply(*clientOptions)
+}
+
+// ClientOptionFunc adapts a plain function to ClientOption.
+type ClientOptionFunc func(*clientOptions)
+
+func (f ClientOptionFunc) apply(o *clientOptions) {
+	f(o)
+}
 
 type clientOptions struct {
 	dialer           *websocket.Dialer
@@ -30,32 +39,32 @@ func defaultClientOptions() *clientOptions {
 
 func (o *clientOptions) apply(opts ...ClientOption) {
 	for _, opt := range opts {
-		opt(o)
+		opt.apply(o)
 	}
 }
 
 // WithDialer sets the dialer for the client.
 func WithDialer(dialer *websocket.Dialer) ClientOption {
-	return func(o *clientOptions) {
+	return ClientOptionFunc(func(o *clientOptions) {
 		if dialer == nil {
 			return
 		}
 		o.dialer = dialer
-	}
+	})
 }
 
 // WithRequestHeader sets the request header for the client.
 func WithRequestHeader(header http.Header) ClientOption {
-	return func(o *clientOptions) {
+	return ClientOptionFunc(func(o *clientOptions) {
 		o.requestHeader = header
-	}
+	})
 }
 
 // WithPing sets the interval for sending ping message to the server.
 func WithPing(interval time.Duration) ClientOption {
-	return func(o *clientOptions) {
+	return ClientOptionFunc(func(o *clientOptions) {
 		o.pingDialInterval = interval
-	}
+	})
 }
 
 // Client is a wrapper of gorilla/websocket.

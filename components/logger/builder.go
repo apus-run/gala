@@ -16,8 +16,27 @@ const (
 	FormatPretty
 )
 
-type HandlerOption func(*handlerConfig)
-type WrapperOption func(*wrapperConfig)
+type HandlerOption interface {
+	apply(*handlerConfig)
+}
+
+// HandlerOptionFunc adapts a plain function to HandlerOption.
+type HandlerOptionFunc func(*handlerConfig)
+
+func (f HandlerOptionFunc) apply(o *handlerConfig) {
+	f(o)
+}
+
+type WrapperOption interface {
+	apply(*wrapperConfig)
+}
+
+// WrapperOptionFunc adapts a plain function to WrapperOption.
+type WrapperOptionFunc func(*wrapperConfig)
+
+func (f WrapperOptionFunc) apply(o *wrapperConfig) {
+	f(o)
+}
 
 type Extractor func(context.Context) []slog.Attr
 
@@ -45,7 +64,7 @@ func NewHandler(opts ...HandlerOption) slog.Handler {
 		level:  LevelInfo,
 	}
 	for _, opt := range opts {
-		opt(cfg)
+		opt.apply(cfg)
 	}
 	return WrapHandler(newBaseHandler(cfg))
 }
@@ -60,45 +79,45 @@ func WrapHandler(handler slog.Handler, opts ...WrapperOption) slog.Handler {
 		cfg.extractors = nil // The existing wrapper already extracts stored attrs.
 	}
 	for _, opt := range opts {
-		opt(cfg)
+		opt.apply(cfg)
 	}
 	return newComposedHandler(handler, cfg)
 }
 
 func WithWriter(w io.Writer) HandlerOption {
-	return func(c *handlerConfig) { c.writer = w }
+	return HandlerOptionFunc(func(c *handlerConfig) { c.writer = w })
 }
 
 func WithFormat(format Format) HandlerOption {
-	return func(c *handlerConfig) { c.format = format }
+	return HandlerOptionFunc(func(c *handlerConfig) { c.format = format })
 }
 
 // WithColor enables ANSI colors for attribute values in FormatPretty.
 // Colors are disabled by default. Other formats ignore this option.
 func WithColor(enabled bool) HandlerOption {
-	return func(c *handlerConfig) { c.color = enabled }
+	return HandlerOptionFunc(func(c *handlerConfig) { c.color = enabled })
 }
 
 func WithLevel(level Leveler) HandlerOption {
-	return func(c *handlerConfig) { c.level = level }
+	return HandlerOptionFunc(func(c *handlerConfig) { c.level = level })
 }
 
 func WithAddSource(add bool) HandlerOption {
-	return func(c *handlerConfig) { c.addSource = add }
+	return HandlerOptionFunc(func(c *handlerConfig) { c.addSource = add })
 }
 
 func WithReplaceAttr(fn func(groups []string, attr slog.Attr) slog.Attr) HandlerOption {
-	return func(c *handlerConfig) { c.replaceAttr = fn }
+	return HandlerOptionFunc(func(c *handlerConfig) { c.replaceAttr = fn })
 }
 
 func WithExtractor(extractors ...Extractor) WrapperOption {
-	return func(c *wrapperConfig) {
+	return WrapperOptionFunc(func(c *wrapperConfig) {
 		for _, extractor := range extractors {
 			if extractor != nil {
 				c.extractors = append(c.extractors, extractor)
 			}
 		}
-	}
+	})
 }
 
 func newComposedHandler(handler slog.Handler, cfg *wrapperConfig) slog.Handler {

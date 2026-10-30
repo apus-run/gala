@@ -27,7 +27,7 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, opts ...ServerOption) (*Server, error) {
-	options := Apply(opts...)
+	options := NewOptions(opts...)
 
 	srv := &Server{
 		opts: options,

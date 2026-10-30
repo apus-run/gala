@@ -21,7 +21,7 @@ type Logger struct {
 
 func NewLogger(options ...Option) *Logger {
 	// 修改配置
-	config := Apply(options...)
+	config := NewOptions(options...)
 	z := zlog.NewLogger(zlog.WithOptions(func(zopts *zlog.Options) {
 		zopts.Mode = config.Mode
 		zopts.Writer = config.Writer
