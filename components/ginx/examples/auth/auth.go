@@ -15,9 +15,9 @@ import (
 const demoToken = "demo-token"
 
 // demoAuthFunc is a small AuthFunc for the example. Applications should use
-// SessionAuth.AuthFunc() or another real credential verifier.
+// SessionAuth.AuthFunc or another real credential verifier.
 func demoAuthFunc(_ context.Context, r *http.Request) (*authn.SessionClaims, error) {
-	raw, ok := authn.BearerToken(r)
+	raw, ok := authn.TokenFromHeader(r)
 	if !ok {
 		return nil, authn.ErrMissingToken
 	}

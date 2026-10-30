@@ -13,7 +13,7 @@ import (
 )
 
 func testAuthFunc(_ context.Context, r *http.Request) (*authn.SessionClaims, error) {
-	token, ok := authn.BearerToken(r)
+	token, ok := authn.TokenFromHeader(r)
 	if !ok {
 		return nil, authn.ErrMissingToken
 	}
