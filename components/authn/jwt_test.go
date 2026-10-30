@@ -3,6 +3,7 @@ package authn
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -158,9 +159,18 @@ func TestDestroyRevokes(t *testing.T) {
 	}
 
 	require.NoError(t, j.Destroy(ctx, raw))
-	if _, err := j.ParseClaims(ctx, raw); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("吊销后应当过不去: %v", err)
-	}
+	_, err = j.ParseClaims(ctx, raw)
+	// 吊销要能和伪造区分开，同时仍是 ErrTokenInvalid，StatusOf 照旧给 401
+	assert.ErrorIs(t, err, ErrTokenRevoked)
+	assert.ErrorIs(t, err, ErrTokenInvalid)
+	code, challenge := StatusOf(err)
+	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.Equal(t, `Bearer error="invalid_token"`, challenge)
+
+	// 伪造的 token 不能被当成吊销
+	_, err = j.ParseClaims(ctx, raw+"x")
+	assert.ErrorIs(t, err, ErrTokenInvalid)
+	assert.NotErrorIs(t, err, ErrTokenRevoked)
 
 	// 没有存储时 Destroy 报错，而不是静默"成功"（否则调用方以为登出生效了）
 	noStore := NewJwtAuth(nil, WithClaims(claimsWith(time.Now().Add(time.Hour))),

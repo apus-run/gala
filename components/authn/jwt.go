@@ -23,6 +23,9 @@ var (
 	ErrGetKey                 = jwtx.ErrGetKey
 	ErrMissingClaims          = jwtx.ErrMissingClaims
 	ErrEmptySessionStore      = errors.New("session store is empty")
+	// ErrTokenRevoked wraps ErrTokenInvalid, so StatusOf and existing errors.Is
+	// checks are unchanged; it only lets logs tell revocation from forgery.
+	ErrTokenRevoked = fmt.Errorf("%w: revoked", ErrTokenInvalid)
 )
 
 // JwtAuth implement the authn.Authenticator interface.
@@ -119,7 +122,7 @@ func (j *JwtAuth) ParseClaims(ctx context.Context, accessToken string) (jwt.Clai
 			return nil, err
 		}
 		if exists {
-			return nil, ErrTokenInvalid
+			return nil, ErrTokenRevoked
 		}
 	}
 

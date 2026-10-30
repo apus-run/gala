@@ -50,7 +50,28 @@ handler := authn.NewMiddleware(authFn).Wrap(http.HandlerFunc(func(w http.Respons
 
 `authn.FromContext[T]` 只在认证成功后读取；类型不匹配或没有身份时返回 `(zero, false)`，不会 panic。白名单路径不会写入身份。
 
-`authn.BearerToken` 统一解析 Bearer 头，scheme 不区分大小写，令牌会去除首尾空白且不能为空。中间件只读 `Authorization` 头，不读取 Cookie 或 query string。
+### 令牌来源
+
+`AuthFunc` 接受可选的 `authn.TokenSource` 列表，按顺序尝试，用第一个取到令牌的来源。不传时只读 `Authorization: Bearer` 头：
+
+```go
+sessionAuth.AuthFunc()                                    // API 客户端：只读 Bearer 头
+sessionAuth.AuthFunc(authn.TokenFromHeader,
+    authn.TokenFromCookie("access"))                      // 浏览器：先头后 Cookie
+sessionAuth.AuthFunc(authn.TokenFromQuery("token"))       // WebSocket 握手等无法设头的场景
+```
+
+| 来源 | 读取位置 | 注意 |
+| --- | --- | --- |
+| `TokenFromHeader` | `Authorization: Bearer <token>` | scheme 不区分大小写；`Basic` 等其他 scheme 视为没有令牌 |
+| `TokenFromCookie(name)` | 同名 Cookie | 浏览器会在跨站请求中自动附带 Cookie，必须配合 CSRF 防护 |
+| `TokenFromQuery(name)` | 同名 query 参数 | URL 会进访问日志、浏览器历史和 Referer，只用于无法设头的客户端 |
+
+所有内置来源都会去除首尾空白，空值视为没有令牌。
+
+**取到令牌但校验失败时直接返回错误，不会再尝试后面的来源。**来源只负责"有没有"，不负责"对不对"：携带了无效 Bearer 头的请求不能借浏览器的 Cookie 通过认证。所有来源取到的令牌都走同一条 `ParseAccess`，用途校验、注销与存储故障的处理完全一致。
+
+`TokenSource` 就是 `func(*http.Request) (string, bool)`，自定义来源（例如 `X-Access-Token` 头）直接写函数即可。
 
 ## Gin 接入
 

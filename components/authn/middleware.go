@@ -52,12 +52,23 @@ func (m *Middleware[T]) Wrap(next http.Handler) http.Handler {
 	})
 }
 
-// AuthFunc returns an authentication function backed by ParseAccess. It reads
-// only the Authorization Bearer token and validates token use and the current
-// session generation.
-func (s *SessionAuth) AuthFunc() AuthFunc[*SessionClaims] {
+// AuthFunc returns an authentication function backed by ParseAccess, which
+// validates token use and the current session generation.
+//
+// sources are tried in order and the first one that finds a token is used;
+// without sources only the Authorization Bearer header is read. A token that is
+// found but invalid fails the request: later sources are not tried, so a bad
+// header can never fall back to an ambient cookie.
+//
+//	s.AuthFunc()                                              // API clients
+//	s.AuthFunc(authn.TokenFromHeader, authn.TokenFromCookie("access")) // + browsers
+func (s *SessionAuth) AuthFunc(sources ...TokenSource) AuthFunc[*SessionClaims] {
+	if len(sources) == 0 {
+		sources = []TokenSource{TokenFromHeader}
+	}
+	sources = append([]TokenSource(nil), sources...) // caller may reuse its slice
 	return func(ctx context.Context, r *http.Request) (*SessionClaims, error) {
-		raw, ok := BearerToken(r)
+		raw, ok := firstToken(r, sources)
 		if !ok {
 			return nil, ErrMissingToken
 		}

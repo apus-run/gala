@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBearerToken(t *testing.T) {
+func TestTokenFromHeader(t *testing.T) {
 	tests := []struct {
 		name   string
 		header string
@@ -37,13 +37,13 @@ func TestBearerToken(t *testing.T) {
 			if tt.header != "" {
 				r.Header.Set("Authorization", tt.header)
 			}
-			got, ok := BearerToken(r)
+			got, ok := TokenFromHeader(r)
 			assert.Equal(t, tt.want, got)
 			assert.Equal(t, tt.ok, ok)
 		})
 	}
 	assert.False(t, func() bool {
-		_, ok := BearerToken(nil)
+		_, ok := TokenFromHeader(nil)
 		return ok
 	}())
 }
@@ -150,7 +150,7 @@ func TestSessionAuthFunc(t *testing.T) {
 
 func TestMiddleware(t *testing.T) {
 	authFn := func(_ context.Context, r *http.Request) (*SessionClaims, error) {
-		token, ok := BearerToken(r)
+		token, ok := TokenFromHeader(r)
 		if !ok {
 			return nil, ErrMissingToken
 		}
@@ -224,7 +224,7 @@ func TestMiddlewareCustomErrorHandler(t *testing.T) {
 
 func TestMiddlewareConcurrentIdentities(t *testing.T) {
 	authFn := func(_ context.Context, r *http.Request) (string, error) {
-		token, ok := BearerToken(r)
+		token, ok := TokenFromHeader(r)
 		if !ok {
 			return "", ErrMissingToken
 		}
