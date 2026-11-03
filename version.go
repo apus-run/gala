@@ -10,7 +10,7 @@ import (
 // 框架名称与版本信息，用于统计与调试.
 const (
 	Name    = "Gala"
-	Version = "v0.15.1"
+	Version = "v0.17.0"
 )
 
 // Build metadata of the binary, overridden at build time:

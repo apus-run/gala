@@ -3,20 +3,20 @@
 ## 标签
 
 ```
-根模块:  v0.13.0
-子模块:  components/db/v0.13.0
+根模块:  v0.17.0
+子模块:  components/db/v0.17.0
 ```
 
 ## 发布
 
 ```bash
-./scripts/release.sh v0.13.0 --yes
+./scripts/release.sh v0.17.0 --yes
 ```
 
 ## 使用
 
 ```bash
-go get github.com/apus-run/gala/components/db@v0.13.0
+go get github.com/apus-run/gala/components/db@v0.17.0
 ```
 
 ---
