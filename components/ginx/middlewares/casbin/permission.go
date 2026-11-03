@@ -10,12 +10,17 @@ import (
 // RoleGetter is required only by RequiresRoles. GetRolesForUser returns direct
 // roles, not inherited roles. RequiresRoles uses the default (unscoped) domain;
 // applications needing a domain can inject a domain-bound implementation.
+// RoleGetter 仅 RequiresRoles 需要。GetRolesForUser 返回直接角色而非继承角色。
+// RequiresRoles 使用默认（无 scope）domain；需要 domain 的应用可注入绑定
+// domain 的实现。
 type RoleGetter interface {
 	GetRolesForUser(name string, domain ...string) ([]string, error)
 }
 
 // RoutePermission authorizes subject, URL.Path, and HTTP method, or the fields
 // supplied by SetRequestValues. Query parameters are not part of URL.Path.
+// RoutePermission 授权 subject、URL.Path 与 HTTP method（或 SetRequestValues
+// 提供的字段）。查询参数不属于 URL.Path。
 func (b *Builder) RoutePermission() (gin.HandlerFunc, error) {
 	cfg, err := b.normalized()
 	if err != nil {
@@ -37,6 +42,9 @@ func (b *Builder) RoutePermission() (gin.HandlerFunc, error) {
 // is parsed independently and passed to Enforce with the subject prepended.
 // Evaluation stops on the first decisive result or error, in input order.
 // An empty list allows the request without calling Lookup or Enforce.
+// RequiresPermissions 默认按 MatchAllRule 检查列表。每个权限独立解析并在
+// subject 前置后传给 Enforce。按输入顺序求值，遇到首个决定性结果或错误即停。
+// 空列表直接放行，不调用 Lookup 与 Enforce。
 func (b *Builder) RequiresPermissions(permissions []string, opts ...Option) (gin.HandlerFunc, error) {
 	cfg, err := b.normalized()
 	if err != nil {
@@ -73,6 +81,8 @@ func (b *Builder) RequiresPermissions(permissions []string, opts ...Option) (gin
 // RequiresRoles checks direct roles returned by GetRolesForUser. It does not
 // reinterpret a role as a permission or expand inheritance. An empty requirement
 // list allows the request without looking up identity or roles.
+// RequiresRoles 检查 GetRolesForUser 返回的直接角色，不把角色重解释为权限，
+// 也不展开继承。空需求列表直接放行，不读取身份与角色。
 func (b *Builder) RequiresRoles(roles []string, opts ...Option) (gin.HandlerFunc, error) {
 	cfg, err := b.normalized()
 	if err != nil {

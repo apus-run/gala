@@ -25,6 +25,11 @@ const fieldSeparator = "."
 var errInvalidFormatMapKey = errors.New("invalid formatting for map key")
 
 // DecodeValues decode url value into proto message.
+// DecodeValues 将 url.Values 逐字段解码进 proto 消息.
+//
+// Keys are split on "." into a field path; unknown fields are ignored, and
+// oneof fields already set are rejected.
+// 键按 "." 拆分为字段路径；未识别的字段被忽略，oneof 中已设置的字段会报错。
 func DecodeValues(msg proto.Message, values url.Values) error {
 	for key, values := range values {
 		if err := populateFieldValues(msg.ProtoReflect(), strings.Split(key, "."), values); err != nil {
@@ -46,6 +51,7 @@ func populateFieldValues(v protoreflect.Message, fieldPath []string, values []st
 	for i, fieldName := range fieldPath {
 		if fd = getFieldDescriptor(v, fieldName); fd == nil {
 			// ignore unexpected field.
+			// 忽略未识别的字段。
 			return nil
 		}
 		if fd.IsMap() && len(fieldPath) == 2 {
@@ -57,6 +63,7 @@ func populateFieldValues(v protoreflect.Message, fieldPath []string, values []st
 		if fd.Message() == nil || fd.Cardinality() == protoreflect.Repeated {
 			if fd.IsMap() && len(fieldPath) > 1 {
 				// post subfield
+				// 处理 map 子键。
 				return populateMapField(fd, v.Mutable(fd).Map(), []string{fieldPath[1]}, values)
 			}
 			return fmt.Errorf("invalid path: %q is not a message", fieldName)
@@ -96,6 +103,9 @@ func getFieldDescriptor(v protoreflect.Message, fieldName string) protoreflect.F
 			// If the type is map, you get the string "map[kratos]", where "map" is a field of proto and "kratos" is a key of map
 			// Use symbol . for separating fields/structs. (eg. structfield.field)
 			// ref: https://github.com/go-playground/form
+			// 若字段是 map，收到的是 "map[kratos]" 这样的串：map 是 proto 字段名，kratos 是 map 的键。
+			// 字段/结构体之间用 "." 分隔（如 structfield.field）。
+			// 参考：https://github.com/go-playground/form
 			field, _, err := parseURLQueryMapKey(fieldName)
 			if err != nil {
 				break
@@ -348,15 +358,19 @@ func decodeBase64Value(value string) ([]byte, error) {
 // jsonSnakeCase converts a camelCase identifier to a snake_case identifier,
 // according to the protobuf JSON specification.
 // references: https://github.com/protocolbuffers/protobuf-go/blob/master/encoding/protojson/well_known_types.go#L864
+// jsonSnakeCase 按 protobuf JSON 规范把 camelCase 标识符转为 snake_case 标识符.
+// 参考：https://github.com/protocolbuffers/protobuf-go/blob/master/encoding/protojson/well_known_types.go#L864
 func jsonSnakeCase(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s))
 
-	for i := range len(s) { // proto identifiers are always ASCII
+	// proto identifiers are always ASCII | proto 标识符恒为 ASCII
+	for i := range len(s) {
 		c := s[i]
 		if isASCIIUpper(c) {
 			builder.WriteByte('_')
-			c += 'a' - 'A' // convert to lowercase
+			// convert to lowercase | 转为小写
+			c += 'a' - 'A'
 		}
 		builder.WriteByte(c)
 	}
@@ -370,6 +384,8 @@ func isASCIIUpper(c byte) bool {
 
 // parseURLQueryMapKey parse the url.Values the field name and key name of the value map type key
 // for example: convert "map[key]" to "map" and "key"
+// parseURLQueryMapKey 解析 url.Values 中 map 类型键的字段名与键名，
+// 例如把 "map[key]" 拆为 "map" 与 "key"。
 func parseURLQueryMapKey(key string) (string, string, error) {
 	startIndex := strings.IndexByte(key, '[')
 	endIndex := strings.IndexByte(key, ']')

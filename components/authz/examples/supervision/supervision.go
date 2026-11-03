@@ -1,4 +1,4 @@
-// Package supervision demonstrates application-owned policy reload supervision.
+// Package supervision demonstrates application-owned policy reload supervision | 演示应用自持的策略重载监管。
 package supervision
 
 import (
@@ -16,6 +16,10 @@ import (
 // work on cancellation and drain requests, policy writes and SyncPolicy calls
 // before returning. The caller closes client only after Run returns.
 // Run is an example for one policy namespace; use your own key and channel.
+// Run 一直服务到被取消或任一任务退出。取消时 serve 必须停止接收新请求，
+// 并在返回前排空请求、策略写入与 SyncPolicy 调用。
+// 调用方只在 Run 返回之后才关闭 client。
+// Run 是单个策略命名空间的示例；请换成你自己的键与频道。
 func Run(ctx context.Context, client interface {
 	redis.Cmdable
 	redisadapter.WatcherClient
@@ -50,8 +54,12 @@ func Run(ctx context.Context, client interface {
 	go func() { results <- az.RunPolicyReload(runCtx, 5*time.Second, func(err error) { log.Print(err) }) }()
 	go func() { results <- serve(runCtx, az) }()
 
-	first := <-results // Observe either task's exit while the application is running.
-	cancel()           // Stop the sibling task and wait for it exactly once.
+	// Observe either task's exit while the application is running.
+	// 在应用运行期间观察任一任务的退出。
+	first := <-results
+	// Stop the sibling task and wait for it exactly once.
+	// 停止兄弟任务，并且恰好等待它一次。
+	cancel()
 	second := <-results
 	var failures []error
 	for _, err := range []error{first, second} {

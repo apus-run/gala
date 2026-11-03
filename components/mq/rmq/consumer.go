@@ -15,10 +15,18 @@ import (
 )
 
 var (
+	// ErrClosed is returned by operations on a closed consumer
+	// | ErrClosed 由已关闭消费者上的操作返回。
 	ErrClosed = errors.New("rmq: consumer closed")
-	ErrBusy   = errors.New("rmq: lifecycle operation in progress")
+	// ErrBusy is returned when another lifecycle call is still in progress
+	// | ErrBusy 表示另一个生命周期调用正在进行。
+	ErrBusy = errors.New("rmq: lifecycle operation in progress")
 )
 
+// Consumer consumes one topic as a RocketMQ push consumer; a handler error
+// asks RocketMQ to redeliver later.
+// Consumer 以 RocketMQ push 消费者的方式消费一个主题；处理器出错时请求
+// RocketMQ 稍后重投。
 type Consumer struct {
 	lifecycle sync.Mutex
 	started   bool
@@ -33,6 +41,7 @@ type Consumer struct {
 	selector  consumer.MessageSelector
 }
 
+// Start subscribes to the topic and starts the push consumer | Start 订阅主题并启动 push 消费者。
 func (c *Consumer) Start() error {
 	if !c.lifecycle.TryLock() {
 		return ErrBusy
@@ -62,6 +71,7 @@ func (c *Consumer) Start() error {
 		c.mu.Unlock()
 		defer c.active.Done()
 		// Preserve SDK context values/deadlines while also honoring Close.
+		// 保留 SDK context 的值与截止时间，同时让 Close 也能生效。
 		ctx, cancel := context.WithCancel(ctx)
 		stop := context.AfterFunc(lifetime, cancel)
 		defer stop()
@@ -120,6 +130,8 @@ func handleMessages(ctx context.Context, handler mq.ConsumerHandler, msgs []*pri
 
 // Close cancels and drains handlers before shutting down the SDK.
 // Handlers must honor context cancellation and must not close this consumer.
+// Close 先取消并排空处理器，再关闭 SDK。处理器必须尊重 context 取消，
+// 且不得关闭自己的消费者。
 func (c *Consumer) Close() error {
 	if !c.lifecycle.TryLock() {
 		return ErrBusy
@@ -142,12 +154,15 @@ func (c *Consumer) close() error {
 	c.active.Wait()
 	// v2.1.2 Shutdown panics before initialization (and can unregister another
 	// consumer with the same group). Its late Start failure cleans itself up.
+	// v2.1.2 的 Shutdown 在初始化之前会 panic（且可能反注册同组的另一个
+	// 消费者）。Start 晚期失败会自行清理。
 	if c.started {
 		c.closeErr = c.consumer.Shutdown()
 	}
 	return c.closeErr
 }
 
+// RegisterHandler sets the handler for the next Start | RegisterHandler 设置下一次 Start 使用的处理器。
 func (c *Consumer) RegisterHandler(h mq.ConsumerHandler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

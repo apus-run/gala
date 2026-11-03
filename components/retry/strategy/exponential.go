@@ -8,20 +8,21 @@ import (
 
 var _ Strategy = (*ExponentialBackoffRetryStrategy)(nil)
 
-// ExponentialBackoffRetryStrategy 指数退避重试
+// ExponentialBackoffRetryStrategy retries with exponentially growing intervals | ExponentialBackoffRetryStrategy 按指数递增间隔重试.
 type ExponentialBackoffRetryStrategy struct {
-	// 初始重试间隔
+	// initial retry interval | 初始重试间隔.
 	initialInterval time.Duration
-	// 最大重试间隔
+	// max retry interval | 最大重试间隔.
 	maxInterval time.Duration
-	// 最大重试次数
+	// max retry count | 最大重试次数.
 	maxRetries int32
-	// 当前重试次数
+	// current retry count | 当前重试次数.
 	retries atomic.Int32
-	// 是否已经达到最大重试间隔
+	// whether the max interval has been reached | 是否已经达到最大重试间隔.
 	maxIntervalReached atomic.Bool
 }
 
+// NewExponentialBackoffRetryStrategy creates an exponential-backoff strategy | NewExponentialBackoffRetryStrategy 创建指数退避重试策略.
 func NewExponentialBackoffRetryStrategy(initialInterval, maxInterval time.Duration, maxRetries int32) *ExponentialBackoffRetryStrategy {
 	return &ExponentialBackoffRetryStrategy{
 		initialInterval: initialInterval,
@@ -30,10 +31,12 @@ func NewExponentialBackoffRetryStrategy(initialInterval, maxInterval time.Durati
 	}
 }
 
+// Report ignores the error and keeps this strategy | Report 忽略错误，保持原策略.
 func (s *ExponentialBackoffRetryStrategy) Report(_ error) Strategy {
 	return s
 }
 
+// NextWithRetries computes the next interval for the given retry count | NextWithRetries 按给定重试次数计算下一次间隔.
 func (s *ExponentialBackoffRetryStrategy) NextWithRetries(retries int32) (time.Duration, bool) {
 	return s.nextWithRetries(retries)
 }
@@ -45,6 +48,7 @@ func (s *ExponentialBackoffRetryStrategy) nextWithRetries(retries int32) (time.D
 		}
 		const two = 2
 		interval := s.initialInterval * time.Duration(math.Pow(two, float64(retries-1)))
+		// overflow, or the computed interval exceeds the max interval
 		// 溢出或当前重试间隔大于最大重试间隔
 		if interval <= 0 || interval > s.maxInterval {
 			s.maxIntervalReached.Store(true)
@@ -55,6 +59,7 @@ func (s *ExponentialBackoffRetryStrategy) nextWithRetries(retries int32) (time.D
 	return 0, false
 }
 
+// Next advances the retry counter and returns the next interval | Next 递增重试计数并返回下一次间隔.
 func (s *ExponentialBackoffRetryStrategy) Next() (time.Duration, bool) {
 	retries := s.retries.Add(1)
 	return s.nextWithRetries(retries)

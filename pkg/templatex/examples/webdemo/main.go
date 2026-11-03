@@ -1,9 +1,13 @@
+// webdemo shows the recommended use of templatex: one Registry shared in
+// process, templates embedded via embed.FS, layout+content composition,
+// and parse/execute errors handled in one place in the handler.
+//
 // webdemo 展示 templatex 的推荐用法：
 // 进程内共享一个 Registry、模板通过 embed.FS 编进二进制、
 // layout+content 组合渲染，并在 handler 中统一处理解析/执行错误。
 //
-// 运行：go run ./examples/webdemo
-// 然后访问 http://localhost:8080
+// Run | 运行：go run ./examples/webdemo
+// then open | 然后访问 http://localhost:8080
 package main
 
 import (
@@ -18,17 +22,26 @@ import (
 //go:embed templates
 var templates embed.FS
 
+// registry is the single in-process instance, safe for concurrent use;
+// loading the same file set again hits the LRU cache directly.
+//
 // registry 进程内唯一，并发安全；重复 Load 同一组文件直接命中 LRU 缓存。
 var registry = templatex.NewRegistry().AddFuncs(map[string]any{
 	"upper": strings.ToUpper,
 })
 
+// PageData keeps template input in a concrete type, so a misspelled field
+// is caught at compile time.
+//
 // PageData 模板入参用具体类型，字段拼错在编译期就能发现。
 type PageData struct {
 	Title string
 	Name  string
 }
 
+// renderPage always composes layout + page content; the err from Render
+// covers both parse and execute errors.
+//
 // renderPage 统一走 layout + 页面内容组合；Render 的 err 同时覆盖解析错误与执行错误。
 func renderPage(w http.ResponseWriter, page string, data PageData) {
 	html, err := registry.LoadFS(

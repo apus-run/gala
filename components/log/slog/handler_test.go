@@ -30,3 +30,17 @@ func TestNewHandler(t *testing.T) {
 		t.FailNow()
 	}
 }
+
+func TestWithStackKeyUsesGivenKey(t *testing.T) {
+	discard := slog.NewTextHandler(os.Stderr, nil)
+	if got := NewHandler(discard, WithStackKey("my_stack")).(*Handler).keyStack; got != "my_stack" {
+		t.Fatalf("keyStack = %q, want my_stack", got)
+	}
+	// 空值回落默认
+	if got := NewHandler(discard, WithStackKey("")).(*Handler).keyStack; got != keyStack {
+		t.Fatalf("keyStack = %q, want default %q", got, keyStack)
+	}
+	if got := NewHandler(discard).(*Handler).keyStack; got != keyStack {
+		t.Fatalf("keyStack = %q, want default %q", got, keyStack)
+	}
+}

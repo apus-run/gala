@@ -1,4 +1,5 @@
 // Package conv helps users convert any type to the convertible type.
+// 包 conv 帮助用户将任意类型转换为可转换的目标类型。
 package conv
 
 import (
@@ -22,6 +23,7 @@ type convertible interface {
 
 // To converts any type to the convertible type.
 // If the conversion is not supported, a zero value is returned.
+// To 将任意类型转换为可转换的目标类型；转换不受支持时返回零值。
 //
 // 🚀 EXAMPLE:
 //
@@ -36,6 +38,8 @@ type convertible interface {
 //
 //	To[string]('a')  ⏩ "97"
 //	To[string]('中') ⏩ "20013"
+//
+// ⚠️ 警告：byte 是 uint8 的别名，rune 是 int32 的别名。
 func To[T convertible, V any](v V) T {
 	t, _ := ToE[T](v)
 	return t
@@ -43,6 +47,7 @@ func To[T convertible, V any](v V) T {
 
 // ToPtr converts any type to a pointer of the convertible type.
 // If the conversion is not supported, nil is returned.
+// ToPtr 将任意类型转换为可转换目标类型的指针；转换不受支持时返回 nil。
 //
 // 🚀 EXAMPLE:
 //
@@ -57,6 +62,8 @@ func To[T convertible, V any](v V) T {
 //
 //	ToPtr[string]('a')  ⏩ (*string)("97")
 //	ToPtr[string]('中') ⏩ (*string)("20013")
+//
+// ⚠️ 警告：byte 是 uint8 的别名，rune 是 int32 的别名。
 func ToPtr[T convertible, V any](v V) *T {
 	t, err := ToE[T](v)
 	if err != nil {
@@ -66,6 +73,7 @@ func ToPtr[T convertible, V any](v V) *T {
 }
 
 // ToR converts any type to result.R.
+// ToR 将任意类型转换为 result.R。
 //
 // 🚀 EXAMPLE:
 //
@@ -80,12 +88,15 @@ func ToPtr[T convertible, V any](v V) *T {
 //
 //	ToR[string]('a')  ⏩ result.OK("97")
 //	ToR[string]('中') ⏩ result.OK("20013")
+//
+// ⚠️ 警告：byte 是 uint8 的别名，rune 是 int32 的别名。
 func ToR[T convertible, V any](v V) result.R[T] {
 	return result.Of(ToE[T](v))
 }
 
 // ToE converts any type to the convertible type.
 // If the conversion is not supported, a zero value and an error is returned.
+// ToE 将任意类型转换为可转换的目标类型；转换不受支持时返回零值和错误。
 //
 // 🚀 EXAMPLE:
 //
@@ -100,6 +111,8 @@ func ToR[T convertible, V any](v V) result.R[T] {
 //
 //	ToE[string]('a')  ⏩ "97", nil
 //	ToE[string]('中') ⏩ "20013", nil
+//
+// ⚠️ 警告：byte 是 uint8 的别名，rune 是 int32 的别名。
 func ToE[T convertible, V any](v V) (T, error) {
 	t := value.Zero[T]()
 	switch any(t).(type) {

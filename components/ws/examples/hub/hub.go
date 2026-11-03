@@ -1,3 +1,8 @@
+// Hub is the business-layer example: it manages online connections by userID
+// (multiple devices per user) and demonstrates IM semantics on top of the gala ws
+// component (register/unregister, multi-dimension push, event dispatch, graceful
+// shutdown) — deliberately kept out of the ws package so the component library stays
+// a pure transport layer.
 // Hub 是业务层代码：按 userID 管理在线连接（支持一个用户多设备），
 // 演示如何在 gala ws 组件之上实现 IM 语义（注册/注销/多维度推送/事件分发/优雅停机），
 // 刻意不放进 ws 包，保持组件库只做传输层。
@@ -13,6 +18,7 @@ import (
 	"github.com/apus-run/gala/components/ws"
 )
 
+// Message is the server-to-client envelope; real services reshape the fields as needed.
 // Message 服务端下行封装（真实业务的协议形态各不相同，按需改字段）
 type Message struct {
 	Event     string `json:"event"`
@@ -22,18 +28,23 @@ type Message struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
+// Client is one user connection. Send is written to conn exclusively by writeLoop
+// (gorilla/websocket forbids concurrent writes; business code must not write conn directly).
 // Client 一个用户连接。Send 交给 writeLoop 独占写 conn
 // （gorilla/websocket 不允许并发写，业务侧不能直接拿 conn 写）。
 type Client struct {
 	UserID string
 	Send   chan *Message
-	Done   chan struct{} // 连接关闭信号，触发 writeLoop 退出
-	Tags   sync.Map      // 该连接订阅的 tag（如订阅某案件/工单的进展），PushTag 用
+	Done   chan struct{} // connection closed signal, stops writeLoop | 连接关闭信号，触发 writeLoop 退出
+	Tags   sync.Map      // tags this connection subscribed to (e.g. case/ticket progress), used by PushTag | 该连接订阅的 tag（如订阅某案件/工单的进展），PushTag 用
 
 	closeOnce sync.Once
-	closeConn func() // 由 readLoop 在 Register 前设置：关底层 conn，解除 ReadMessage 阻塞
+	closeConn func() // set by readLoop before Register: closes the underlying conn to unblock ReadMessage | 由 readLoop 在 Register 前设置：关底层 conn，解除 ReadMessage 阻塞
 }
 
+// Close is an idempotent close: it closes Done (stopping writeLoop) and the underlying
+// conn (unblocking reads). Both readLoop's defer and Hub.CloseAll call it; sync.Once
+// guarantees it runs exactly once.
 // Close 幂等关闭：关 Done（停 writeLoop）并关底层 conn（解除读阻塞）。
 // readLoop 的 defer 和 Hub.CloseAll 都会调它，靠 sync.Once 保证只执行一次。
 func (c *Client) Close() {
@@ -45,22 +56,25 @@ func (c *Client) Close() {
 	})
 }
 
-// Hub userID → 连接列表
+// Hub maps userID → connection list | Hub 维护 userID → 连接列表.
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[string][]*Client
 }
 
+// NewHub creates an empty hub | NewHub 创建空的 Hub.
 func NewHub() *Hub {
 	return &Hub{clients: make(map[string][]*Client)}
 }
 
+// Register adds the connection under its userID | Register 把连接登记到其 userID 下.
 func (h *Hub) Register(c *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.clients[c.UserID] = append(h.clients[c.UserID], c)
 }
 
+// Unregister removes the connection from its userID, deleting the entry when empty | Unregister 把连接从其 userID 下移除，列表空则删除条目.
 func (h *Hub) Unregister(c *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -77,10 +91,14 @@ func (h *Hub) Unregister(c *Client) {
 	}
 }
 
+// Push pushes to all online devices of the user without blocking. Slow clients (full
+// buffer) are dropped with a log entry: one slow connection must not stall the pusher
+// or the user's other devices.
 // Push 非阻塞推送给该用户的所有在线设备。
 // 慢客户端（缓冲满）直接丢弃并记日志：不能让一个慢连接拖垮推送方和其他设备。
 func (h *Hub) Push(userID string, msg *Message) {
 	h.mu.RLock()
+	// Unregister moves elements in place; the loop after unlocking must use an independent snapshot.
 	// Unregister 会原地移动元素，解锁后的遍历必须使用独立快照。
 	list := slices.Clone(h.clients[userID])
 	h.mu.RUnlock()
@@ -88,13 +106,14 @@ func (h *Hub) Push(userID string, msg *Message) {
 	for _, c := range list {
 		select {
 		case c.Send <- msg:
-		case <-c.Done: // 连接已关闭，跳过
+		case <-c.Done: // connection already closed, skip | 连接已关闭，跳过
 		default:
 			log.Printf("[hub] push dropped: userID=%s send buffer full", userID)
 		}
 	}
 }
 
+// PushTag pushes to every connection subscribed to the tag (e.g. a case has new progress).
 // PushTag 推送给订阅了 tag 的所有连接（如：某案件有新进展）。
 func (h *Hub) PushTag(tag string, msg *Message) {
 	h.mu.RLock()
@@ -117,7 +136,7 @@ func (h *Hub) PushTag(tag string, msg *Message) {
 	}
 }
 
-// Broadcast 推送给全体在线连接。
+// Broadcast pushes to every online connection | Broadcast 推送给全体在线连接.
 func (h *Hub) Broadcast(msg *Message) {
 	h.mu.RLock()
 	all := make([]*Client, 0, len(h.clients))
@@ -136,6 +155,10 @@ func (h *Hub) Broadcast(msg *Message) {
 	}
 }
 
+// CloseAll closes all connections when the service goes offline (graceful shutdown):
+// clients notice the disconnect and fail over to other instances per their own reconnect
+// policy. closeConn is written before Register and read after being taken from the map;
+// both sides are separated by the Hub lock, so there is no data race.
 // CloseAll 服务下线时关闭所有连接（优雅停机）：
 // 客户端感知断开后按自身重连策略切到其他实例。
 // closeConn 的写入发生在 Register 之前、读取发生在从 map 取出之后，
@@ -153,6 +176,9 @@ func (h *Hub) CloseAll() {
 	}
 }
 
+// writeLoop owns all writes from a single goroutine. It carries a write deadline so a
+// slow client cannot wedge the writer forever (a write failure means the connection is
+// broken; Close unblocks readLoop, whose defer does the shared cleanup).
 // writeLoop 单 goroutine 独占写。带写超时，防止慢客户端把写方永久卡死
 // （写失败即连接已坏，Close 解除 readLoop 的阻塞，由 readLoop 的 defer 统一清理）。
 func (c *Client) writeLoop(ctx context.Context, conn *ws.Conn) {

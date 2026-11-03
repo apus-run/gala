@@ -7,6 +7,10 @@ import (
 	"github.com/apus-run/gala/components/fileserver"
 )
 
+// validateMetadata checks user metadata against S3's limits: keys must be
+// HTTP header token characters, values printable ASCII, and the total
+// bytes of keys and values must not exceed 2 KiB. Keys are lowercased
+// uniformly by the root package.
 // validateMetadata 检查用户元数据是否满足 S3 的限制：键必须是 HTTP 头的 token 字符，
 // 值必须是可见 ASCII，键与值的总字节数不得超过 2 KiB。键已由根包统一小写。
 func validateMetadata(m map[string]string) error {
@@ -26,6 +30,8 @@ func validateMetadata(m map[string]string) error {
 	return nil
 }
 
+// validateContentType requires a content type that fits in an HTTP
+// header: printable ASCII or space.
 // validateContentType 要求内容类型可以放进 HTTP 头：可见 ASCII 或空格。
 func validateContentType(s string) error {
 	if s != "" && !isPrintableASCIIOrSpace(s) {
@@ -34,6 +40,8 @@ func validateContentType(s string) error {
 	return nil
 }
 
+// normalizeMetadata returns a copy with lowercased keys, or nil when
+// there is no metadata.
 // normalizeMetadata 返回键已小写的副本；没有元数据时返回 nil。
 func normalizeMetadata(m map[string]string) map[string]string {
 	if len(m) == 0 {
@@ -46,7 +54,7 @@ func normalizeMetadata(m map[string]string) map[string]string {
 	return out
 }
 
-// isHeaderToken 判断 s 是否只含 RFC 7230 的 token 字符。
+// isHeaderToken reports whether s contains only RFC 7230 token characters | isHeaderToken 判断 s 是否只含 RFC 7230 的 token 字符。
 func isHeaderToken(s string) bool {
 	if s == "" {
 		return false
@@ -63,6 +71,8 @@ func isHeaderToken(s string) bool {
 	return true
 }
 
+// isPrintableASCIIOrSpace reports whether s contains only printable ASCII
+// characters and spaces, so it can go into an HTTP header.
 // isPrintableASCIIOrSpace 判断 s 是否只含可见 ASCII 字符与空格，可以放进 HTTP 头。
 func isPrintableASCIIOrSpace(s string) bool {
 	for i := range len(s) {

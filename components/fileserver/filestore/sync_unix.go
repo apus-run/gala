@@ -4,7 +4,7 @@ package filestore
 
 import "os"
 
-// syncDir 同步目录项，使刚发布或删除的名字在掉电后仍然存在。
+// syncDir syncs directory entries so names just published or removed still exist after power loss | syncDir 同步目录项，使刚发布或删除的名字在掉电后仍然存在。
 func syncDir(root *os.Root, dir string) error {
 	d, err := root.Open(dir)
 	if err != nil {

@@ -1,3 +1,6 @@
+// Package diff produces human readable diffs of strings and objects,
+// mainly for debugging tests.
+// 包 diff 生成人类可读的字符串与对象差异，主要用于调试测试。
 package diff
 
 import (
@@ -15,6 +18,7 @@ import (
 )
 
 // StringDiff diffs a and b and returns a human readable diff.
+// StringDiff 比较 a 与 b，返回人类可读的差异。
 func StringDiff(a, b string) string {
 	ba := []byte(a)
 	bb := []byte(b)
@@ -34,9 +38,11 @@ func StringDiff(a, b string) string {
 	return string(out)
 }
 
-// ObjectDiff writes the two objects out as JSON and prints out the identical part of
-// the objects followed by the remaining part of 'a' and finally the remaining part of 'b'.
-// For debugging tests.
+// ObjectDiff writes the two objects out as JSON and prints out the identical
+// part of the objects followed by the remaining part of 'a' and finally the
+// remaining part of 'b'. For debugging tests.
+// ObjectDiff 将两个对象序列化为 JSON，先输出相同的部分，再依次输出 a 与 b
+// 剩余的部分。用于调试测试。
 func ObjectDiff(a, b any) string {
 	ab, err := json.Marshal(a)
 	if err != nil {
@@ -49,11 +55,14 @@ func ObjectDiff(a, b any) string {
 	return StringDiff(string(ab), string(bb))
 }
 
-// ObjectGoPrintDiff is like ObjectDiff, but uses go-spew to print the objects,
-// which shows absolutely everything by recursing into every single pointer
-// (go's %#v formatters OTOH stop at a certain point). This is needed when you
-// can't figure out why reflect.DeepEqual is returning false and nothing is
-// showing you differences. This will.
+// ObjectGoPrintDiff is like ObjectDiff, but uses go-spew to print the
+// objects, which shows absolutely everything by recursing into every single
+// pointer (go's %#v formatters OTOH stop at a certain point). This is needed
+// when you can't figure out why reflect.DeepEqual is returning false and
+// nothing is showing you differences. This will.
+// ObjectGoPrintDiff 类似 ObjectDiff，但用 go-spew 打印对象——它会递归每个指针、
+// 展示全部内容（Go 的 %#v 格式化会中途截断）。当你不明白 reflect.DeepEqual
+// 为什么返回 false、又看不到差异时，用它。
 func ObjectGoPrintDiff(a, b any) string {
 	s := spew.ConfigState{DisableMethods: true}
 	return StringDiff(
@@ -62,7 +71,9 @@ func ObjectGoPrintDiff(a, b any) string {
 	)
 }
 
-// ObjectReflectDiff returns a diff computed through reflection, without serializing to JSON.
+// ObjectReflectDiff returns a diff computed through reflection, without
+// serializing to JSON.
+// ObjectReflectDiff 通过反射计算差异，不序列化为 JSON。
 func ObjectReflectDiff(a, b any) string {
 	vA, vB := reflect.ValueOf(a), reflect.ValueOf(b)
 	if vA.Type() != vB.Type() {
@@ -88,6 +99,10 @@ func ObjectReflectDiff(a, b any) string {
 // 1. stringifies aObj and bObj
 // 2. elides identical prefixes if either is too long
 // 3. elides remaining content from the end if either is too long
+// limit 做三件事：
+//  1. 将 aObj 与 bObj 转为字符串
+//  2. 任一过长时省略相同的前缀
+//  3. 仍过长时从末尾截断省略
 func limit(aObj, bObj any, max int) (string, string) {
 	elidedPrefix := ""
 	elidedASuffix := ""
@@ -105,12 +120,14 @@ func limit(aObj, bObj any, max int) (string, string) {
 		switch {
 		case len(a) > max && len(a) > 4 && len(b) > 4 && a[:4] == b[:4]:
 			// a is too long, b has data, and the first several characters are the same
+			// a 过长、b 有内容且前几个字符相同
 			elidedPrefix = "..."
 			a = a[2:]
 			b = b[2:]
 
 		case len(b) > max && len(b) > 4 && len(a) > 4 && a[:4] == b[:4]:
 			// b is too long, a has data, and the first several characters are the same
+			// b 过长、a 有内容且前几个字符相同
 			elidedPrefix = "..."
 			a = a[2:]
 			b = b[2:]
@@ -125,6 +142,7 @@ func limit(aObj, bObj any, max int) (string, string) {
 
 		default:
 			// both are short enough
+			// 两者都足够短
 			return elidedPrefix + a + elidedASuffix, elidedPrefix + b + elidedBSuffix
 		}
 	}
@@ -144,8 +162,13 @@ type diff struct {
 
 type orderedDiffs []diff
 
-func (d orderedDiffs) Len() int      { return len(d) }
+// Len implements sort.Interface | 实现 sort.Interface.
+func (d orderedDiffs) Len() int { return len(d) }
+
+// Swap implements sort.Interface | 实现 sort.Interface.
 func (d orderedDiffs) Swap(i, j int) { d[i], d[j] = d[j], d[i] }
+
+// Less implements sort.Interface, ordering diffs by field path | 实现 sort.Interface，按字段路径排序.
 func (d orderedDiffs) Less(i, j int) bool {
 	a, b := d[i].path.String(), d[j].path.String()
 	if a < b {
@@ -250,10 +273,12 @@ func objectReflectDiff(path *field.Path, a, b reflect.Value) []diff {
 
 // ObjectGoPrintSideBySide prints a and b as textual dumps side by side,
 // enabling easy visual scanning for mismatches.
+// ObjectGoPrintSideBySide 将 a 与 b 的文本转储并排输出，便于目视扫描不匹配处。
 func ObjectGoPrintSideBySide(a, b any) string {
 	s := spew.ConfigState{
 		Indent: " ",
 		// Extra deep spew.
+		// 额外深度的 spew 转储。
 		DisableMethods: true,
 	}
 	sA := s.Sdump(a)

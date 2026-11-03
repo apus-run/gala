@@ -13,10 +13,12 @@ import (
 	"github.com/apus-run/gala/pkg/option"
 )
 
+// NewJwtManager creates a manager from options | NewJwtManager 从选项创建 JwtManager.
 func NewJwtManager[T any](opts ...option.Option[JwtConfig]) *JwtManager[T] {
 	return &JwtManager[T]{conf: NewJwtConfig(opts...)}
 }
 
+// GenerateToken signs a JWT wrapping data with the default registered claims | GenerateToken 用默认标准声明签发包裹 data 的 JWT.
 func (jm *JwtManager[T]) GenerateToken(userID string, data T) (string, error) {
 	registered, err := jm.NewRegisteredClaims(userID, time.Now())
 	if err != nil {
@@ -25,6 +27,8 @@ func (jm *JwtManager[T]) GenerateToken(userID string, data T) (string, error) {
 	return jm.GenerateClaims(&Claims[T]{Data: data, RegisteredClaims: registered})
 }
 
+// NewRegisteredClaims builds the common registered claims from the manager config,
+// for callers composing their own top-level payload.
 // NewRegisteredClaims 按管理器配置创建通用声明，供调用方组合自己的顶层载荷。
 func (jm *JwtManager[T]) NewRegisteredClaims(userID string, now time.Time) (jwt.RegisteredClaims, error) {
 	userID = strings.TrimSpace(userID)
@@ -50,6 +54,7 @@ func (jm *JwtManager[T]) NewRegisteredClaims(userID string, now time.Time) (jwt.
 	}, nil
 }
 
+// GenerateClaims signs the caller-provided top-level claims without wrapping a data field.
 // GenerateClaims 签发调用方提供的顶层声明，不额外包装 data 字段。
 func (jm *JwtManager[T]) GenerateClaims(claims jwt.Claims) (string, error) {
 	if claims == nil {
@@ -71,6 +76,7 @@ func (jm *JwtManager[T]) GenerateClaims(claims jwt.Claims) (string, error) {
 	)
 }
 
+// ParseToken parses and verifies a JWT into the default Claims[T] | ParseToken 解析并校验 JWT，返回默认的 Claims[T].
 func (jm *JwtManager[T]) ParseToken(tokenStr string) (*Claims[T], error) {
 	claims := &Claims[T]{}
 	if err := jm.ParseClaims(tokenStr, claims); err != nil {
@@ -79,6 +85,14 @@ func (jm *JwtManager[T]) ParseToken(tokenStr string) (*Claims[T], error) {
 	return claims, nil
 }
 
+// ParseClaims verifies the signature, the configured algorithm and claims, and writes
+// the result into the caller's claims pointer. Issuer/Audience are checked by the
+// verifier when configured — writing them into claims at signing time does not count,
+// otherwise tokens signed by another service with the same secret would pass. Issuer
+// has a default value, so it is checked by default; pass jwt.WithIssuer("") for a
+// single call to disable it (jwt/v5 skips validation for empty expected values).
+// opts are appended after the config and may override it, for per-call expiry, clock
+// and leeway checks.
 // ParseClaims 校验签名、配置的算法与声明，并将结果写入调用方的 claims 指针。
 // 配置里声明过的 Issuer/Audience 由验证方校验 —— 签发时写进 claims 不算数，否则
 // 另一个服务用同一个密钥签的 token 也能过。Issuer 有默认值，所以默认就在校验；
@@ -106,6 +120,8 @@ func (jm *JwtManager[T]) ParseClaims(tokenStr string, claims jwt.Claims, opts ..
 	parserOptions = append(parserOptions, jm.conf.ParserOptions...)
 	parserOptions = append(parserOptions, opts...)
 
+	// Delegate to jwtx: the algorithm is rejected before keyFunc runs, and errors carry a
+	// reason chain (errors.Is(err, jwt.ErrTokenExpired) works).
 	// 交给 jwtx：算法在 keyFunc 之前就卡住，错误带原因链（errors.Is(err, jwt.ErrTokenExpired) 可用）
 	if _, err := jwtx.ParseToken(tokenStr,
 		func(*jwt.Token) (any, error) { return secret, nil },
@@ -118,6 +134,7 @@ func (jm *JwtManager[T]) ParseClaims(tokenStr string, claims jwt.Claims, opts ..
 	return nil
 }
 
+// VerifyToken reports whether the token is valid | VerifyToken 报告令牌是否有效.
 func (jm *JwtManager[T]) VerifyToken(tokenStr string) (bool, error) {
 	if _, err := jm.ParseToken(tokenStr); err != nil {
 		return false, fmt.Errorf("failed to verify token: %w", err)
@@ -140,6 +157,7 @@ func (jm *JwtManager[T]) signingConfig() ([]byte, jwt.SigningMethod, error) {
 	return []byte(secret), method, nil
 }
 
+// GenerateJWTSecret returns a random secret as hex; length is in bytes | GenerateJWTSecret 生成随机密钥的十六进制串，length 为字节数.
 func GenerateJWTSecret(length int) string {
 	if length <= 0 {
 		length = JWTSecretLength
@@ -147,6 +165,9 @@ func GenerateJWTSecret(length int) string {
 	return hex.EncodeToString(jwtx.GenerateJWTSecret(length))
 }
 
+// Only HS* is supported: SecretKey is a shared secret, so RS/ES-style algorithms have
+// no matching key available — fail early instead of silently switching algorithms
+// (it used to return ES256).
 // 只支持 HS*：SecretKey 是共享密钥，配 RS/ES 之类没有对应密钥可用，
 // 早报错而不是悄悄换算法（之前会返回 ES256）
 func jwtSigningMethod(algorithm string) (jwt.SigningMethod, error) {

@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// Middleware is a function that wraps a Handler
+// Middleware is a function that wraps a Handler | Middleware 是包装 Handler 的函数。
 type Middleware func(Handler) Handler
 
-// LoggingMiddleware logs event handling
+// LoggingMiddleware logs event handling | LoggingMiddleware 记录事件处理的日志。
 func LoggingMiddleware(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -30,7 +30,7 @@ func LoggingMiddleware(logger *slog.Logger) Middleware {
 	}
 }
 
-// RecoveryMiddleware recovers from panics in handlers
+// RecoveryMiddleware recovers from panics in handlers | RecoveryMiddleware 从 handler 的 panic 中恢复。
 func RecoveryMiddleware(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -51,6 +51,8 @@ func RecoveryMiddleware(logger *slog.Logger) Middleware {
 // TimeoutMiddleware adds a cooperative timeout to event handling. The wrapped
 // handler must observe ctx for prompt cancellation; no orphan goroutine is
 // created when it does not.
+// TimeoutMiddleware 为事件处理添加协作式超时。被包装的 handler 必须感知 ctx
+// 才能及时取消；不感知时也不会产生孤儿 goroutine。
 func TimeoutMiddleware(timeout time.Duration) Middleware {
 	if timeout <= 0 {
 		panic("eventbus: timeout must be positive")
@@ -69,7 +71,7 @@ func TimeoutMiddleware(timeout time.Duration) Middleware {
 	}
 }
 
-// RetryMiddleware retries failed event handling
+// RetryMiddleware retries failed event handling | RetryMiddleware 对失败的事件处理进行重试。
 func RetryMiddleware(maxRetries int, delay time.Duration) Middleware {
 	if maxRetries < 0 {
 		panic("eventbus: max retries must not be negative")
@@ -101,7 +103,7 @@ func RetryMiddleware(maxRetries int, delay time.Duration) Middleware {
 	}
 }
 
-// MetricsMiddleware collects metrics for event handling
+// MetricsMiddleware collects metrics for event handling | MetricsMiddleware 收集事件处理的指标。
 func MetricsMiddleware(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -119,7 +121,7 @@ func MetricsMiddleware(logger *slog.Logger) Middleware {
 	}
 }
 
-// Chain chains multiple middlewares together
+// Chain chains multiple middlewares together | Chain 将多个中间件串联起来。
 func Chain(middlewares ...Middleware) Middleware {
 	return func(handler Handler) Handler {
 		for _, middleware := range slices.Backward(middlewares) {
@@ -129,22 +131,28 @@ func Chain(middlewares ...Middleware) Middleware {
 	}
 }
 
-// PanicError represents a panic that occurred during event handling
+// PanicError represents a panic that occurred during event handling | PanicError 表示事件处理期间发生的 panic。
 type PanicError struct {
+	// Value is the recovered panic value | Value 是恢复出的 panic 值。
 	Value any
 }
 
+// Error implements the error interface | Error 实现 error 接口。
 func (e *PanicError) Error() string {
 	return "panic in event handler: " + fmt.Sprint(e.Value)
 }
 
-// TimeoutError represents a timeout during event handling
+// TimeoutError represents a timeout during event handling | TimeoutError 表示事件处理期间发生的超时。
 type TimeoutError struct {
-	EventID   string
+	// EventID is the id of the event that timed out | EventID 是超时事件的 id。
+	EventID string
+	// EventType is the type of the event that timed out | EventType 是超时事件的类型。
 	EventType EventType
-	Timeout   time.Duration
+	// Timeout is the configured timeout | Timeout 是配置的超时时长。
+	Timeout time.Duration
 }
 
+// Error implements the error interface | Error 实现 error 接口。
 func (e *TimeoutError) Error() string {
 	return "event handling timeout"
 }

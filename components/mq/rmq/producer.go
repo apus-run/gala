@@ -14,18 +14,22 @@ import (
 	"github.com/apus-run/gala/components/mq"
 )
 
+// Producer publishes messages through a RocketMQ producer | Producer 通过 RocketMQ 生产者发布消息。
 type Producer struct {
 	producer rocketmq.Producer
 }
 
+// Start starts the underlying RocketMQ producer | Start 启动底层 RocketMQ 生产者。
 func (p *Producer) Start() error {
 	return p.producer.Start()
 }
 
+// Close shuts down the underlying producer | Close 关闭底层生产者。
 func (p *Producer) Close() error {
 	return p.producer.Shutdown()
 }
 
+// Send publishes one message synchronously | Send 同步发送一条消息。
 func (p *Producer) Send(ctx context.Context, message *mq.Message) (mq.SendResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return mq.SendResponse{}, err
@@ -36,6 +40,7 @@ func (p *Producer) Send(ctx context.Context, message *mq.Message) (mq.SendRespon
 	return sendResponse(p.producer.SendSync(ctx, p.convertMessage(message)))
 }
 
+// SendBatch publishes a single-topic batch synchronously | SendBatch 同步发送同一主题的一批消息。
 func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.SendResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return mq.SendResponse{}, err
@@ -52,6 +57,7 @@ func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.Se
 			return mq.SendResponse{}, errors.New("rmq: batch messages must share a topic")
 		}
 		// The SDK drops the outer batch's delay and sharding properties.
+		// SDK 会丢弃外层批量消息上的延迟与分片属性。
 		if len(messages) > 1 && (message.DeferDuration > 0 || message.PartitionKey != "" ||
 			message.Properties[primitive.PropertyDelayTimeLevel] != "" ||
 			message.Properties[primitive.PropertyShardingKey] != "") {
@@ -62,6 +68,8 @@ func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.Se
 	return sendResponse(p.producer.SendSync(ctx, msgs...))
 }
 
+// SendAsync publishes one message and reports the outcome via callback
+// | SendAsync 异步发送一条消息，结果经回调报告。
 func (p *Producer) SendAsync(ctx context.Context, callback mq.AsyncSendCallback, message *mq.Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -92,6 +100,7 @@ func validateMessage(message *mq.Message) error {
 }
 
 // A non-OK result can still have a message ID; preserve it for reconciliation.
+// 非 OK 的结果也可能带消息 id；保留它以便对账。
 func sendResponse(result *primitive.SendResult, err error) (mq.SendResponse, error) {
 	var resp mq.SendResponse
 	if result != nil {
@@ -116,6 +125,7 @@ func (p *Producer) convertMessage(message *mq.Message) *primitive.Message {
 		msg.WithProperties(maps.Clone(message.Properties))
 	}
 	// Explicit fields take precedence over conflicting transport properties.
+	// 显式字段优先于冲突的传输属性。
 	if message.Tag != "" {
 		msg.WithTag(message.Tag)
 	}
@@ -128,7 +138,8 @@ func (p *Producer) convertMessage(message *mq.Message) *primitive.Message {
 	return msg
 }
 
-// rocketmq 默认delayLevel对应的秒数
+// delayLevels maps RocketMQ's default delay levels to their durations in
+// seconds | delayLevels 对应 RocketMQ 默认延迟级别的秒数。
 var delayLevels = [...]int{
 	1,    // level 1: 1s
 	5,    // level 2: 5s
@@ -151,13 +162,17 @@ var delayLevels = [...]int{
 }
 
 func (p *Producer) toDelayLevel(d time.Duration) int {
+	// Find the first level greater than or equal to the target duration
 	// 找到第一个大于等于目标值的级别
 	for i, level := range delayLevels {
 		if d <= time.Duration(level)*time.Second {
-			return i + 1 // 级别从1开始
+			// levels start at 1
+			// 级别从 1 开始
+			return i + 1
 		}
 	}
 
+	// Beyond the largest level, clamp to the largest
 	// 超过最大级别返回最大值
 	return len(delayLevels)
 }

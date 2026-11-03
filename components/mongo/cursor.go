@@ -6,15 +6,17 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// Cursor struct define
+// Cursor wraps a mongo.Cursor, decoding documents as they are iterated
+// | Cursor 包装 mongo.Cursor，在迭代时解码文档。
 type Cursor struct {
 	ctx    context.Context
 	cursor *mongo.Cursor
 	err    error
 }
 
-// Next gets the next document for this cursor. It returns true if there were no errors and the cursor has not been
-// exhausted.
+// Next gets the next document for this cursor and decodes it into result. It
+// returns true if there were no errors and the cursor has not been exhausted.
+// Next 取下一条文档并解码进 result。无错误且游标未耗尽时返回 true。
 func (c *Cursor) Next(result any) bool {
 	if c.err != nil {
 		return false
@@ -30,8 +32,11 @@ func (c *Cursor) Next(result any) bool {
 	return false
 }
 
-// All iterates the cursor and decodes each document into results. The results parameter must be a pointer to a slice.
-// recommend to use All() in struct Query or Aggregate
+// All iterates the cursor and decodes each document into results. The results
+// parameter must be a pointer to a slice. Prefer All() inside Query or
+// Aggregate.
+// All 遍历游标并把每条文档解码进 results。results 必须是切片指针。
+// 在 Query 或 Aggregate 中推荐使用 All()。
 func (c *Cursor) All(results any) error {
 	if c.err != nil {
 		return c.err
@@ -47,8 +52,10 @@ func (c *Cursor) All(results any) error {
 //	return c.cursor.ID()
 //}
 
-// Close closes this cursor. Next and TryNext must not be called after Close has been called.
-// When the cursor object is no longer in use, it should be actively closed
+// Close closes this cursor. Next and TryNext must not be called after Close.
+// When the cursor is no longer in use it should be closed explicitly.
+// Close 关闭游标。Close 之后不得再调用 Next 与 TryNext。
+// 游标不再使用时应主动关闭。
 func (c *Cursor) Close() error {
 	if c.err != nil {
 		return c.err
@@ -56,7 +63,8 @@ func (c *Cursor) Close() error {
 	return c.cursor.Close(c.ctx)
 }
 
-// Err return the last error of Cursor, if no error occurs, return nil
+// Err returns the cursor's last error, or nil if none occurred
+// | Err 返回游标的最后一个错误，无错误时返回 nil。
 func (c *Cursor) Err() error {
 	if c.err != nil {
 		return c.err

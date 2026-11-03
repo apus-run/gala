@@ -10,6 +10,9 @@ import (
 	"github.com/apus-run/gala/components/fileserver/internal/iox"
 )
 
+// Download implements fileserver.Downloader. The object's i-th byte is written
+// at offset i of w; the same holds for range downloads. On failure w may
+// already hold partial content; Download neither truncates nor closes w.
 // Download 实现 fileserver.Downloader。对象的第 i 个字节写到 w 的偏移 i 处，范围下载亦然。
 // 失败时 w 中可能已有部分内容；Download 不截断也不关闭 w。
 func (s *Store) Download(ctx context.Context, key string, w io.WriterAt, opts ...fileserver.DownloadOpt) error {
@@ -28,12 +31,14 @@ func (s *Store) Download(ctx context.Context, key string, w io.WriterAt, opts ..
 	if err != nil {
 		return err
 	}
+	// the Progress contract requires the callback to run outside the Store's
+	// locks; the read lock is already released when download returns.
 	// Progress 契约要求回调不在 Store 的锁内执行；download 返回时读锁已经释放。
 	report(ctx, do.Progress(), key, n, n)
 	return nil
 }
 
-// download 在 Store 的读锁内把范围内的字节写入 w，返回写入的字节数。锁在返回前释放。
+// download writes the in-range bytes into w under the Store's read lock and returns the bytes written. The lock is released before returning | download 在 Store 的读锁内把范围内的字节写入 w，返回写入的字节数。锁在返回前释放。
 func (s *Store) download(ctx context.Context, op, key string, w io.WriterAt, do fileserver.DownloadOptions) (int64, error) {
 	release, err := s.begin(ctx, op, key)
 	if err != nil {
@@ -66,6 +71,9 @@ func (s *Store) download(ctx context.Context, op, key string, w io.WriterAt, do 
 	return n, nil
 }
 
+// Read implements fileserver.Storage. The returned stream is bound to the file
+// opened at call time; the caller must close it. The stream does not depend on
+// the call's Context and is not cancelled after the method returns.
 // Read 实现 fileserver.Storage。返回的流绑定打开时的文件，调用方必须关闭它。
 // 流不依赖调用时的 Context，方法返回后它不会被取消。
 func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt) (io.ReadCloser, error) {
@@ -78,7 +86,7 @@ func (s *Store) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt
 
 var _ fileserver.Opener = (*Store)(nil)
 
-// Open 返回同一文件句柄上的内容与属性，后续覆盖或删除 Key 不改变已打开的视图。
+// Open returns content and attributes on one file handle; later overwrites or deletes of the Key do not change the opened view | Open 返回同一文件句柄上的内容与属性，后续覆盖或删除 Key 不改变已打开的视图。
 func (s *Store) Open(ctx context.Context, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
 	return s.open(ctx, "Open", key, opts...)
 }
@@ -115,6 +123,8 @@ func (s *Store) open(ctx context.Context, op, key string, opts ...fileserver.Rea
 	}, nil
 }
 
+// Stat implements fileserver.Storage. ContentType is empty and Metadata is
+// nil: this backend persists neither.
 // Stat 实现 fileserver.Storage。ContentType 为空，Metadata 为 nil：本后端不持久化这两项。
 func (s *Store) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, error) {
 	const op = "Stat"
@@ -141,6 +151,10 @@ func (s *Store) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, e
 	}, nil
 }
 
+// Remove implements fileserver.Storage. It returns nil when the object does
+// not exist or the Key points at a non-regular file such as a directory or a
+// device, leaving those entries untouched. The parent directory is synced per
+// the durability policy before returning.
 // Remove 实现 fileserver.Storage。对象不存在、或 Key 指向目录与设备等非常规文件时返回 nil，
 // 且不改动这些条目。返回前按耐久策略同步父目录。
 func (s *Store) Remove(ctx context.Context, key string) error {
@@ -154,6 +168,8 @@ func (s *Store) Remove(ctx context.Context, key string) error {
 	}
 	defer release()
 
+	// shares the same Key lock as publish: no publish may slip between Stat and
+	// Remove, otherwise this would delete the object just swapped in.
 	// 与 publish 共用同一把 Key 锁：Stat 与 Remove 之间不能插入一次发布，
 	// 否则这里会删掉刚刚换上去的新对象。
 	unlock := s.lockKey(key)
@@ -181,6 +197,9 @@ func (s *Store) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
+// openObject opens the regular file the key points at and returns that
+// handle's attributes. Non-regular files are treated as missing. The open
+// uses a non-blocking flag so a FIFO with no writer never blocks the caller.
 // openObject 打开 key 指向的普通文件并返回该句柄的属性。非常规文件视为不存在。
 // 使用非阻塞标志打开，避免 FIFO 在没有写者时阻塞调用方。
 func (s *Store) openObject(key string) (*os.File, os.FileInfo, error) {
@@ -200,6 +219,10 @@ func (s *Store) openObject(key string) (*os.File, os.FileInfo, error) {
 	return f, fi, nil
 }
 
+// objectReader binds a section reader to its file handle; Close closes the file.
+// The SectionReader additionally offers ReadAt (an optional capability outside
+// Read's contract): offsets are relative to the start of this Read's range and
+// do not move the sequential read position.
 // objectReader 把一个范围读取器与它的文件句柄绑定，Close 关闭文件。
 // SectionReader 另外提供 ReadAt（可选能力，不属于 Read 的契约）：偏移相对于本次 Read 的范围起点，且不移动顺序读取的位置。
 type objectReader struct {
@@ -207,7 +230,7 @@ type objectReader struct {
 	file *os.File
 }
 
-// Close 关闭底层文件。
+// Close closes the underlying file | Close 关闭底层文件。
 func (r *objectReader) Close() error {
 	return r.file.Close()
 }

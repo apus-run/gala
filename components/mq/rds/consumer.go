@@ -14,6 +14,11 @@ import (
 	"github.com/apus-run/gala/components/mq"
 )
 
+// Consumer consumes one topic as a Redis Streams consumer group: each worker
+// reads and claims deliveries, invokes the handler, and settles by ack or
+// dead-letter through Lua.
+// Consumer 以 Redis Streams 消费者组的方式消费一个主题：每个 worker 读取并
+// 认领投递、调用处理器，再通过 Lua 以 ack 或死信结算。
 type Consumer struct {
 	client          *redis.Client
 	opts            Options
@@ -29,8 +34,13 @@ type Consumer struct {
 
 var _ mq.Consumer = (*Consumer)(nil)
 
-// RegisterHandler sets the handler for Start; running workers keep its snapshot.
+// RegisterHandler sets the handler for Start; running workers keep its
+// snapshot.
+// RegisterHandler 设置 Start 使用的处理器；运行中的 worker 继续用其快照。
 func (c *Consumer) RegisterHandler(h mq.ConsumerHandler) { c.mu.Lock(); c.handler = h; c.mu.Unlock() }
+
+// Start creates the consumer group if missing and launches the scheduler and
+// workers | Start 创建（若缺失）消费者组并启动调度器与 worker。
 func (c *Consumer) Start() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -63,8 +73,11 @@ func (c *Consumer) Start() error {
 }
 
 // Close cancels polling and handlers, then waits for them to return. Handlers
-// must honor context and must not close their own consumer. Redis remains owned
-// by the application; group state and unacknowledged messages are retained.
+// must honor context and must not close their own consumer. Redis remains
+// owned by the application; group state and unacknowledged messages are
+// retained.
+// Close 取消轮询与处理器并等待它们返回。处理器必须尊重 context，且不得
+// 关闭自己的消费者。Redis 仍归应用所有；组状态与未确认消息都会保留。
 func (c *Consumer) Close() error {
 	c.mu.Lock()
 	c.closed = true
@@ -193,7 +206,9 @@ func (c *Consumer) process(ctx context.Context, owner string, handler mq.Consume
 	if attempt-1 >= int64(c.opts.maxRetries) {
 		return c.settle(ctx, owner, message, attempt, true, err.Error())
 	}
-	// Leave the entry pending. XAUTOCLAIM retries only this group, preserving its
-	// stable message ID and avoiding republishing to other groups.
+	// Leave the entry pending. XAUTOCLAIM retries only this group, preserving
+	// its stable message ID and avoiding republishing to other groups.
+	// 让条目保持 pending。XAUTOCLAIM 只在本组内重试，保持消息 id 稳定，
+	// 也避免向其他组重新发布。
 	return err
 }

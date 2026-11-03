@@ -9,6 +9,8 @@ import (
 
 // All coordination state is owned here. Network calls and callbacks never run
 // under mu. Key gates are acquired in sorted key order for batch commits.
+// 所有协调状态都在这里持有。网络调用与回调绝不在 mu 下运行。
+// 批量提交时按排序后的 key 顺序获取 key 闸门。
 type keyState struct {
 	refs       int
 	generation uint64
@@ -95,6 +97,8 @@ func (c *Cache) checkGeneration(t *ticket) error {
 
 // Called under the key gate. Task identities include generation, so new callers
 // cannot join old work without maintaining a second per-key flight pointer.
+// 在持有 key 闸门时调用。任务身份包含 generation，因此新调用者不会加入旧工作，
+// 也无需再维护一个按 key 的 flight 指针。
 func (c *Cache) invalidate(t *ticket, stopRefresh bool) {
 	c.mu.Lock()
 	t.state.generation++
@@ -122,6 +126,8 @@ func taskKey(kind string, ts []*ticket) string {
 
 // startTask implements JetCache's singleflight algorithm with bounded admission,
 // independent task references, cancellation isolation and generation fencing.
+// startTask 实现 JetCache 的 singleflight 算法，带有界准入、独立的任务引用、
+// 取消隔离与 generation 栅栏。
 func (c *Cache) startTask(parent context.Context, kind string, ts []*ticket, fn func(context.Context) (any, error), after func(error)) (*flight, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -144,7 +150,7 @@ func (c *Cache) startTask(parent context.Context, kind string, ts []*ticket, fn 
 	c.flights[id] = f
 	for _, t := range ts {
 		t.state.refs++
-	} // task references outlive all waiters
+	} // task references outlive all waiters | 任务引用比所有等待者活得更久
 	c.wg.Add(1)
 	go c.runTask(context.WithoutCancel(parent), id, ts, f, fn, after)
 	return f, nil
@@ -217,6 +223,9 @@ func safeCall(fn func() error) (err error) {
 // Close cancels and drains operations, shared tasks, refresh and observer workers.
 // It is idempotent and never closes application-owned backends. User callbacks
 // must cooperate and must not synchronously call Close or reenter this Cache.
+// Close 取消并排空操作、共享任务、刷新与观察者 worker。它是幂等的，
+// 且绝不关闭应用持有的后端。用户回调必须配合，不得同步调用 Close
+// 或重入本 Cache。
 func (c *Cache) Close() error {
 	c.mu.Lock()
 	c.cancel()

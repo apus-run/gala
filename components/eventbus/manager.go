@@ -8,9 +8,10 @@ import (
 	"sync"
 )
 
+// ErrManagerClosed is returned when using a closed Manager | 使用已关闭的 Manager 时返回 ErrManagerClosed。
 var ErrManagerClosed = errors.New("eventbus: manager is closed")
 
-// Manager manages multiple event buses and provides a global interface
+// Manager manages multiple event buses and provides a global interface | Manager 管理多条事件总线并提供一个全局接口。
 type Manager struct {
 	mu        sync.RWMutex
 	buses     map[string]PubSub
@@ -20,7 +21,7 @@ type Manager struct {
 	closed    bool
 }
 
-// NewManager creates a new event bus manager
+// NewManager creates a new event bus manager | NewManager 创建新的事件总线管理器。
 func NewManager(logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
@@ -33,7 +34,7 @@ func NewManager(logger *slog.Logger) *Manager {
 	}
 }
 
-// GetBus returns an event bus by name, creates it if it doesn't exist
+// GetBus returns an event bus by name, creates it if it doesn't exist | GetBus 按名字返回事件总线，不存在则创建。
 func (m *Manager) GetBus(name string) (PubSub, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -45,7 +46,8 @@ func (m *Manager) GetBus(name string) (PubSub, error) {
 		return nil, ErrManagerClosed
 	}
 
-	// Create new bus
+	// create a new bus
+	// 创建新总线
 	bus := NewEventBus(m.busLogger)
 	m.buses[name] = bus
 	m.logger.Info("Created new event bus", "name", name)
@@ -53,7 +55,7 @@ func (m *Manager) GetBus(name string) (PubSub, error) {
 	return bus, nil
 }
 
-// Global returns the global event bus
+// Global returns the global event bus | Global 返回全局事件总线。
 func (m *Manager) Global() (PubSub, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -63,7 +65,7 @@ func (m *Manager) Global() (PubSub, error) {
 	return m.global, nil
 }
 
-// Publish publishes an event to a specific bus
+// Publish publishes an event to a specific bus | Publish 向指定总线发布事件。
 func (m *Manager) Publish(ctx context.Context, busName string, event *Event) error {
 	bus, err := m.GetBus(busName)
 	if err != nil {
@@ -72,7 +74,7 @@ func (m *Manager) Publish(ctx context.Context, busName string, event *Event) err
 	return bus.Publish(ctx, event)
 }
 
-// PublishAsync dispatches an event asynchronously on a named bus.
+// PublishAsync dispatches an event asynchronously on a named bus | PublishAsync 在命名总线上异步分发事件。
 func (m *Manager) PublishAsync(ctx context.Context, busName string, event *Event) error {
 	bus, err := m.GetBus(busName)
 	if err != nil {
@@ -81,7 +83,7 @@ func (m *Manager) PublishAsync(ctx context.Context, busName string, event *Event
 	return bus.PublishAsync(ctx, event)
 }
 
-// PublishAndWait dispatches an event concurrently and waits on a named bus.
+// PublishAndWait dispatches an event concurrently and waits on a named bus | PublishAndWait 在命名总线上并发分发事件并等待完成。
 func (m *Manager) PublishAndWait(ctx context.Context, busName string, event *Event) error {
 	bus, err := m.GetBus(busName)
 	if err != nil {
@@ -90,7 +92,7 @@ func (m *Manager) PublishAndWait(ctx context.Context, busName string, event *Eve
 	return bus.PublishAndWait(ctx, event)
 }
 
-// PublishGlobal publishes an event to the global bus
+// PublishGlobal publishes an event to the global bus | PublishGlobal 向全局总线发布事件。
 func (m *Manager) PublishGlobal(ctx context.Context, event *Event) error {
 	bus, err := m.Global()
 	if err != nil {
@@ -99,7 +101,7 @@ func (m *Manager) PublishGlobal(ctx context.Context, event *Event) error {
 	return bus.Publish(ctx, event)
 }
 
-// PublishGlobalAsync dispatches an event asynchronously on the global bus.
+// PublishGlobalAsync dispatches an event asynchronously on the global bus | PublishGlobalAsync 在全局总线上异步分发事件。
 func (m *Manager) PublishGlobalAsync(ctx context.Context, event *Event) error {
 	bus, err := m.Global()
 	if err != nil {
@@ -108,7 +110,7 @@ func (m *Manager) PublishGlobalAsync(ctx context.Context, event *Event) error {
 	return bus.PublishAsync(ctx, event)
 }
 
-// PublishGlobalAndWait dispatches concurrently and waits on the global bus.
+// PublishGlobalAndWait dispatches concurrently and waits on the global bus | PublishGlobalAndWait 在全局总线上并发分发并等待完成。
 func (m *Manager) PublishGlobalAndWait(ctx context.Context, event *Event) error {
 	bus, err := m.Global()
 	if err != nil {
@@ -117,7 +119,7 @@ func (m *Manager) PublishGlobalAndWait(ctx context.Context, event *Event) error 
 	return bus.PublishAndWait(ctx, event)
 }
 
-// Subscribe subscribes to events on a specific bus
+// Subscribe subscribes to events on a specific bus | Subscribe 订阅指定总线上的事件。
 func (m *Manager) Subscribe(busName string, eventType EventType, handler Handler) error {
 	bus, err := m.GetBus(busName)
 	if err != nil {
@@ -126,7 +128,7 @@ func (m *Manager) Subscribe(busName string, eventType EventType, handler Handler
 	return bus.Subscribe(eventType, handler)
 }
 
-// SubscribeGlobal subscribes to events on the global bus
+// SubscribeGlobal subscribes to events on the global bus | SubscribeGlobal 订阅全局总线上的事件。
 func (m *Manager) SubscribeGlobal(eventType EventType, handler Handler) error {
 	bus, err := m.Global()
 	if err != nil {
@@ -135,7 +137,7 @@ func (m *Manager) SubscribeGlobal(eventType EventType, handler Handler) error {
 	return bus.Subscribe(eventType, handler)
 }
 
-// Close closes all event buses
+// Close closes all event buses | Close 关闭所有事件总线。
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	if m.closed {
@@ -166,7 +168,7 @@ func (m *Manager) Close() error {
 	return errors.Join(errs...)
 }
 
-// GetStats returns statistics for all buses
+// GetStats returns statistics for all buses | GetStats 返回所有总线的统计信息。
 func (m *Manager) GetStats() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

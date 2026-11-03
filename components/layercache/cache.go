@@ -1,6 +1,32 @@
-// Package layercache implements the JetCache byte-cache architecture: Local →
-// Remote → origin, shared slow paths, typed views, batch misses and maintenance.
-// It fences same-instance stale fills; it does not provide database consistency.
+// Package layercache implements a JetCache-style two-level cache (Local → Remote → origin) | 实现 JetCache 风格的两级缓存（Local → Remote → 源）.
+//
+// # Notes | 说明
+//
+// Adapted from JetCache-Go; see NOTICE.md. A Cache is a non-generic
+// coordinator over serialized entries: the namespace is required, the local
+// level defaults to a bounded built-in store, and the remote backend is
+// application-supplied. Once deduplicates concurrent loads of the same key;
+// background refresh and NX/XX writes need optional backend capabilities
+// (LeaseRemote, ConditionalRemote). Events and Stats are advisory. It fences
+// same-instance stale fills; it does not provide database consistency.
+// 改编自 JetCache-Go（见 NOTICE.md）。Cache 是非泛型的序列化条目协调器：
+// namespace 必填，本地层默认内置有界存储，远端由应用提供。Once 对同 key
+// 的并发加载去重；后台刷新与 NX/XX 写入依赖可选后端能力（LeaseRemote、
+// ConditionalRemote）。Event 与 Stats 是通告性质。它只防本实例的过期回填，
+// 不提供数据库一致性。
+//
+// # Features | 功能
+//
+// - Get/Set/Once read-through with shared slow paths | 读穿透与共享慢路径
+// - Typed[V] and T[K, V] typed views, batch MGet | 泛型视图与批量回源
+// - Negative caching, TTL jitter, background refresh | 空值缓存、TTL 抖动、后台刷新
+// - Pluggable Local/Remote/Codec, events and stats | 可插拔后端、事件与统计
+//
+// # Example | 示例
+//
+//	c, err := layercache.New(layercache.WithNamespace("order"), layercache.WithRemote(r))
+//	var name string
+//	err = c.Once(ctx, "u:42", layercache.Do(loadName), layercache.Value(&name))
 package layercache
 
 import (
@@ -20,6 +46,8 @@ import (
 // Cache is a non-generic serialized coordinator. Typed views share this instance.
 // Construct with New; the zero value is not usable. Do not copy it.
 // Supplied backends and their connections remain application-owned.
+// Cache 是非泛型的序列化协调器。Typed 视图共享同一实例。请用 New 构造，
+// 零值不可用，不要拷贝。传入的后端及其连接仍归应用所有。
 type Cache struct {
 	mu      sync.Mutex
 	states  map[string]*keyState
@@ -38,6 +66,8 @@ type Cache struct {
 
 // New assembles and validates options before allocating resources. Namespace is
 // required; a bounded local cache is provided by default. Options may be reused.
+// New 在分配资源前组装并校验选项。namespace 必填；默认提供有界本地缓存。
+// Options 可复用。
 func New(opts ...Option) (*Cache, error) {
 	for i, opt := range opts {
 		if nilLike(opt) {
@@ -72,9 +102,13 @@ func New(opts ...Option) (*Cache, error) {
 
 // Get only reads caches and decodes into dst. Nil dst probes an envelope without
 // decoding its business payload. A non-nil destination must be a non-nil pointer.
+// Get 只读缓存并解码到 dst。dst 为 nil 时仅探测信封、不解码业务负载；
+// 非 nil 目标必须是非 nil 指针。
 func (c *Cache) Get(ctx context.Context, key string, dst any) error {
 	return c.get(ctx, key, dst, false)
 }
+
+// GetSkippingLocal bypasses L1 and reads L2 only | GetSkippingLocal 跳过本地层，仅读远端。
 func (c *Cache) GetSkippingLocal(ctx context.Context, key string, dst any) error {
 	return c.get(ctx, key, dst, true)
 }
@@ -103,6 +137,8 @@ func (c *Cache) get(ctx context.Context, key string, dst any, skip bool) error {
 	}
 	return c.decodeResult(k, e.Data, dst)
 }
+
+// Exists reports key presence via a probe Get | Exists 通过探测 Get 判断 key 是否存在。
 func (c *Cache) Exists(ctx context.Context, key string) (bool, error) {
 	err := c.Get(ctx, key, nil)
 	if errors.Is(err, ErrMiss) || c.IsNotFound(err) {
@@ -113,6 +149,8 @@ func (c *Cache) Exists(ctx context.Context, key string) (bool, error) {
 
 // Set uses Value(v) or Do(fn), with optional TTL/NX/XX/SkipLocal/Refresh controls.
 // A rejected condition returns ErrNotStored and never publishes the candidate L1.
+// Set 使用 Value(v) 或 Do(fn)，可选 TTL/NX/XX/SkipLocal/Refresh 控制。
+// 条件被拒绝时返回 ErrNotStored，且绝不发布候选的 L1 值。
 func (c *Cache) Set(ctx context.Context, key string, opts ...ItemOption) error {
 	done, err := c.begin(ctx)
 	if err != nil {
@@ -168,7 +206,11 @@ func (c *Cache) Set(ctx context.Context, key string, opts ...ItemOption) error {
 	return nil
 }
 
+// Delete removes the key from local and remote | Delete 从本地与远端删除 key。
 func (c *Cache) Delete(ctx context.Context, key string) error { return c.invalidateKey(ctx, key, true) }
+
+// InvalidateLocal removes the key from the local level only
+// | InvalidateLocal 仅从本地层删除 key。
 func (c *Cache) InvalidateLocal(ctx context.Context, key string) error {
 	return c.invalidateKey(ctx, key, false)
 }
@@ -206,6 +248,9 @@ func (c *Cache) invalidateKey(ctx context.Context, key string, remote bool) erro
 // Once follows JetCache: L1 fast path, shared double-check of L1/L2, then Do and
 // write-back. Every waiter decodes independently. Equal keys must use compatible
 // loader semantics; skip-local, TTL and conditional modes use separate flights.
+// Once 遵循 JetCache：L1 快路径，L1/L2 共享二次检查，然后 Do 并回写。
+// 每个等待者独立解码。相同 key 必须使用兼容的加载语义；skip-local、TTL 与
+// 条件模式使用不同的 flight。
 func (c *Cache) Once(ctx context.Context, key string, opts ...ItemOption) error {
 	done, err := c.begin(ctx)
 	if err != nil {
@@ -317,6 +362,9 @@ func (c *Cache) backfill(ctx context.Context, t *ticket, data []byte, i ItemOpti
 	}
 	return c.commitEntry(ctx, t, data, i, false)
 }
+
+// IsNotFound reports whether err is a negative-cache hit, honoring the
+// configured ErrNotFound | IsNotFound 判断 err 是否为空值缓存命中，含配置的 ErrNotFound。
 func (c *Cache) IsNotFound(err error) bool {
 	if errors.Is(err, ErrCorrupt) {
 		return false
@@ -334,6 +382,8 @@ func (c *Cache) report(err error) {
 		c.opts.errorHandler(err)
 	}
 }
+
+// CacheType reports which levels are configured | CacheType 报告配置了哪些层级。
 func (c *Cache) CacheType() string {
 	if c.local != nil && c.remote != nil {
 		return TypeBoth
@@ -353,5 +403,8 @@ func (c *Cache) decodeResult(key string, data []byte, dst any) error {
 }
 
 // Namespace and SourceID identify this coordinator when filtering sync events.
+// Namespace 与 SourceID 在过滤同步事件时标识本协调器。
 func (c *Cache) Namespace() string { return c.opts.namespace }
-func (c *Cache) SourceID() string  { return c.opts.sourceID }
+
+// SourceID identifies this coordinator instance | SourceID 标识本协调器实例。
+func (c *Cache) SourceID() string { return c.opts.sourceID }

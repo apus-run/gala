@@ -12,6 +12,10 @@ import (
 	"github.com/apus-run/gala/components/mq"
 )
 
+// Producer publishes to Redis Streams through the borrowed client, with
+// delayed messages routed through the per-topic sorted set.
+// Producer 通过借用的 client 向 Redis Streams 发布，延迟消息走按主题的
+// sorted set。
 type Producer struct {
 	client  redis.Cmdable
 	timeout time.Duration
@@ -26,6 +30,7 @@ type Producer struct {
 var _ mq.Producer = (*Producer)(nil)
 
 // Start is an idempotent lifecycle hook; the client connects on demand.
+// Start 是幂等的生命周期钩子；client 按需建连。
 func (p *Producer) Start() error { return p.checkOpen() }
 
 func (p *Producer) checkOpen() error {
@@ -37,8 +42,11 @@ func (p *Producer) checkOpen() error {
 	return nil
 }
 
-// Close cancels and waits for accepted calls/callbacks, without closing Redis.
-// Callbacks must return promptly and must not call Close on this producer.
+// Close cancels and waits for accepted calls/callbacks, without closing
+// Redis. Callbacks must return promptly and must not call Close on this
+// producer.
+// Close 取消并等待已接受的调用/回调，不关闭 Redis。回调必须及时返回，
+// 且不得在该生产者上调用 Close。
 func (p *Producer) Close() error {
 	p.mu.Lock()
 	p.closed = true
@@ -82,6 +90,7 @@ func (p *Producer) publish(ctx context.Context, m prepared) (mq.SendResponse, er
 		return mq.SendResponse{}, ctxErr
 	}
 	// Socket deadlines can fire before the context timer is scheduled.
+	// socket 超时可能在 context 定时器调度之前就触发。
 	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return mq.SendResponse{}, context.DeadlineExceeded
 	}
@@ -90,12 +99,17 @@ func (p *Producer) publish(ctx context.Context, m prepared) (mq.SendResponse, er
 	}
 	return mq.SendResponse{MessageID: m.id}, nil
 }
+
+// Send publishes one message synchronously | Send 同步发送一条消息。
 func (p *Producer) Send(ctx context.Context, m *mq.Message) (mq.SendResponse, error) {
 	return p.SendBatch(ctx, []*mq.Message{m})
 }
 
-// SendBatch validates and snapshots the whole input before publishing. The batch
-// is not transactional: on error the response identifies the last known success.
+// SendBatch validates and snapshots the whole input before publishing. The
+// batch is not transactional: on error the response identifies the last known
+// success.
+// SendBatch 发布前先校验并快照全部输入。批次不是事务的：
+// 出错时响应标识最后一个已知成功。
 func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.SendResponse, error) {
 	if err := p.checkOpen(); err != nil {
 		return mq.SendResponse{}, err
@@ -130,6 +144,9 @@ func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.Se
 	}
 	return last, nil
 }
+
+// SendAsync publishes one message and reports the outcome via callback
+// | SendAsync 异步发送一条消息，结果经回调报告。
 func (p *Producer) SendAsync(ctx context.Context, callback mq.AsyncSendCallback, m *mq.Message) error {
 	if err := p.checkOpen(); err != nil {
 		return err

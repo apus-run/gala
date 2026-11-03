@@ -9,15 +9,23 @@ import (
 )
 
 const (
-	// maxRecipients 是 RFC 5321 §4.5.3.1.8 要求服务器至少支持的
-	// RCPT 数量；超出后各服务器行为不一，前置拒绝。
+	// maxRecipients is the RCPT count RFC 5321 §4.5.3.1.8 requires servers to
+	// accept at minimum; beyond it server behavior varies, so reject up front
+	// | maxRecipients 是 RFC 5321 §4.5.3.1.8 要求服务器至少支持的 RCPT 数量；
+	// 超出后各服务器行为不一，前置拒绝。
 	maxRecipients = 100
-	// maxTagPartLength 与 resend/ses 的 tag 规则对齐（SPEC D4）。
+	// maxTagPartLength aligns with the resend/ses tag rules (SPEC D4)
+	// | maxTagPartLength 与 resend/ses 的 tag 规则对齐（SPEC D4）。
 	maxTagPartLength = 256
-	// tagHeaderPrefix 是 Tags 映射的自定义头命名空间，归适配器所有。
+	// tagHeaderPrefix is the custom-header namespace Tags map into; it belongs
+	// to the adapter | tagHeaderPrefix 是 Tags 映射的自定义头命名空间，归适配器所有。
 	tagHeaderPrefix = "X-Tag-"
 )
 
+// smtpReservedHeaders adds, beyond the core common model, the headers owned by
+// this adapter or the transport chain. The core already rejects From/To/Cc/
+// Bcc/Reply-To/Subject/Content-Type/MIME-Version; keys here are likewise in
+// CanonicalMIMEHeaderKey form.
 // smtpReservedHeaders 补充核心公共模型之外，本适配器或传输链路
 // 拥有的 Header。核心已拒绝 From/To/Cc/Bcc/Reply-To/Subject/
 // Content-Type/MIME-Version；这里的 Key 同为 CanonicalMIMEHeaderKey 形式。
@@ -30,6 +38,10 @@ var smtpReservedHeaders = map[string]struct{}{
 	"Content-Disposition":       {},
 }
 
+// validateProviderMessage checks the stable input constraints of the SMTP
+// channel. Callers must run mail.Message.Validate first; the errors raised
+// here are likewise mail.ErrInvalidMessage failures that never reach the
+// Provider.
 // validateProviderMessage 检查 SMTP 通道的稳定输入约束。调用方必须先
 // 执行 mail.Message.Validate；这里的错误同样属于未调用 Provider 的
 // mail.ErrInvalidMessage。
@@ -84,6 +96,10 @@ func validateSMTPAddresses(msg mail.Message) error {
 	return nil
 }
 
+// validateSMTPAddress requires the email to be 7-bit ASCII (SPEC D8): it does
+// not rely on the server's SMTPUTF8 support, and internationalized domains
+// must be punycode-encoded by the app in advance. Display names are
+// unrestricted; go-mail encodes them per RFC 2047.
 // validateSMTPAddress 要求邮箱为 7-bit ASCII（SPEC D8）：不依赖服务器
 // SMTPUTF8 能力，国际化域名由应用预先 punycode 编码。显示名不受限，
 // go-mail 会按 RFC 2047 编码。
@@ -150,6 +166,8 @@ func validateMessageID(id string) error {
 	return nil
 }
 
+// validTagPart matches the resend/ses tag character set (SPEC D4); its shape
+// rules out header injection and non-token characters by construction.
 // validTagPart 与 resend/ses 的 tag 字符集一致（SPEC D4），由构造
 // 排除 Header 注入与非 token 字符。
 func validTagPart(value string) bool {
@@ -186,6 +204,10 @@ func isASCII(value string) bool {
 	return true
 }
 
+// isPrintableASCIIHeaderValue narrows, on top of the core validation (which
+// rejects C0/DEL), SMTP custom header values to printable ASCII plus space
+// and tab; non-ASCII text belongs in the Subject or body, where go-mail
+// handles the encoding.
 // isPrintableASCIIHeaderValue 在核心校验（拒绝 C0/DEL）之上进一步
 // 限定 SMTP 自定义头值为可打印 ASCII、空格与 Tab；非 ASCII 文本
 // 应放在 Subject 或正文中，由 go-mail 负责编码。

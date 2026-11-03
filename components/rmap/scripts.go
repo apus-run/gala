@@ -5,6 +5,7 @@ import "github.com/redis/go-redis/v9"
 var (
 	// luaAppend is the Lua script used to append an item to an array key and
 	// return its new value.
+	// luaAppend 追加项到数组 key 并返回新值的 Lua 脚本.
 	luaAppend = redis.NewScript(`
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
 
@@ -21,6 +22,7 @@ var (
 
 	// luaAppendUnique is the Lua script used to append an item to a set and return
 	// the result.
+	// luaAppendUnique 追加项到集合（仅去重追加）并返回结果的 Lua 脚本.
 	luaAppendUnique = redis.NewScript(`
 	  local v = redis.call("HGET", KEYS[1], ARGV[1])
 	  local newValues = {}
@@ -63,6 +65,7 @@ var (
 
 	// luaDelete is the Lua script used to delete a key and return its previous
 	// value.
+	// luaDelete 删除 key 并返回旧值的 Lua 脚本.
 	luaDelete = redis.NewScript(`
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
 	   redis.call("HDEL", KEYS[1], ARGV[1])
@@ -72,6 +75,7 @@ var (
 	`)
 
 	// luaIncr is the Lua script used to increment a key and return the new value.
+	// luaIncr 递增 key 并返回新值的 Lua 脚本.
 	luaIncr = redis.NewScript(`
 	   redis.call("HINCRBY", KEYS[1], ARGV[1], ARGV[2])
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
@@ -82,6 +86,7 @@ var (
 
 	// luaRemove is the Lua script used to remove items from an array value and
 	// return the result along with a flag indicating if any value was removed.
+	// luaRemove 从数组值中移除项并返回结果及是否有移除标志的 Lua 脚本.
 	luaRemove = redis.NewScript(`
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
 	   local removed = false
@@ -125,6 +130,7 @@ var (
 	`)
 
 	// luaReset is the Lua script used to reset the map.
+	// luaReset 重置（清空）整个 map 的 Lua 脚本.
 	luaReset = redis.NewScript(`
 	   redis.call("DEL", KEYS[1])
 	   redis.call("PUBLISH", KEYS[2], "reset:*")
@@ -133,6 +139,8 @@ var (
 	// luaSet is the Lua script used to set a key and return its previous value.  We
 	// use Lua scripts to publish notifications "at the same time" and preserve the
 	// order of operations (scripts are run atomically within Redis).
+	// luaSet 设置 key 并返回旧值的 Lua 脚本。用 Lua 脚本可以“同时”发布通知并保持
+	// 操作顺序（脚本在 Redis 内原子执行）.
 	luaSet = redis.NewScript(`
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
 	   redis.call("HSET", KEYS[1], ARGV[1], ARGV[2])
@@ -142,6 +150,7 @@ var (
 	`)
 
 	// luaTestAndDel is the Lua script used to delete a key if it has a specific value.
+	// luaTestAndDelete 在 key 具有特定值时删除它的 Lua 脚本.
 	luaTestAndDel = redis.NewScript(`
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
 	   if v == ARGV[2] then
@@ -154,6 +163,7 @@ var (
 
 	// luaTestAndReset is the Lua script used to reset the map if all the given keys
 	// have the given values.
+	// luaTestAndReset 在所有给定 key 都具有给定值时重置 map 的 Lua 脚本.
 	luaTestAndReset = redis.NewScript(`
 	  local hash = KEYS[1]
 	  local n = (#ARGV - 1) / 2
@@ -170,6 +180,7 @@ var (
 	`)
 
 	// luaTestAndSet is the Lua script used to set a key if it has a specific value.
+	// luaTestAndSet 在 key 具有特定值时设置它的 Lua 脚本.
 	luaTestAndSet = redis.NewScript(`
 	   local v = redis.call("HGET", KEYS[1], ARGV[1])
 	   if v == ARGV[2] then
@@ -181,6 +192,7 @@ var (
 	`)
 
 	// luaSetIfNotExists is the Lua script used to set a key if it does not exist.
+	// luaSetIfNotExists 在 key 不存在时设置它的 Lua 脚本.
 	luaSetIfNotExists = redis.NewScript(`
         local v = redis.call("HGET", KEYS[1], ARGV[1])
         if not v then

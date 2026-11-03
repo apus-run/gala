@@ -15,18 +15,22 @@ const (
 	ownerX   fs.FileMode = 0o100
 )
 
-// CopyOption tunes Copy.
+// CopyOption tunes Copy | CopyOption 用于调整 Copy 的行为.
 type CopyOption struct {
-	// Sync flushes every copied file to stable storage before moving on.
+	// Sync flushes every copied file to stable storage before moving on
+	// Sync 在继续下一个文件前把每个已复制文件刷盘.
 	Sync bool
 
 	// Mode is the permission given to copied files and created directories
 	// (directories keep at least the owner's search bit). Zero keeps the
 	// permission of the source.
+	// Mode 是复制出的文件与新建目录的权限（目录至少保留属主的执行位）。
+	// 零值表示沿用源文件的权限。
 	Mode fs.FileMode
 }
 
 // Copy copies the file or directory src to dst, creating missing parents.
+// Copy 把文件或目录 src 复制到 dst，缺失的父目录会被创建。
 //
 //	Copy("/a/f", "/b/g")     // file to a new or existing file
 //	Copy("/a/f", "/b")       // /b is an existing directory: copies to /b/f
@@ -35,6 +39,8 @@ type CopyOption struct {
 //
 // Symbolic links and special files found inside a directory are skipped. Copying
 // a path onto itself is a no-op; copying a directory into itself is an error.
+// 目录中出现的符号链接与特殊文件会被跳过。把路径复制到自身是无操作；
+// 把目录复制进自身是错误。
 func Copy(src, dst string, opt ...CopyOption) error {
 	var o CopyOption
 	if len(opt) > 0 {
@@ -66,7 +72,7 @@ func Copy(src, dst string, opt ...CopyOption) error {
 
 func copyFile(src, dst string, si fs.FileInfo, o CopyOption) (err error) {
 	if di, e := os.Stat(dst); e == nil && os.SameFile(si, di) {
-		return nil // copying a file onto itself would truncate it
+		return nil // copying a file onto itself would truncate it | 复制文件到自身会把文件清空
 	}
 	in, err := os.Open(src)
 	if err != nil {
@@ -102,6 +108,7 @@ func copyDir(src, dst string, si fs.FileInfo, o CopyOption) error {
 	_, statErr := os.Stat(dst)
 	created := errors.Is(statErr, fs.ErrNotExist)
 	// Created owner-writable so a read-only source can still be filled in.
+	// 先建成属主可写，这样只读的源目录也能被填充。
 	if err := os.MkdirAll(dst, perm|ownerRWX); err != nil {
 		return err
 	}
@@ -113,7 +120,7 @@ func copyDir(src, dst string, si fs.FileInfo, o CopyOption) error {
 	for _, e := range entries {
 		t := e.Type()
 		if !t.IsDir() && !t.IsRegular() {
-			continue // symlinks and special files
+			continue // symlinks and special files | 符号链接与特殊文件
 		}
 		info, err := e.Info()
 		if err != nil {
@@ -131,6 +138,7 @@ func copyDir(src, dst string, si fs.FileInfo, o CopyOption) error {
 	}
 	if created {
 		// Without the owner search bit the directory cannot be entered at all.
+		// 没有属主执行位，目录将完全无法进入。
 		return os.Chmod(dst, perm|ownerX)
 	}
 	return nil
@@ -143,7 +151,7 @@ func permOf(si fs.FileInfo, o CopyOption) fs.FileMode {
 	return si.Mode().Perm()
 }
 
-// isInside reports whether dst is src or lies beneath it.
+// isInside reports whether dst is src or lies beneath it | isInside 判断 dst 是否为 src 或位于 src 之下.
 func isInside(src, dst string) bool {
 	s, err1 := filepath.Abs(src)
 	d, err2 := filepath.Abs(dst)

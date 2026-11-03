@@ -8,12 +8,15 @@ import (
 )
 
 const (
-	// DefaultBatchConcurrency 是批量传输的默认并发度。
+	// Default concurrency for batch transfers | 批量传输的默认并发度。
 	DefaultBatchConcurrency = 4
-	// MaxBatchConcurrency 是批量传输允许的最大并发度。
+	// Maximum concurrency allowed for batch transfers | 批量传输允许的最大并发度。
 	MaxBatchConcurrency = 64
 )
 
+// UploadTask is one item of a batch upload. Open is called only when the item
+// actually starts, to avoid holding every file at once. The returned
+// ReadCloser is closed by UploadAll.
 // UploadTask 是一次批量上传中的一项。Open 在该项真正开始时才调用，避免同时持有全部文件。
 // 返回的 ReadCloser 由 UploadAll 关闭。
 type UploadTask struct {
@@ -22,6 +25,8 @@ type UploadTask struct {
 	Opts []UploadOpt
 }
 
+// DownloadTask is one item of a batch download. W is owned by the caller;
+// DownloadAll does not close it.
 // DownloadTask 是一次批量下载中的一项。W 由调用方拥有，DownloadAll 不关闭它。
 type DownloadTask struct {
 	Key  string
@@ -29,6 +34,8 @@ type DownloadTask struct {
 	Opts []DownloadOpt
 }
 
+// Result is the outcome of one item in a batch transfer. The slice keeps the
+// input order and length.
 // Result 是批量传输中一项的结果。切片与输入同序、同长。
 type Result struct {
 	Index int
@@ -36,6 +43,7 @@ type Result struct {
 	Err   error
 }
 
+// BatchOpt configures a single batch call.
 // BatchOpt 配置一次批量调用。
 type BatchOpt interface {
 	applyBatch(*batchConfig)
@@ -50,16 +58,22 @@ type batchOptFunc func(*batchConfig)
 
 func (f batchOptFunc) applyBatch(c *batchConfig) { f(c) }
 
+// WithConcurrency sets the number of tasks running at once. Defaults to
+// DefaultBatchConcurrency; the range is 1 to MaxBatchConcurrency.
 // WithConcurrency 设置同时进行的任务数，默认 DefaultBatchConcurrency，范围 1 到 MaxBatchConcurrency。
 func WithConcurrency(n int) BatchOpt {
 	return batchOptFunc(func(c *batchConfig) { c.concurrency = n })
 }
 
+// WithFailFast cancels the remaining items after one item fails. Items that
+// have not started yet return the context cancellation error.
 // WithFailFast 在某一项失败后取消其余项。尚未开始的项返回上下文的取消错误。
 func WithFailFast() BatchOpt {
 	return batchOptFunc(func(c *batchConfig) { c.failFast = true })
 }
 
+// UploadAll uploads every task. By default one item's failure does not affect
+// the others. All worker goroutines exit before the function returns.
 // UploadAll 上传全部任务。一项的失败默认不影响其他项。
 // 所有工作协程在函数返回前退出。
 func UploadAll(ctx context.Context, u Uploader, tasks []UploadTask, opts ...BatchOpt) []Result {
@@ -75,6 +89,9 @@ func UploadAll(ctx context.Context, u Uploader, tasks []UploadTask, opts ...Batc
 	})
 }
 
+// DownloadAll downloads every task. By default one item's failure does not
+// affect the others. All worker goroutines exit before the function returns.
+// W is never closed.
 // DownloadAll 下载全部任务。一项的失败默认不影响其他项。
 // 所有工作协程在函数返回前退出。W 不会被关闭。
 func DownloadAll(ctx context.Context, d Downloader, tasks []DownloadTask, opts ...BatchOpt) []Result {
@@ -126,6 +143,8 @@ func failedResults(keys []string, err error) []Result {
 	return out
 }
 
+// runBatch returns results in input order. work is called at most once per
+// index and may be called concurrently.
 // runBatch 按输入顺序返回结果。work 对每个下标最多调用一次，并且可以并发调用。
 func runBatch(ctx context.Context, keys []string, opts []BatchOpt, work func(context.Context, int) error) []Result {
 	results := make([]Result, len(keys))

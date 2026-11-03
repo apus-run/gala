@@ -1,11 +1,18 @@
+// publish demonstrates hook in a realistic business flow: an "article
+// published" event driving a processing chain.
 // publish 演示 hook 在真实业务里的用法：一条“文章发布”事件驱动的处理链。
 //
+// Validation, word filtering, the core publish and the audit log queue by
+// Priority; validation failure skips Next() and stops the whole chain
+// (stopping is shaped like Next, not like error); a TaggedHook adds a bonus
+// handler for articles tagged vip; Trigger's one-off handler does the final
+// notification — it never runs when the chain was intercepted.
 // 校验、敏感词过滤、核心发布、审计日志按 Priority 排队执行；
 // 校验失败不调 Next() 直接拦下整条链（停止是 Next 形状的，不是 error 形状的）；
 // TaggedHook 给带 vip 标签的文章追加加积分 handler；
 // Trigger 的临时 handler 做一次性收尾——链被拦截时它自然不会执行。
 //
-// 运行：go run ./examples/publish
+// Run | 运行：go run ./examples/publish
 package main
 
 import (
@@ -16,7 +23,8 @@ import (
 	"github.com/apus-run/gala/components/hook"
 )
 
-// ArticleEvent 文章发布事件：嵌入 hook.Event 获得 Next 链控制权
+// ArticleEvent is the article-published event; embedding hook.Event grants
+// Next-based chain control | ArticleEvent 文章发布事件：嵌入 hook.Event 获得 Next 链控制权.
 type ArticleEvent struct {
 	hook.Event
 
@@ -27,7 +35,8 @@ type ArticleEvent struct {
 	Reason string
 }
 
-// Tags 实现 hook.Tagger：事件的标签决定哪些 TaggedHook 的 handler 会触发
+// Tags implements hook.Tagger: the event's tags decide which TaggedHook
+// handlers fire | Tags 实现 hook.Tagger：事件的标签决定哪些 TaggedHook 的 handler 会触发。
 func (e *ArticleEvent) Tags() []string {
 	if e.IsVIP {
 		return []string{"vip"}
@@ -38,8 +47,9 @@ func (e *ArticleEvent) Tags() []string {
 func main() {
 	publish := &hook.Hook[*ArticleEvent]{}
 
-	auditBroken := false // 最后一个场景切到 true，演示 error 上浮
+	auditBroken := false // flipped in the last scenario to show error bubbling | 最后一个场景切到 true，演示 error 上浮
 
+	// Lower Priority runs first: validate earliest, audit last
 	// Priority 越小越先执行：校验最先，审计最后
 	publish.Bind(&hook.Handler[*ArticleEvent]{
 		Id:       "validate",
@@ -47,7 +57,7 @@ func main() {
 		Func: func(e *ArticleEvent) error {
 			if strings.TrimSpace(e.Title) == "" {
 				e.Status, e.Reason = "rejected", "标题不能为空"
-				return nil // 不调 Next：拦截整条链
+				return nil // skip Next: intercept the whole chain | 不调 Next：拦截整条链
 			}
 			fmt.Printf("[validate] ok: %q\n", e.Title)
 			return e.Next()
@@ -67,6 +77,7 @@ func main() {
 		},
 	})
 
+	// Core publish (default Priority 0; equal priorities run in bind order)
 	// 核心发布（默认 Priority 0，同优先级按注册顺序）
 	publish.BindFunc(func(e *ArticleEvent) error {
 		e.Status = "published"
@@ -74,6 +85,7 @@ func main() {
 		return e.Next()
 	})
 
+	// VIP-only handler: same hook, active only for events tagged vip
 	// VIP 专属 handler：挂在同一个 hook 上，但只对带 vip 标签的事件生效
 	vip := hook.NewTaggedHook(publish, "vip")
 	vip.BindFunc(func(e *ArticleEvent) error {
@@ -87,16 +99,16 @@ func main() {
 		Func: func(e *ArticleEvent) error {
 			fmt.Printf("[audit] %s -> %s\n", e.Author, e.Status)
 			if auditBroken {
-				return errors.New("审计写入失败") // error 只上浮，已发生的处理不会回滚
+				return errors.New("审计写入失败") // the error only bubbles up; work already done is not rolled back | error 只上浮，已发生的处理不会回滚
 			}
 			return e.Next()
 		},
 	})
 
 	scenarios := []struct {
-		name        string
-		event       *ArticleEvent
-		breakAudit  bool
+		name       string
+		event      *ArticleEvent
+		breakAudit bool
 	}{
 		{"VIP 正常发布", &ArticleEvent{Title: "Go 泛型实战", Author: "ada", IsVIP: true}, false},
 		{"普通作者正常发布", &ArticleEvent{Title: "Hello Hook", Author: "bob"}, false},
@@ -109,6 +121,8 @@ func main() {
 		auditBroken = s.breakAudit
 
 		err := publish.Trigger(s.event,
+			// One-off handler: this trigger only; never runs when the chain was
+			// intercepted or interrupted earlier
 			// 一次性 handler：仅本次触发生效；链在前面被拦截/中断时不会执行
 			func(e *ArticleEvent) error {
 				fmt.Printf("[notify] %q 最终状态: %s\n", e.Title, e.Status)

@@ -25,6 +25,8 @@ func (c *Cache) incr(n int) {
 		c.metrics[n].Add(1)
 	}
 }
+
+// Stats returns a snapshot of the cache counters | Stats 返回缓存计数器的快照.
 func (c *Cache) Stats() Stats {
 	return Stats{LocalHits: c.metrics[statLocalHit].Load(), LocalMisses: c.metrics[statLocalMiss].Load(), RemoteHits: c.metrics[statRemoteHit].Load(), RemoteMisses: c.metrics[statRemoteMiss].Load(), Loads: c.metrics[statLoad].Load(), LoadErrors: c.metrics[statLoadError].Load(), Refreshes: c.metrics[statRefresh].Load(), RefreshErrors: c.metrics[statRefreshError].Load(), DroppedEvents: c.metrics[statDroppedEvent].Load()}
 }
@@ -36,9 +38,11 @@ type refreshTask struct {
 	busy       bool
 }
 
+// TaskSize reports the number of registered refresh tasks | TaskSize 返回已注册刷新任务数。
 func (c *Cache) TaskSize() int { c.mu.Lock(); defer c.mu.Unlock(); return len(c.refresh) }
 
 // Caller holds the key gate. Never retain the caller's output pointer in a task.
+// 调用者持有 key 闸门。绝不能在任务里保留调用方的输出指针。
 func (c *Cache) registerLocked(key string, i ItemOptions) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -147,6 +151,8 @@ func (c *Cache) dispatchRefresh(slots chan struct{}) {
 	c.mu.Unlock()
 	// Waiting for a slot is cancellable and never holds mu. This bounds work
 	// without dropping all but the first few keys of every refresh tick.
+	// 等槽位可取消且绝不持有 mu。这样既限制工作量，又不会在每次刷新周期
+	// 只留前几个 key 而丢掉其余。
 	for _, job := range jobs {
 		select {
 		case slots <- struct{}{}:
@@ -201,6 +207,8 @@ func (c *Cache) refreshOne(ctx context.Context, t *ticket, job *refreshTask, i I
 		op, cancel := context.WithTimeout(ctx, c.opts.remoteTimeout)
 		// A reserved domain cannot collide with data keys, which start with the
 		// decimal namespace length. Lease expiry, not unconditional DEL, releases it.
+		// 保留域不会与数据 key 冲突——数据 key 以十进制 namespace 长度开头。
+		// 释放靠租约过期，而不是无条件 DEL。
 		deadline, acquired, err := remote.AcquireLease(op, "\x00layercache:refresh:"+t.key, c.opts.sourceID, c.opts.refreshInterval)
 		if x := c.contextError(op); x != nil {
 			err = x
@@ -249,6 +257,8 @@ func (c *Cache) refreshOne(ctx context.Context, t *ticket, job *refreshTask, i I
 
 // Follower synchronization is a publication too: older reads/loaders must not
 // overwrite the observed L2 state. A miss clears L1 without creating a negative.
+// 从节点同步同样是一次发布：更旧的读/加载器不得覆盖已观测到的 L2 状态。
+// 未命中只清 L1，不写入空值。
 func (c *Cache) refreshLocal(ctx context.Context, t *ticket) error {
 	e, readErr := c.readCache(ctx, t, true)
 	if readErr != nil && !errors.Is(readErr, ErrMiss) {
@@ -272,6 +282,8 @@ func (c *Cache) refreshLocal(ctx context.Context, t *ticket) error {
 
 // Absence is a valid refreshed state even with negative storage disabled.
 // Remove the superseded positive entry while retaining the refresh registration.
+// 即使关闭了空值存储，"不存在"也是合法的刷新结果。移除被取代的正值条目，
+// 同时保留刷新注册。
 func (c *Cache) refreshAbsent(ctx context.Context, t *ticket) error {
 	if err := c.lockKey(ctx, t); err != nil {
 		return err

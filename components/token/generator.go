@@ -13,17 +13,24 @@ import (
 )
 
 const (
+	// DefaultSimpleLength is the default length of simple tokens | simple 风格的默认长度.
 	DefaultSimpleLength = 16
-	TiktokTokenLength   = 11
-	TiktokCharset       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	HashRandomBytesLen  = 16
-	TimestampRandomLen  = 8
+	// TiktokTokenLength is the length of tiktok tokens | tiktok 风格的长度.
+	TiktokTokenLength = 11
+	// TiktokCharset is the alphabet for random strings | 随机串的字符表.
+	TiktokCharset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	// HashRandomBytesLen is the random byte count fed into hash tokens | hash 风格的随机字节数.
+	HashRandomBytesLen = 16
+	// TimestampRandomLen is the random byte count of timestamp tokens | timestamp 风格的随机字节数.
+	TimestampRandomLen = 8
 )
 
+// NewTokenGenerator creates a generator from options | NewTokenGenerator 从选项创建 TokenGenerator.
 func NewTokenGenerator[T any](opts ...option.Option[TokenConfig]) *TokenGenerator[T] {
 	return &TokenGenerator[T]{config: NewTokenConfig(opts...)}
 }
 
+// GenerateToken mints a token in the configured style | GenerateToken 按配置的风格签发令牌.
 func (tg *TokenGenerator[T]) GenerateToken(userID string, data T) (string, error) {
 	switch tg.config.TokenStyle {
 	case TokenStyleJWT:
@@ -83,6 +90,7 @@ func generateTiktokToken() (string, error) {
 	return randomString(TiktokTokenLength)
 }
 
+// randomString picks length random characters from TiktokCharset (62 chars).
 // randomString 从 TiktokCharset（62 个字符）取 length 个随机字符
 func randomString(length int) (string, error) {
 	result := make([]byte, length)

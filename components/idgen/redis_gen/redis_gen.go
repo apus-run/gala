@@ -1,5 +1,7 @@
 // Package redis_gen allocates numeric IDs through one atomic Redis operation
 // per batch. All generators sharing server IDs must use the same Redis state.
+// redis_gen 每批通过一次原子 Redis 操作分配数字 ID；共享 server ID 的所有
+// 生成器必须使用同一份 Redis 状态。
 package redis_gen
 
 import (
@@ -14,18 +16,24 @@ import (
 )
 
 // MaxBatchSize bounds allocation memory and work per call.
+// MaxBatchSize 限制单次分配的内存与工作量。
 const MaxBatchSize = 65536
 
 // The legacy layout is seconds:32 | milliseconds:10 | sequence:8 | server:14.
 // Reserve the sign bit so every returned int64 stays nonnegative.
+// 旧布局为 秒:32 | 毫秒:10 | 序列:8 | 服务器:14。保留符号位，返回的 int64 恒非负。
 const maxMillis int64 = (1<<31)*1000 - 1
 
 // ErrStateMissing prevents silently recreating a lost allocation history.
+// ErrStateMissing 防止静默重建丢失的分配历史。
 var ErrStateMissing = errors.New("idgen: allocation state missing; explicit initialization required")
 
 // Allocate an interval in a persistent (millisecond, sequence) space. Redis
 // TIME supplies wall time; retained progress handles rollback and restarts.
 // Never encode a full 64-bit ID in Lua, whose numbers cannot represent it.
+// allocate 在持久的（毫秒，序列）空间里分配区间。墙钟来自 Redis TIME；
+// 保留的进度可应对回拨与重启。绝不能在 Lua 里编码完整 64 位 ID——
+// 其数值类型无法精确表示。
 const allocate = `
 local count = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
@@ -62,6 +70,9 @@ return {ms, seq}
 // partitions, not exclusive machine leases: different processes may share them.
 // All producers in a numeric ID domain must share this Redis allocation state.
 // Initialize partitions explicitly before generation; preserve their history.
+// NewIDGenerator 构造并发安全的生成器。srvIDs 是 14 位分区而非独占的机器租约：
+// 不同进程可共用。同一数字 ID 域的所有生产者必须共享这份 Redis 分配状态。
+// 生成前请显式初始化分区，并保留其历史。
 func NewIDGenerator(client *redis.Client, srvIDs []int64) (idgen.IDGenerator, error) {
 	if client == nil {
 		return nil, errors.New("idgen: Redis client is required")
@@ -82,6 +93,7 @@ type generator struct {
 	srvIDs []int64
 }
 
+// GenID allocates one numeric ID | GenID 分配一个数字 ID.
 func (g *generator) GenID(ctx context.Context) (int64, error) {
 	ids, err := g.GenMultiIDs(ctx, 1)
 	if err != nil {
@@ -90,6 +102,7 @@ func (g *generator) GenID(ctx context.Context) (int64, error) {
 	return ids[0], nil
 }
 
+// GenMultiIDs allocates count consecutive numeric IDs | GenMultiIDs 批量分配 count 个连续数字 ID.
 func (g *generator) GenMultiIDs(ctx context.Context, count int) ([]int64, error) {
 	if count < 0 || count > MaxBatchSize {
 		return nil, fmt.Errorf("idgen: count must be in [0, %d]", MaxBatchSize)
@@ -139,6 +152,8 @@ return 1
 // InitializeState explicitly creates a missing Redis partition without replacing
 // existing state. Use (0,0) only for a never-used numeric partition. Recovery
 // requires a verified last allocated position; a lower seed can repeat IDs.
+// InitializeState 显式创建缺失的 Redis 分区，不替换已有状态。(0,0) 仅用于从未
+// 使用过的数字分区。恢复需要经过核实的最后分配位置；种子偏小可能重复发号。
 func InitializeState(ctx context.Context, client *redis.Client, serverID, lastMillis, lastSequence int64) error {
 	if client == nil || serverID < 0 || serverID > 16383 || lastMillis < 0 || lastMillis > maxMillis || lastSequence < 0 || lastSequence > 255 {
 		return fmt.Errorf("idgen: invalid Redis state initialization")

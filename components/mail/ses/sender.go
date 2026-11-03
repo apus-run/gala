@@ -9,9 +9,12 @@ import (
 	"github.com/apus-run/gala/components/mail"
 )
 
-// Provider 是本适配器写入 Receipt 与 DeliveryError 的标识。
+// Provider identifies this adapter in Receipt and DeliveryError values
+// | Provider 是本适配器写入 Receipt 与 DeliveryError 的标识。
 const Provider = "ses"
 
+// Client is the narrowest SES capability the adapter needs; *sesv2.Client
+// satisfies it directly.
 // Client 是适配器需要的最窄 SES 能力，*sesv2.Client 直接满足该接口。
 type Client interface {
 	SendEmail(
@@ -21,6 +24,8 @@ type Client interface {
 	) (*sesv2.SendEmailOutput, error)
 }
 
+// Sender sends mail through the Amazon SES API v2. It is immutable after
+// construction and safe for concurrent use.
 // Sender 通过 Amazon SES API v2 发送邮件。构造后不可变，可并发使用。
 type Sender struct {
 	client           Client
@@ -30,6 +35,8 @@ type Sender struct {
 
 var _ mail.Sender = (*Sender)(nil)
 
+// New builds a Sender from the injected narrow Client. The adapter calls no
+// config.LoadDefaultConfig and reads no environment variables.
 // New 用注入的窄 Client 构造 Sender。适配器不调用
 // config.LoadDefaultConfig，也不读取环境变量。
 func New(client Client, options ...Option) (*Sender, error) {
@@ -49,8 +56,10 @@ func New(client Client, options ...Option) (*Sender, error) {
 	return s, nil
 }
 
-// Send 实现 mail.Sender。
+// Send implements mail.Sender | Send 实现 mail.Sender。
 func (s *Sender) Send(ctx context.Context, msg mail.Message) (mail.Receipt, error) {
+	// Contract (design doc §19.2): with an already-canceled Context, do not
+	// call the Client and return the error as-is.
 	// 契约（设计文档 §19.2）：Context 已取消时不调用 Client，原样返回。
 	if err := ctx.Err(); err != nil {
 		return mail.Receipt{}, err
@@ -70,6 +79,8 @@ func (s *Sender) Send(ctx context.Context, msg mail.Message) (mail.Receipt, erro
 
 	input := mapMessage(msg, s.configurationSet)
 
+	// Mapping attachments may take time; re-check before calling the Client
+	// so an already-canceled request does not still send the mail.
 	// 映射附件可能耗时；调用 Client 前再次检查，避免已取消请求继续发信。
 	if err := ctx.Err(); err != nil {
 		return mail.Receipt{}, err

@@ -1,3 +1,4 @@
+// Source: https://github.com/go-kratos/kratos/blob/main/config/file/file.go
 // 来源: https://github.com/go-kratos/kratos/blob/main/config/file/file.go
 package file
 
@@ -14,7 +15,7 @@ type file struct {
 	path string
 }
 
-// NewSource new a file source.
+// NewSource creates a file source for the given path | NewSource 根据给定路径创建文件源。
 func NewSource(path string) Source {
 	return &file{path: path}
 }
@@ -49,6 +50,7 @@ func (f *file) loadDir(path string) (kvs []*KV, err error) {
 	}
 	for _, file := range files {
 		// ignore hidden files
+		// 忽略隐藏文件
 		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
 			continue
 		}
@@ -61,6 +63,8 @@ func (f *file) loadDir(path string) (kvs []*KV, err error) {
 	return
 }
 
+// Load loads the configured path into KVs, either a single file or every
+// file of a directory | Load 加载配置的路径为 KV：单个文件，或目录下的全部文件。
 func (f *file) Load() (kvs []*KV, err error) {
 	fi, err := os.Stat(f.path)
 	if err != nil {

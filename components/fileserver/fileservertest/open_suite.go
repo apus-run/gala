@@ -10,6 +10,9 @@ import (
 	"github.com/apus-run/gala/components/fileserver"
 )
 
+// RunOpenSuite verifies the optional Opener's ranges, attributes and version
+// stability after opening. The factory must return a Storage that implements
+// Opener.
 // RunOpenSuite 验证可选 Opener 的范围、属性和打开后版本稳定性。工厂必须返回实现 Opener 的 Storage。
 func RunOpenSuite(t *testing.T, factory StorageFactory) {
 	t.Helper()

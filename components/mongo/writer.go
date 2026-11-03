@@ -10,16 +10,21 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// BufferedWriter defines interface for writes and flush
+// BufferedWriter defines the interface for writes and flush
+// | BufferedWriter 定义写入与刷新的接口。
 type BufferedWriter interface {
 	Write(rec any) error
 	Flush() error
 	Close() error
 }
 
-// BufferedWriterMongo collects records in local buffer and flushes them as filled. Thread safe
-// by default using both DB and collection from provided connection.
-// Collection can be customized by WithCollection method. Optional flush duration to save on interval
+// BufferedWriterMongo collects records in a local buffer and flushes as it
+// fills, thread safe, using the db and collection passed at construction.
+// The collection can be customized with WithCollection and an optional flush
+// duration with WithAutoFlush.
+// BufferedWriterMongo 把记录收集到本地缓冲，写满即刷新，线程安全；
+// 默认使用构造时传入的 db 与 collection。集合可用 WithCollection 定制，
+// 可选的定时刷新用 WithAutoFlush 设置。
 type BufferedWriterMongo struct {
 	client         *mongo.Client
 	bufferSize     int
@@ -35,7 +40,8 @@ type BufferedWriterMongo struct {
 	once          sync.Once
 }
 
-// NewBufferedWriter makes batch writer for given size and connection
+// NewBufferedWriter makes a batch writer for the given size and connection
+// | NewBufferedWriter 按给定容量与连接创建批量写入器。
 func NewBufferedWriter(client *mongo.Client, db, collection string, size int) *BufferedWriterMongo {
 	if size == 0 {
 		size = 1
@@ -49,16 +55,19 @@ func NewBufferedWriter(client *mongo.Client, db, collection string, size int) *B
 	}
 }
 
-// WithCollection sets custom collection to use with writer
+// WithCollection sets a custom collection for the writer
+// | WithCollection 为写入器设置自定义集合。
 func (bw *BufferedWriterMongo) WithCollection(collection string) *BufferedWriterMongo {
 	bw.collection = collection
 	return bw
 }
 
-// WithAutoFlush sets auto flush duration
+// WithAutoFlush sets the auto-flush duration | WithAutoFlush 设置定时刷新间隔。
 func (bw *BufferedWriterMongo) WithAutoFlush(duration time.Duration) *BufferedWriterMongo {
 	bw.flushDuration = duration
-	if duration > 0 { // activate background auto-flush
+	// duration > 0 activates the background auto-flush
+	// duration > 0 时激活后台定时刷新
+	if duration > 0 {
 		bw.once.Do(func() {
 			bw.ctx, bw.cancel = context.WithCancel(context.Background())
 			ticker := time.NewTicker(duration)
@@ -87,7 +96,9 @@ func (bw *BufferedWriterMongo) WithAutoFlush(duration time.Duration) *BufferedWr
 	return bw
 }
 
-// Write to buffer and, as filled, to mongo. If flushDuration defined check for automatic flush
+// Write appends to the buffer and, once filled, to mongo. When flushDuration
+// is set, automatic flushing is checked.
+// Write 写入缓冲，写满即写入 mongo。设置了 flushDuration 时会检查自动刷新。
 func (bw *BufferedWriterMongo) Write(rec any) error {
 	return bw.synced(func() error {
 		bw.lastWriteTime = time.Now()
@@ -102,10 +113,12 @@ func (bw *BufferedWriterMongo) Write(rec any) error {
 	})
 }
 
-// Flush writes everything left in buffer to mongo
+// Flush writes everything left in the buffer to mongo | Flush 把缓冲中剩余数据写入 mongo。
 func (bw *BufferedWriterMongo) Flush() error {
 	err := bw.synced(func() error {
 		if err := bw.writeBuffer(); err != nil {
+			// Keep the buffer so the caller can retry; clearing it would
+			// silently drop the whole batch
 			// 保留 buffer，调用方可以重试；清空会让整批数据静默丢失
 			return err
 		}
@@ -118,7 +131,8 @@ func (bw *BufferedWriterMongo) Flush() error {
 	return nil
 }
 
-// Close flushes all in-fly records and terminates background auto-flusher
+// Close flushes all in-flight records and terminates the background
+// auto-flusher | Close 刷新全部在途数据并终止后台定时刷新。
 func (bw *BufferedWriterMongo) Close() (err error) {
 	return bw.synced(func() error {
 		err = bw.writeBuffer()
@@ -133,7 +147,7 @@ func (bw *BufferedWriterMongo) Close() (err error) {
 	})
 }
 
-// writeBuffer sends all collected records to mongo
+// writeBuffer sends all collected records to mongo | writeBuffer 把已收集的记录写入 mongo。
 func (bw *BufferedWriterMongo) writeBuffer() (err error) {
 
 	if len(bw.buffer) == 0 {
@@ -141,7 +155,9 @@ func (bw *BufferedWriterMongo) writeBuffer() (err error) {
 	}
 
 	ctx := bw.ctx
-	if ctx == nil { // 只有 WithAutoFlush 才会初始化 ctx
+	// Only WithAutoFlush initializes ctx
+	// 只有 WithAutoFlush 才会初始化 ctx
+	if ctx == nil {
 		ctx = context.Background()
 	}
 	coll := bw.client.Database(bw.db).Collection(bw.collection)

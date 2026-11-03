@@ -1,6 +1,8 @@
 // Command uploadquota is the storage side of a file-sharing service. Each tenant
 // has a directory and a byte quota. Uploads are rejected when they would exceed
 // the quota, and abandoned chunk files (*.part) are swept after they expire.
+// uploadquota 是文件分享服务的存储端：每个租户有独立目录与字节配额。
+// 上传超出配额即被拒绝，超期遗留的分块文件（*.part）会被清扫。
 package main
 
 import (
@@ -35,15 +37,18 @@ func run() error {
 	tenant := filepath.Join(root, "tenant-acme")
 
 	// Accepted: well within the quota. WriteFile creates the tenant directory.
+	// 接收：远小于配额。WriteFile 会创建租户目录。
 	if err := store(tenant, "report-q1.pdf", 600<<10); err != nil {
 		return err
 	}
 	// Rejected: a second 600 KiB file would push the tenant past 1 MiB.
+	// 拒绝：第二个 600 KiB 文件会让租户超出 1 MiB。
 	if err := store(tenant, "report-q2.pdf", 600<<10); err != nil {
 		fmt.Println("rejected report-q2.pdf:", err)
 	}
 
 	// An interrupted chunked upload left a stale part file behind. Make it old.
+	// 一次中断的分块上传遗留了一个过期的分块文件。把它的时间改旧。
 	stale := filepath.Join(tenant, "upload-9f2c.part")
 	if err := fileutils.WriteFile(stale, "partial"); err != nil {
 		return err
@@ -67,6 +72,7 @@ func run() error {
 }
 
 // store writes a file for the tenant after checking the quota.
+// store 在检查配额后为租户写入文件。
 func store(tenant, name string, size int) error {
 	used, err := usage(tenant)
 	if err != nil {
@@ -81,6 +87,7 @@ func store(tenant, name string, size int) error {
 
 // usage sums the sizes of the tenant's files. A tenant without a directory has
 // no usage yet.
+// usage 汇总租户文件的大小；还没有目录的租户用量为零。
 func usage(tenant string) (int64, error) {
 	files, err := fileutils.Scan(tenant, fileutils.ScanOptions{Recursive: true, FilesOnly: true})
 	if err != nil {
@@ -101,6 +108,7 @@ func usage(tenant string) (int64, error) {
 }
 
 // sweepParts removes *.part files older than maxAge and reports how many it removed.
+// sweepParts 删除超过 maxAge 的 *.part 文件，并报告删除数量。
 func sweepParts(tenant string, maxAge time.Duration) (int, error) {
 	parts, err := fileutils.Scan(tenant, fileutils.ScanOptions{Patterns: []string{"*.part"}, FilesOnly: true})
 	if err != nil {

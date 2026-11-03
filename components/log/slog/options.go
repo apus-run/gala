@@ -6,28 +6,29 @@ import (
 	"os"
 )
 
-// Option is config option.
+// Option is config option. | 配置选项。
 type Option interface {
 	apply(*Options)
 }
 
-// OptionFunc adapts a plain function to Option.
+// OptionFunc adapts a plain function to Option. | 将普通函数适配为 Option。
 type OptionFunc func(*Options)
 
 func (f OptionFunc) apply(o *Options) {
 	f(o)
 }
 
+// Options holds the logger configuration | 持有日志器配置.
 type Options struct {
-	// logger options
+	// logger options | 日志配置
 	LogLevel string      // debug, info, warn, error,debug, panic
-	Format   Format      // text or json
-	Writer   io.Writer   // 日志输出
-	LogGroup string      // slog group
-	LogAttrs []slog.Attr // 日志属性
+	Format   Format      // text or json | 文本或 JSON
+	Writer   io.Writer   // log output | 日志输出
+	LogGroup string      // slog group | slog 分组
+	LogAttrs []slog.Attr // log attributes | 日志属性
 }
 
-// DefaultOptions .
+// DefaultOptions returns the defaults: text format to stdout at info level | 返回默认配置：text 格式、stdout、info 级别。
 func DefaultOptions() *Options {
 	return &Options{
 		LogLevel: "info",
@@ -36,49 +37,49 @@ func DefaultOptions() *Options {
 	}
 }
 
-// NewOptions 从 DefaultOptions 出发，按顺序应用 opts。
+// NewOptions starts from DefaultOptions and applies opts in order | 从 DefaultOptions 出发，按顺序应用 opts。
 func NewOptions(opts ...Option) *Options {
 	o := DefaultOptions()
 	o.Apply(opts...)
 	return o
 }
 
-// Apply 按顺序原地应用 opts，不重置默认值、不做校验。
+// Apply applies opts in place, in order; it does not reset defaults or validate | 按顺序原地应用 opts，不重置默认值、不做校验。
 func (o *Options) Apply(opts ...Option) {
 	for _, opt := range opts {
 		opt.apply(o)
 	}
 }
 
-// WithLogLevel 日志级别
+// WithLogLevel sets the log level | 设置日志级别。
 func WithLogLevel(level string) Option {
 	return OptionFunc(func(o *Options) {
 		o.LogLevel = level
 	})
 }
 
-// WithLogGroup 日志分组
+// WithLogGroup sets the log group | 设置日志分组。
 func WithLogGroup(group string) Option {
 	return OptionFunc(func(o *Options) {
 		o.LogGroup = group
 	})
 }
 
-// WithLogAttrs 日志属性
+// WithLogAttrs sets log attributes | 设置日志属性。
 func WithLogAttrs(attrs []Attr) Option {
 	return OptionFunc(func(o *Options) {
 		o.LogAttrs = attrs
 	})
 }
 
-// WithFormat 日志格式
+// WithFormat sets the log format | 设置日志格式。
 func WithFormat(format Format) Option {
 	return OptionFunc(func(o *Options) {
 		o.Format = format
 	})
 }
 
-// WithWriter 日志输出
+// WithWriter sets the log output | 设置日志输出。
 func WithWriter(writer io.Writer) Option {
 	if writer == nil {
 		writer = os.Stdout
@@ -88,7 +89,7 @@ func WithWriter(writer io.Writer) Option {
 	})
 }
 
-// WithOptions 设置所有配置
+// WithOptions sets all options | 设置所有配置。
 func WithOptions(fn func(options *Options)) Option {
 	return OptionFunc(func(options *Options) {
 		fn(options)

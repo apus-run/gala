@@ -1,6 +1,11 @@
+// Package fileservertest provides the in-process Fake of fileserver, a shared
+// conformance test suite and fault injection tools, for this module's driver
+// tests, business tests and third-party backends to reuse.
 // Package fileservertest 提供 fileserver 的进程内 Fake、共享契约测试套件与故障注入工具，
 // 供本模块的驱动测试、业务方测试以及第三方后端复用。
 //
+// After implementing fileserver.Storage, a third-party backend can self-test
+// by calling RunStorageSuite.
 // 第三方后端实现 fileserver.Storage 后，调用 RunStorageSuite 即可自测。
 package fileservertest
 
@@ -17,6 +22,10 @@ import (
 	"github.com/apus-run/gala/components/fileserver/internal/iox"
 )
 
+// MemStore is the in-process Fake; it implements Storage and all the optional
+// semantics. It is for tests only: no persistence, and it does not model
+// durability or failures under concurrency. The zero value is not usable;
+// create one with NewMemStore.
 // MemStore 是进程内的 Fake，实现 Storage 与全部可选语义。
 // 它只用于测试：没有持久化，也不模拟耐久性与并发下的故障。零值不可用，请用 NewMemStore 创建。
 type MemStore struct {
@@ -28,17 +37,19 @@ var _ fileserver.Storage = (*MemStore)(nil)
 var _ fileserver.Opener = (*MemStore)(nil)
 
 type memObject struct {
-	data        []byte // 写入后不再原地修改，读者可以安全地持有快照
+	data        []byte // Not modified in place after write; readers may safely hold the snapshot | 写入后不再原地修改，读者可以安全地持有快照
 	contentType string
 	metadata    map[string]string
 	modTime     time.Time
 }
 
+// NewMemStore creates an empty Fake.
 // NewMemStore 创建一个空的 Fake。
 func NewMemStore() *MemStore {
 	return &MemStore{objects: make(map[string]memObject)}
 }
 
+// Upload implements Uploader.
 // Upload 实现 Uploader。
 func (m *MemStore) Upload(ctx context.Context, key string, r io.Reader, opts ...fileserver.UploadOpt) error {
 	const op = "Upload"
@@ -75,6 +86,7 @@ func (m *MemStore) Upload(ctx context.Context, key string, r io.Reader, opts ...
 	return nil
 }
 
+// Download implements Downloader.
 // Download 实现 Downloader。
 func (m *MemStore) Download(ctx context.Context, key string, w io.WriterAt, opts ...fileserver.DownloadOpt) error {
 	const op = "Download"
@@ -106,6 +118,7 @@ func (m *MemStore) Download(ctx context.Context, key string, w io.WriterAt, opts
 	return nil
 }
 
+// memReader wraps a SectionReader as an io.ReadCloser; Close is a no-op.
 // memReader 把 SectionReader 包装成 io.ReadCloser；Close 是空操作。
 type memReader struct {
 	*io.SectionReader
@@ -113,6 +126,8 @@ type memReader struct {
 
 func (memReader) Close() error { return nil }
 
+// Read implements Storage. The returned stream is bound to the snapshot taken
+// at open time.
 // Read 实现 Storage。返回的流绑定打开时的快照。
 func (m *MemStore) Read(ctx context.Context, key string, opts ...fileserver.ReadOpt) (io.ReadCloser, error) {
 	result, err := m.open(ctx, "Read", key, opts...)
@@ -122,6 +137,7 @@ func (m *MemStore) Read(ctx context.Context, key string, opts ...fileserver.Read
 	return result.Body, nil
 }
 
+// Open returns the content and attributes of the same snapshot.
 // Open 返回同一快照的内容与属性。
 func (m *MemStore) Open(ctx context.Context, key string, opts ...fileserver.ReadOpt) (*fileserver.OpenResult, error) {
 	return m.open(ctx, "Open", key, opts...)
@@ -157,6 +173,7 @@ func (m *MemStore) open(ctx context.Context, op, key string, opts ...fileserver.
 	}, nil
 }
 
+// Stat implements Storage.
 // Stat 实现 Storage。
 func (m *MemStore) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo, error) {
 	const op = "Stat"
@@ -178,6 +195,7 @@ func (m *MemStore) Stat(ctx context.Context, key string) (*fileserver.ObjectInfo
 	}, nil
 }
 
+// Remove implements Storage. Returns nil when the object does not exist.
 // Remove 实现 Storage。对象不存在时返回 nil。
 func (m *MemStore) Remove(ctx context.Context, key string) error {
 	const op = "Remove"
@@ -200,6 +218,8 @@ func (m *MemStore) snapshot(key string) ([]byte, error) {
 	return obj.data, nil
 }
 
+// readBody reads the whole input. When a length is declared it reads at most
+// size+1 bytes, so overlong input is detected without unbounded reads.
 // readBody 读取整个输入。声明长度时最多读取 size+1 字节，以在不无界读取的前提下发现超长输入。
 func readBody(ctx context.Context, r io.Reader, uo fileserver.UploadOptions) ([]byte, error) {
 	size, hasSize := uo.Size()

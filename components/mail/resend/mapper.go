@@ -16,6 +16,9 @@ import (
 	"github.com/apus-run/gala/components/mail"
 )
 
+// mapMessage maps a core message to an SDK request. Every map, slice and
+// attachment byte is deep-copied, so the finished request no longer references
+// caller-owned data.
 // mapMessage 把核心消息映射为 SDK 请求。所有 Map、Slice 与附件字节
 // 均为深拷贝，映射完成后请求不再引用调用方数据。
 func mapMessage(msg mail.Message) *resendgo.SendEmailRequest {
@@ -48,7 +51,7 @@ func addressStrings(addrs []mail.Address) []string {
 	return out
 }
 
-// mapTags 按 Key 排序，保证映射结果与测试稳定。
+// mapTags sorts by key so the mapped result stays stable for tests | mapTags 按 Key 排序，保证映射结果与测试稳定。
 func mapTags(tags map[string]string) []resendgo.Tag {
 	if len(tags) == 0 {
 		return nil
@@ -77,15 +80,17 @@ func mapAttachments(attachments []mail.Attachment) []*resendgo.Attachment {
 }
 
 // Provider limits: https://resend.com/docs/api-reference/emails/send-email
+// | Provider 上限见该链接。
 const (
 	maxResendRecipients      = 50
 	maxResendTagLength       = 256
 	maxResendContentIDLength = 128
-	maxResendMessageBytes    = 40 << 20 // 40 MiB, after attachment Base64 encoding.
+	maxResendMessageBytes    = 40 << 20 // 40 MiB, after attachment Base64 encoding | 40 MiB，附件 Base64 编码后。
 )
 
-// unsupportedAttachmentExtensions mirrors Resend's current sending blocklist:
-// https://resend.com/docs/knowledge-base/what-attachment-types-are-not-supported
+// unsupportedAttachmentExtensions mirrors Resend's current sending blocklist
+// (https://resend.com/docs/knowledge-base/what-attachment-types-are-not-supported)
+// | unsupportedAttachmentExtensions 对应 Resend 当前的发送附件黑名单（见链接）。
 var unsupportedAttachmentExtensions = map[string]struct{}{
 	".adp": {}, ".app": {}, ".asp": {}, ".bas": {}, ".bat": {},
 	".cer": {}, ".chm": {}, ".cmd": {}, ".com": {}, ".cpl": {},
@@ -107,6 +112,8 @@ var unsupportedAttachmentExtensions = map[string]struct{}{
 	".wsc": {}, ".wsf": {}, ".wsh": {}, ".xnk": {},
 }
 
+// validateProviderMessage checks the Provider constraints that resend-go does
+// not enforce locally. All checks run before any deep copy or Client call.
 // validateProviderMessage 检查 resend-go 不会在本地执行的 Provider 约束。
 // 所有检查都发生在深拷贝和 Client 调用之前。
 func validateProviderMessage(msg mail.Message) error {
@@ -159,6 +166,10 @@ func validResendTagPart(value string) bool {
 	return true
 }
 
+// validateMessageSize checks the approximate raw message size in bytes (body,
+// headers, tags, addresses and attachments) before any deep copy or SDK
+// serialization. Additions are overflow-safe; over-budget or overflow returns
+// mail.ErrInvalidMessage without calling the Client.
 // validateMessageSize 在任何深拷贝与 SDK 序列化之前，检查近似原始
 // 消息总字节数（正文、Headers、Tags、地址与附件）。累加使用溢出安全
 // 加法；超限或溢出返回 mail.ErrInvalidMessage，不调用 Client。

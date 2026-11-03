@@ -1,5 +1,7 @@
 // Package metrics is gin metrics library, collect five metrics, "uptime", "http_request_count_total",
 // "http_request_duration_seconds", "http_request_size_bytes", "http_response_size_bytes".
+// metrics 是 gin 指标库，收集五项指标："uptime"、"http_request_count_total"、
+// "http_request_duration_seconds"、"http_request_size_bytes"、"http_response_size_bytes"。
 package metrics
 
 import (
@@ -97,6 +99,7 @@ func calcRequestSize(r *http.Request) float64 {
 	size += len(r.Host)
 
 	// r.Form and r.MultipartForm are assumed to be included in r.URL.
+	// r.Form 与 r.MultipartForm 视为已包含在 r.URL 中。
 	if r.ContentLength != -1 {
 		size += int(r.ContentLength)
 	}
@@ -113,7 +116,8 @@ func metricsHandler() gin.HandlerFunc {
 	}
 }
 
-// Metrics returns a gin.HandlerFunc for exporting some Web metrics
+// Metrics returns a gin.HandlerFunc for exporting some Web metrics.
+// Metrics 返回用于导出部分 Web 指标的 gin.HandlerFunc。
 func Metrics(r *gin.Engine, opts ...Option) gin.HandlerFunc {
 	o := DefaultOptions()
 	o.apply(opts...)
@@ -135,8 +139,11 @@ func Metrics(r *gin.Engine, opts ...Option) gin.HandlerFunc {
 		}
 
 		// no response content will return -1
+		// 无响应内容时返回 -1
 		respSize := max(c.Writer.Size(), 0)
 
+		// Use the route template rather than the raw path, otherwise every path
+		// would add a new time series; unmatched routes share one label.
 		// 用路由模板而不是原始路径，否则任意路径都会新增一组时间序列；未匹配的路由归到同一个标签
 		path := c.FullPath()
 		if path == "" {

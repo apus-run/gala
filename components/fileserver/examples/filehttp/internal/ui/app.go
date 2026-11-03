@@ -1,9 +1,16 @@
 package ui
 
+// appJS is the entire frontend logic of the file-management page: plain JS,
+// no build step, data via the /api JSON endpoints.
+// It ships inside a Go constant with the binary so the container needs no
+// static files.
+//
+// shortcut: framework-free on purpose — rewrite this file when switching
+// frontend frameworks, the backend endpoints stay unchanged.
 // appJS 是文件管理页的全部前端逻辑：原生 JS，无构建步骤，数据走 /api JSON 接口。
 // 放在 Go 常量里随二进制分发，避免容器里再带静态文件。
 //
-// shortcut: 无框架依赖；换前端框架时重写此文件即可，后端接口不变。
+// shortcut: 有意不依赖框架；换前端框架时重写此文件即可，后端接口不变。
 const appJS = `(function () {
 'use strict';
 var cfg = JSON.parse(document.getElementById('app-cfg').textContent);

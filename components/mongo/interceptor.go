@@ -9,8 +9,12 @@ import (
 	"github.com/apus-run/gala/components/log/zlog"
 )
 
+// Interceptor wraps a processFn to observe or modify command execution
+// | Interceptor 包装 processFn，用于观察或修改命令执行。
 type Interceptor func(oldProcessFn processFn) (newProcessFn processFn)
 
+// InterceptorChain composes interceptors so the first one runs outermost
+// | InterceptorChain 组合拦截器，第一个在最外层执行。
 func InterceptorChain(interceptors ...Interceptor) func(oldProcess processFn) processFn {
 	build := func(interceptor Interceptor, oldProcess processFn) processFn {
 		return interceptor(oldProcess)
@@ -25,16 +29,21 @@ func InterceptorChain(interceptors ...Interceptor) func(oldProcess processFn) pr
 	}
 }
 
+// Builder builds ready-made interceptors with a logger
+// | Builder 基于logger 构建现成的拦截器。
 type Builder struct {
 	log zlog.Logger
 }
 
+// NewBuilder creates a Builder over log | NewBuilder 基于 log 创建 Builder。
 func NewBuilder(log zlog.Logger) *Builder {
 	return &Builder{
 		log,
 	}
 }
 
+// BuildDebugInterceptor returns an interceptor logging every command with its
+// cost and result | BuildDebugInterceptor 返回记录每条命令耗时与结果的拦截器。
 func (b *Builder) BuildDebugInterceptor() func(processFn) processFn {
 	return func(oldProcess processFn) processFn {
 		return func(cmd *cmd) error {

@@ -11,6 +11,10 @@ import (
 	"github.com/apus-run/gala/components/mail"
 )
 
+// mapDialError classifies failures of the dial phase (TCP, TLS, EHLO, auth).
+// No mail transaction can happen while dialing, so the Outcome is always
+// SendOutcomeNotAccepted (SPEC D7), letting a temporarily unreachable server
+// enter the caller's common safe-retry path.
 // mapDialError 分类拨号阶段（TCP、TLS、EHLO、认证）的失败。拨号期间
 // 不可能发生邮件事务，Outcome 一律 SendOutcomeNotAccepted（SPEC D7），
 // 使服务器暂时不可达能进入调用方的通用安全重试路径。
@@ -34,6 +38,9 @@ func mapDialError(err error) error {
 		}
 	}
 
+	// Transient whitelist: transport timeouts and refused connections (server
+	// restarting). TLS configuration, auth failures and permanent DNS errors
+	// stay non-transient.
 	// 瞬态白名单：传输超时与连接被拒（服务器重启中）。TLS 配置、
 	// 认证失败、永久 DNS 错误等保持非瞬态。
 	transient := false
@@ -52,6 +59,9 @@ func mapDialError(err error) error {
 	}
 }
 
+// notAcceptedReasons lists failures raised before the DATA termination
+// sequence (<CRLF>.<CRLF>) is sent: per RFC 5321 the server cannot have
+// accepted the message yet.
 // notAcceptedReasons 是 DATA 终止序列（<CRLF>.<CRLF>）发出之前的失败：
 // 按 RFC 5321，服务器此时不能接受该消息。
 var notAcceptedReasons = map[gomail.SendErrReason]string{
@@ -65,6 +75,9 @@ var notAcceptedReasons = map[gomail.SendErrReason]string{
 	gomail.ErrWriteContent: "write_content",
 }
 
+// unknownOutcomeReasons lists failures after the termination sequence has
+// (possibly) been sent: an errored or lost response means the message may
+// already be accepted, so the Outcome stays conservatively SendOutcomeUnknown.
 // unknownOutcomeReasons 是终止序列已（可能）发出后的失败：响应错误
 // 或丢失，消息可能已被接受，保守 SendOutcomeUnknown。
 var unknownOutcomeReasons = map[gomail.SendErrReason]string{
@@ -73,6 +86,10 @@ var unknownOutcomeReasons = map[gomail.SendErrReason]string{
 	gomail.ErrAmbiguous:     "ambiguous",
 }
 
+// mapSendError classifies failures of the send phase. Decision order
+// (SPEC §6.1): Context errors first (the contract keeps errors.Is usable and
+// the Outcome Unknown), then the phase via SendError.Reason, then network
+// timeouts, finally a conservative default.
 // mapSendError 分类发送阶段的失败。判定次序（SPEC §6.1）：先 Context
 // 错误（契约要求保持 errors.Is 且 Outcome Unknown），再按
 // SendError.Reason 分阶段，再网络超时，最后保守默认。
@@ -108,6 +125,7 @@ func mapSendError(err error) error {
 		}
 		code, ok := unknownOutcomeReasons[sendErr.Reason]
 		if !ok {
+			// A Reason added by go-mail in the future: conservatively Unknown.
 			// go-mail 未来新增的 Reason：保守 Unknown。
 			code = "ambiguous"
 		}

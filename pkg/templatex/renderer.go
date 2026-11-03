@@ -6,7 +6,7 @@ import (
 	"html/template"
 )
 
-// Renderer defines a single parsed template.
+// Renderer defines a single parsed template | Renderer 定义一个已解析的单个模板.
 type Renderer struct {
 	template   *template.Template
 	parseError error
@@ -14,6 +14,8 @@ type Renderer struct {
 
 // Render executes the template with the specified data as the dot object
 // and returns the result as plain string.
+//
+// Render 以指定的 data 作为 dot 对象执行模板，并以纯字符串返回结果。
 func (r *Renderer) Render(data any) (string, error) {
 	if r.parseError != nil {
 		return "", r.parseError

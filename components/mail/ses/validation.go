@@ -21,9 +21,12 @@ const (
 	maxAttachmentContentID = 78
 	maxAttachmentType      = 78
 	maxConfigurationSet    = 64
-	maxSESMessageBytes     = 40 << 20 // 40 MiB after attachment base64 encoding.
+	maxSESMessageBytes     = 40 << 20 // 40 MiB after attachment base64 encoding | 40 MiB，附件 Base64 编码后。
 )
 
+// sesReservedHeaders adds, beyond the core common model, the custom headers
+// that SES Simple Content forbids setting. Structural headers are already
+// rejected by mail.Message.Validate.
 // sesReservedHeaders 补充核心公共模型之外，SES Simple Content 禁止设置的
 // 自定义 Header。其他结构 Header 已由 mail.Message.Validate 拒绝。
 var sesReservedHeaders = map[string]struct{}{
@@ -33,6 +36,9 @@ var sesReservedHeaders = map[string]struct{}{
 	"Return-Path":         {},
 }
 
+// unsupportedAttachmentExtensions comes from the "SES unsupported attachment
+// types" list in the Amazon SES Developer Guide. Comparison is
+// case-insensitive.
 // unsupportedAttachmentExtensions 来自 Amazon SES Developer Guide 的
 // “SES unsupported attachment types”清单。比较时不区分大小写。
 var unsupportedAttachmentExtensions = map[string]struct{}{
@@ -54,6 +60,9 @@ var unsupportedAttachmentExtensions = map[string]struct{}{
 	".xnk": {},
 }
 
+// validateProviderMessage checks the stable input constraints of the SES API
+// v2. Callers must run mail.Message.Validate first; the errors raised here are
+// likewise mail.ErrInvalidMessage failures that never reach the Provider.
 // validateProviderMessage 检查 SES API v2 的稳定输入约束。调用方必须先
 // 执行 mail.Message.Validate；这里的错误同样属于未调用 Provider 的
 // mail.ErrInvalidMessage。

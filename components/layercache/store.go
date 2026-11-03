@@ -95,6 +95,10 @@ func (c *Cache) ttl(ttl time.Duration, negative bool) time.Duration {
 // Rejected conditions have no local/refresh side effects. A write with unknown
 // outcome still fences older snapshots. Rebase only this operation's ticket;
 // other operations keep their old generation and fail validation.
+// commitEntry 在调用者持有 key 闸门时发布一次变更。布尔值报告已确认的变更，
+// 与之后的超时无关。被拒绝的条件写不产生本地/刷新副作用。结果未知的写入
+// 仍会栅栏化更旧的快照。只对本操作的 ticket 重定代；其他操作保持旧 generation
+// 并在校验时失败。
 func (c *Cache) commitEntry(ctx context.Context, t *ticket, data []byte, i ItemOptions, stopRefresh bool) (bool, error) {
 	if c.remote == nil && i.mode() != SetAlways {
 		_, exists := c.getLocal(t.key)
@@ -130,6 +134,7 @@ func (c *Cache) commitEntry(ctx context.Context, t *ticket, data []byte, i ItemO
 }
 
 // All writes, including refresh, share this backend-first commit path.
+// 包括刷新在内的所有写入都走这条"后端优先"的提交路径。
 func (c *Cache) writeEntry(ctx context.Context, key string, data []byte, i ItemOptions) (bool, error) {
 	ttl := c.ttl(i.ttl, isNegative(data))
 	if ttl <= 0 {
@@ -182,6 +187,8 @@ func (c *Cache) writeRemote(ctx context.Context, key string, data []byte, ttl ti
 	if x := c.contextError(op); x != nil {
 		// A received rejection is a known no-write outcome even if cancellation
 		// races with the reply. Keep both facts so it cannot cancel refresh.
+		// 即使取消与应答竞速，已收到的拒绝也是确定的"未写入"结果。
+		// 同时保留两个事实，避免它取消刷新。
 		if errors.Is(err, ErrNotStored) {
 			err = errors.Join(err, x)
 		} else {
@@ -191,6 +198,8 @@ func (c *Cache) writeRemote(ctx context.Context, key string, data []byte, ttl ti
 	if err != nil {
 		// A valid receipt survives a later timeout so callers can notify peers;
 		// the error still prevents publishing a late local value.
+		// 有效回执在后续超时后仍然保留，以便调用方通知对端；
+		// 错误依旧会阻止发布迟到的本地值。
 		return deadline, &OpError{"set", key, err}
 	}
 	return deadline, nil
@@ -230,6 +239,9 @@ func (c *Cache) setLocal(key string, e Entry, deadline time.Time) {
 // Version 2 preserves JetCache's string/byte fast paths without confusing "*"
 // with absence. Kind: 0 codec, 1 negative, 2 string, 3 bytes, 4 nil.
 // Version 1 codec/negative records remain readable during migration.
+// 版本 2 保留 JetCache 的 string/byte 快路径，且不会把 "*" 与空值混淆。
+// Kind：0 编解码器，1 空值，2 string，3 bytes，4 nil。
+// 迁移期仍可读版本 1 的 codec/negative 记录。
 func (c *Cache) encode(value any, negative bool) ([]byte, error) {
 	if negative {
 		return []byte{'L', 'C', 2, 1}, nil
@@ -299,6 +311,8 @@ func (c *Cache) decode(data []byte, dst any) error {
 	}
 	// As in JetCache, raw destinations expose the serialized payload, and raw
 	// inputs can be decoded into objects. The envelope is never exposed.
+	// 与 JetCache 相同：裸目标暴露序列化后的负载，裸输入也能解码进对象；
+	// 信封本身永不暴露。
 	switch out := dst.(type) {
 	case *string:
 		*out = string(payload)

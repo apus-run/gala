@@ -1,17 +1,6 @@
-// Command filehttp 是 components/fileserver 的生产示例：一个带元数据、秒传去重与
-// 断点续传的文件托管服务（网盘后端）。
-//
-// 组装（对照传统 Gin+GORM 网盘的分层）：
-//
-//	api（HTTP 适配，ginx.W/B）→ service（业务，errorsx）→ repo（持久化，db+sqlite）
-//	                                                    ↘ fileserver.Storage（字节层）
-//
-// 关键决策：
-//   - 对象存储只当字节层：内容寻址、引用计数、用户关联、会话全在关系库。
-//     元数据不依赖后端能力（filestore 不持久化 ContentType/Metadata 也不影响）。
-//   - 上传写暂存对象的同时流式计算 SHA-256；登记成功后暂存 Key 即正式 Key，零拷贝。
-//   - 断点续传不依赖 Redis：会话与分块位图在库里，分块是普通对象，合并是流式串联。
-//   - 崩溃残留靠登记表回收（staging_objects / 过期会话），不需要存储端 List。
+// Command filehttp is a production example of fileserver: a file-hosting
+// service with metadata, content dedup and resumable uploads | filehttp 是
+// fileserver 的生产示例：带元数据、秒传去重与断点续传的文件托管服务.
 package main
 
 import (
@@ -60,6 +49,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// The pure-Go sqlite driver lets the static binary run directly on
+	// scratch/alpine images; switching to MySQL/Postgres only means replacing
+	// the Dialector here.
 	// sqlite 纯 Go 驱动，静态二进制可直接跑在 scratch/alpine 镜像里；
 	// 换 MySQL/Postgres 只需替换这里的 Dialector。
 	gormLogger := logger.New(log.New(os.Stdout, "", log.LstdFlags), logger.Config{
@@ -92,6 +84,8 @@ func main() {
 		Addr:              cfg.Server.ListenAddr,
 		Handler:           engine,
 		ReadHeaderTimeout: 10 * time.Second,
+		// WriteTimeout is deliberately unset: large-file downloads outlast any
+		// fixed value; the lifecycle is governed by graceful SIGTERM shutdown.
 		// 不设 WriteTimeout：大文件下载会超过任何固定值；生命周期由 SIGTERM 优雅退出控制。
 	}
 	go func() {
@@ -101,6 +95,8 @@ func main() {
 	}()
 	log.Printf("filehttp listening on %s (max upload %d bytes)", httpSrv.Addr, maxUpload)
 
+	// Hourly sweep: filestore half-written temp files plus expired upload
+	// sessions and orphaned staging objects.
 	// 每小时一轮：filestore 半成品临时文件 + 过期上传会话与孤儿暂存对象。
 	go func() {
 		t := time.NewTicker(time.Hour)
@@ -125,6 +121,7 @@ func main() {
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// Stop traffic first, then close storage: wait for in-flight calls to exit.
 	// 先停流量，再关存储：等待进行中的调用退出。
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
@@ -137,6 +134,10 @@ func main() {
 	}
 }
 
+// newStorage picks the byte layer from the environment: objectstore/s3 when
+// S3_BUCKET is set, otherwise the local filestore.
+// S3_ENDPOINT may point at an S3-compatible service such as MinIO/RustFS;
+// leave it empty on native AWS.
 // newStorage 按环境选择字节层：S3_BUCKET 非空时用 objectstore/s3，否则用本地 filestore。
 // S3_ENDPOINT 可指向 MinIO/RustFS 等兼容服务；AWS 原生时留空。
 func newStorage(ctx context.Context, cfg config.Config) (fileserver.Storage, *filestore.Store, func() error, error) {
@@ -172,6 +173,8 @@ func newStorage(ctx context.Context, cfg config.Config) (fileserver.Storage, *fi
 	}
 
 	root := cfg.Storage.FSRoot
+	// filestore deliberately does not create directories itself (a mistyped
+	// path would silently grow a new one); the service creates it at deploy time.
 	// filestore 有意不自动建目录（防路径写错时悄悄建出新目录）；部署时由服务自建。
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, nil, nil, err

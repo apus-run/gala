@@ -13,12 +13,15 @@ import (
 	"github.com/apus-run/gala/components/mq"
 )
 
+// Factory creates RocketMQ producers and consumers | Factory 创建 RocketMQ 生产者与消费者。
 type Factory struct{}
 
+// NewFactory creates a Factory | NewFactory 创建 Factory。
 func NewFactory() mq.Factory {
 	return &Factory{}
 }
 
+// NewProducer creates a Producer for config | NewProducer 依据 config 创建 Producer。
 func (f *Factory) NewProducer(config mq.ProducerConfig) (mq.Producer, error) {
 	opts, err := producerOptions(config)
 	if err != nil {
@@ -56,6 +59,7 @@ func producerOptions(config mq.ProducerConfig) ([]producer.Option, error) {
 	return opts, nil
 }
 
+// NewConsumer creates a push Consumer for config | NewConsumer 依据 config 创建 push 消费者。
 func (f *Factory) NewConsumer(config mq.ConsumerConfig) (mq.Consumer, error) {
 	if len(config.Addr) == 0 {
 		return nil, errors.New("addr is empty")
@@ -97,6 +101,8 @@ func (f *Factory) NewConsumer(config mq.ConsumerConfig) (mq.Consumer, error) {
 	}, nil
 }
 
+// NewCustomResolver returns a name-server resolver over addrs
+// | NewCustomResolver 基于 addrs 返回 name server resolver。
 func NewCustomResolver(addrs []string) primitive.NsResolver {
 	return &customResolver{addrs: append([]string(nil), addrs...)}
 }
@@ -105,6 +111,7 @@ type customResolver struct {
 	addrs []string
 }
 
+// Resolve implements primitive.NsResolver, resolving hostnames to IPs | 实现 primitive.NsResolver，把主机名解析为 IP.
 func (c *customResolver) Resolve() []string {
 	ret := make([]string, len(c.addrs))
 	for i, addr := range c.addrs {
@@ -124,6 +131,7 @@ func (c *customResolver) Resolve() []string {
 	return ret
 }
 
+// Description implements primitive.NsResolver | 实现 primitive.NsResolver.
 func (c *customResolver) Description() string {
 	return fmt.Sprintf("custom resolver: %v", c.addrs)
 }

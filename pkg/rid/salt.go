@@ -9,18 +9,22 @@ import (
 	"os"
 )
 
+// Salt hashes the machine ID and returns the hash as a uint64 salt
 // Salt 计算机器 ID 的哈希值并返回一个 uint64 类型的盐值.
 func Salt() uint64 {
+	// hash the machine ID bytes with FNV-1a
 	// 使用 FNV-1a 哈希算法计算字符串的哈希值
 	hasher := fnv.New64a()
 	hasher.Write(ReadMachineID())
 
+	// take the hash sum as a uint64 salt
 	// 将哈希值转换为 uint64 型的盐
 	hashValue := hasher.Sum64()
 	return hashValue
 }
 
-// ReadMachineID 获取机器 ID，如果无法获取，则生成随机 ID.
+// ReadMachineID reads the machine ID, or generates a random one when it
+// cannot be read | ReadMachineID 获取机器 ID，如果无法获取，则生成随机 ID.
 func ReadMachineID() []byte {
 	id := make([]byte, 3)
 	machineID, err := readPlatformMachineID()
@@ -33,6 +37,7 @@ func ReadMachineID() []byte {
 		hasher.Write([]byte(machineID))
 		copy(id, hasher.Sum(nil))
 	} else {
+		// fall back to a random number when no machine ID can be collected
 		// 如果无法收集机器 ID，则回退到生成随机数
 		if _, randErr := rand.Reader.Read(id); randErr != nil {
 			panic(errors.Join(fmt.Errorf("id: cannot get hostname nor generate a random number"), err, randErr))
@@ -41,6 +46,7 @@ func ReadMachineID() []byte {
 	return id
 }
 
+// readPlatformMachineID tries to read the platform-specific machine ID
 // readPlatformMachineID 尝试读取平台特定的机器 ID.
 func readPlatformMachineID() (string, error) {
 	data, err := os.ReadFile("/etc/machine-id")

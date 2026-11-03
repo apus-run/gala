@@ -1,3 +1,11 @@
+// Package model defines the persistence models and list items of the
+// file-hosting service.
+//
+// Design: physical bytes live in fileserver.Storage, where the Key is an
+// opaque identifier; the database owns all the metadata — content addressing
+// (hash), sharing (reference counting), ownership (user links) and sessions
+// (resumable uploads). The object store serves purely as a byte layer, which
+// makes filestore and S3 interchangeable.
 // Package model 定义文件托管服务的持久化模型与列表项。
 //
 // 设计：物理字节在 fileserver.Storage 中，Key 是不透明标识；数据库负责全部
@@ -7,6 +15,10 @@ package model
 
 import "time"
 
+// FileMeta is the registration of one physical object: identified by its
+// content hash, shared by multiple users (reference count).
+// FileName is the name given by the first uploader; the display name is
+// UserFile.FileName.
 // FileMeta 是一个物理对象的登记项：以内容哈希为身份，被多个用户共享（引用计数）。
 // FileName 是首个上传者给的名字，展示名以 UserFile.FileName 为准。
 type FileMeta struct {
@@ -21,8 +33,15 @@ type FileMeta struct {
 	UpdatedAt   time.Time `gorm:"column:updated_at"`
 }
 
+// TableName returns the table name | TableName 返回表名。
 func (FileMeta) TableName() string { return "file_meta" }
 
+// UserFile links a user to a file; FileName is that user's display name and
+// can be renamed independently.
+// Folder is the owning directory from this user's perspective ("" is the
+// root, e.g. "照片/2026").
+// (UserID, FileHash) is unique: the same user re-uploading the same content
+// only overwrites the display name.
 // UserFile 是用户与文件的关联；FileName 是该用户的显示名，可独立重命名。
 // Folder 是该用户视角的归属目录（"" 为根，如 "照片/2026"）。
 // (UserID, FileHash) 唯一：同一用户重复上传同一内容只是覆盖显示名。
@@ -36,8 +55,13 @@ type UserFile struct {
 	UpdatedAt time.Time `gorm:"column:updated_at"`
 }
 
+// TableName returns the table name | TableName 返回表名。
 func (UserFile) TableName() string { return "user_files" }
 
+// UserFolder is a folder the user created explicitly, so empty folders can
+// exist too.
+// The hierarchy is encoded in Path ("照片/2026") with no separate parent
+// node; the root directory is not stored.
 // UserFolder 是用户显式创建的文件夹，让空文件夹也能存在。
 // 层级编码在 Path 里（"照片/2026"），不单独存父节点；根目录不落表。
 type UserFolder struct {
@@ -47,8 +71,12 @@ type UserFolder struct {
 	CreatedAt time.Time `gorm:"column:created_at"`
 }
 
+// TableName returns the table name | TableName 返回表名。
 func (UserFolder) TableName() string { return "user_folders" }
 
+// UploadSession is one resumable-upload session. UploadedMask records the
+// received chunks bit by bit, so neither progress queries nor resumes need to
+// enumerate the storage side (the contract has no List).
 // UploadSession 是一次断点续传会话。UploadedMask 按位记录已收到的分块，
 // 查询进度与续传都不需要枚举存储端（契约没有 List）。
 type UploadSession struct {
@@ -56,7 +84,7 @@ type UploadSession struct {
 	UserID       uint64    `gorm:"column:user_id;index"`
 	FileName     string    `gorm:"column:file_name;size:255;not null"`
 	Folder       string    `gorm:"column:folder;size:1024;not null;default:''"`
-	ReplaceOf    string    `gorm:"column:replace_of;size:64;not null;default:''"` // 非空表示完成后替换该哈希的文件
+	ReplaceOf    string    `gorm:"column:replace_of;size:64;not null;default:''"` // Non-empty: replace the file with this hash on completion | 非空表示完成后替换该哈希的文件。
 	FileSize     int64     `gorm:"column:file_size;not null"`
 	ContentType  string    `gorm:"column:content_type;size:255"`
 	ChunkSize    int64     `gorm:"column:chunk_size;not null"`
@@ -65,14 +93,15 @@ type UploadSession struct {
 	CreatedAt    time.Time `gorm:"column:created_at;index"`
 }
 
+// TableName returns the table name | TableName 返回表名。
 func (UploadSession) TableName() string { return "upload_sessions" }
 
-// Has 报告第 i 块是否已收到。
+// Has reports whether chunk i has been received | Has 报告第 i 块是否已收到。
 func (s *UploadSession) Has(i int) bool {
 	return s.UploadedMask[i/8]&(1<<(uint(i)%8)) != 0
 }
 
-// Count 返回已收到的分块数。
+// Count returns the number of received chunks | Count 返回已收到的分块数。
 func (s *UploadSession) Count() (n int) {
 	for i := 0; i < s.TotalChunks; i++ {
 		if s.Has(i) {
@@ -82,19 +111,25 @@ func (s *UploadSession) Count() (n int) {
 	return n
 }
 
-// StagingObject 是待清理对象的登记表：
-//   - 上传已写入存储但尚未登记为 FileMeta 的对象（崩溃回收）；
-//   - 引用计数归零后、物理对象尚未删除成功的 outbox。
-//
+// StagingObject is the registry of objects pending cleanup: objects already
+// written to storage but not yet registered as FileMeta (crash recovery), and
+// the outbox of physical objects whose deletion has not succeeded after the
+// reference count reached zero.
+// The contract has no List, so GC can only find pending deletions through
+// this table; therefore the registration row must not be deleted first while
+// the deletion can still fail.
+// StagingObject 是待清理对象的登记表：上传已写入存储但尚未登记为 FileMeta 的对象
+// （崩溃回收），以及引用计数归零后物理对象尚未删除成功的 outbox。
 // 契约没有 List，GC 只能靠这张表找到待删除对象，因此删除失败时不能先删登记行。
 type StagingObject struct {
 	StorageKey string    `gorm:"column:storage_key;primaryKey;size:1024"`
 	CreatedAt  time.Time `gorm:"column:created_at;index"`
 }
 
+// TableName returns the table name | TableName 返回表名。
 func (StagingObject) TableName() string { return "staging_objects" }
 
-// FileListItem 是用户文件列表项（联查结果）。
+// FileListItem is a user file-list item (join result) | FileListItem 是用户文件列表项（联查结果）。
 type FileListItem struct {
 	FileHash  string    `gorm:"column:file_hash" json:"file_hash"`
 	FileName  string    `gorm:"column:file_name" json:"file_name"`
@@ -102,7 +137,8 @@ type FileListItem struct {
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
-// PublicFileItem 是公开文件列表项：全部登记文件，不区分归属。
+// PublicFileItem is a public file-list item: every registered file,
+// regardless of ownership | PublicFileItem 是公开文件列表项：全部登记文件，不区分归属。
 type PublicFileItem struct {
 	FileHash   string    `gorm:"column:file_hash" json:"file_hash"`
 	FileName   string    `gorm:"column:file_name" json:"file_name"`

@@ -14,6 +14,12 @@ import (
 )
 
 // EncodeValues encode a message into url values.
+// EncodeValues 将消息编码为 url.Values.
+//
+// proto.Message values are encoded field by field (empty messages yield an
+// empty Values); other values are passed to the go-playground/form encoder.
+// proto.Message 逐字段编码（nil 或空指针得到空的 Values）；其余值交给
+// go-playground/form 编码器处理。
 func EncodeValues(msg any) (url.Values, error) {
 	if msg == nil || (reflect.ValueOf(msg).Kind() == reflect.Pointer && reflect.ValueOf(msg).IsNil()) {
 		return url.Values{}, nil
@@ -120,6 +126,12 @@ func encodeMapField(fieldDescriptor protoreflect.FieldDescriptor, mp protoreflec
 }
 
 // EncodeField encode proto message filed
+// EncodeField 编码 proto 消息的单个字段.
+//
+// Enums encode as their value name, bytes as base64 (URL-safe), and
+// well-known messages via [encodeMessage].
+// 枚举编码为其值名，bytes 编码为 base64（URL 安全），well-known 消息
+// 经 [encodeMessage] 处理。
 func EncodeField(fieldDescriptor protoreflect.FieldDescriptor, value protoreflect.Value) (string, error) {
 	switch fieldDescriptor.Kind() {
 	case protoreflect.BoolKind:
@@ -139,9 +151,13 @@ func EncodeField(fieldDescriptor protoreflect.FieldDescriptor, value protoreflec
 	}
 }
 
-// encodeMessage marshals the fields in the given protoreflect.Message.
-// If the typeURL is non-empty, then a synthetic "@type" field is injected
-// containing the URL as the value.
+// encodeMessage marshals a well-known message into its scalar string form.
+// encodeMessage 将 well-known 消息编码为其标量字符串形式.
+//
+// Supported: Timestamp, Duration, BytesValue, the scalar wrappers and
+// FieldMask; any other message type returns an error.
+// 支持 Timestamp、Duration、BytesValue、各标量 wrapper 与 FieldMask；
+// 其余消息类型返回错误。
 func encodeMessage(msgDescriptor protoreflect.MessageDescriptor, value protoreflect.Value) (string, error) {
 	switch msgDescriptor.FullName() {
 	case timestampMessageFullname:
@@ -170,6 +186,11 @@ func encodeMessage(msgDescriptor protoreflect.MessageDescriptor, value protorefl
 }
 
 // EncodeFieldMask return field mask name=paths
+// EncodeFieldMask 将 FieldMask 字段编码为 "name=paths" 查询串.
+//
+// Encoding stops at the first FieldMask field; the result is empty when the
+// message has none or the paths fail to encode.
+// 找到第一个 FieldMask 字段即停止；消息不含该字段或路径编码失败时结果为空。
 func EncodeFieldMask(m protoreflect.Message) (query string) {
 	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
 		if fd.Kind() == protoreflect.MessageKind {
@@ -194,16 +215,20 @@ func EncodeFieldMask(m protoreflect.Message) (query string) {
 // jsonCamelCase converts a snake_case identifier to a camelCase identifier,
 // according to the protobuf JSON specification.
 // references: https://github.com/protocolbuffers/protobuf-go/blob/master/encoding/protojson/well_known_types.go#L842
+// jsonCamelCase 按 protobuf JSON 规范把 snake_case 标识符转为 camelCase 标识符.
+// 参考：https://github.com/protocolbuffers/protobuf-go/blob/master/encoding/protojson/well_known_types.go#L842
 func jsonCamelCase(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s))
 
 	wasUnderscore := false
-	for i := range len(s) { // proto identifiers are always ASCIIS
+	// proto identifiers are always ASCIIS | proto 标识符恒为 ASCII
+	for i := range len(s) {
 		c := s[i]
 		if c != '_' {
 			if wasUnderscore && isASCIILower(c) {
-				c -= 'a' - 'A' // convert to uppercase
+				// convert to uppercase | 转为大写
+				c -= 'a' - 'A'
 			}
 			builder.WriteByte(c)
 		}

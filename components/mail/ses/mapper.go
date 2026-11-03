@@ -16,6 +16,9 @@ import (
 
 const charsetUTF8 = "UTF-8"
 
+// mapMessage builds the request as SES Simple Content. Every slice and
+// attachment byte is deep-copied, so the finished request no longer references
+// caller-owned data.
 // mapMessage 用 SES Simple Content 构造请求。所有 Slice 与附件字节
 // 均为深拷贝，映射完成后请求不再引用调用方数据。
 func mapMessage(msg mail.Message, configurationSet string) *sesv2.SendEmailInput {
@@ -59,7 +62,7 @@ func mapBody(msg mail.Message) *types.Body {
 	return body
 }
 
-// mapHeaders 按 Name 排序，保证映射结果与测试稳定。
+// mapHeaders sorts by name so the mapped result stays stable for tests | mapHeaders 按 Name 排序，保证映射结果与测试稳定。
 func mapHeaders(headers map[string]string) []types.MessageHeader {
 	if len(headers) == 0 {
 		return nil
@@ -71,7 +74,7 @@ func mapHeaders(headers map[string]string) []types.MessageHeader {
 	return out
 }
 
-// mapTags 按 Name 排序，保证映射结果与测试稳定。
+// mapTags sorts by name so the mapped result stays stable for tests | mapTags 按 Name 排序，保证映射结果与测试稳定。
 func mapTags(tags map[string]string) []types.MessageTag {
 	if len(tags) == 0 {
 		return nil
@@ -128,6 +131,10 @@ func optionalString(s string) *string {
 	return new(s)
 }
 
+// validateMessageSize checks the approximate raw message size in bytes (body,
+// headers, tags, addresses and attachments) before any deep copy or SDK
+// serialization. Additions are overflow-safe; over-budget or overflow returns
+// mail.ErrInvalidMessage without calling the Client.
 // validateMessageSize 在任何深拷贝与 SDK 序列化之前，检查近似原始
 // 消息总字节数（正文、Headers、Tags、地址与附件）。累加使用溢出安全
 // 加法；超限或溢出返回 mail.ErrInvalidMessage，不调用 Client。
@@ -145,6 +152,9 @@ func approximateMessageSize(msg mail.Message) (int64, bool) {
 	})
 }
 
+// approximateSESMessageSize evaluates the SES 40 MiB hard limit using the
+// Base64 length the SDK applies to attachments; other fields still count as
+// approximate UTF-8 byte lengths.
 // approximateSESMessageSize 使用 SDK 传输附件时的 Base64 长度计算 SES
 // 40 MiB 硬限制，其余字段仍按 UTF-8 字节数近似。
 func approximateSESMessageSize(msg mail.Message) (int64, bool) {

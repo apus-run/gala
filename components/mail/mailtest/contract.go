@@ -12,25 +12,36 @@ import (
 
 // ClientSpec 描述契约测试期望适配器底层假 Client 的行为。
 // 适配器测试根据该规格构造只实现窄 Client 接口的 Fake。
+// ClientSpec describes how the contract tests expect the adapter's underlying
+// fake client to behave; adapter tests build a Fake implementing only the
+// narrow client interface according to it.
 type ClientSpec struct {
 	// MessageID 是假 Client 成功时返回的 Provider 消息标识。
+	// MessageID is the provider message id the fake client returns on success.
 	MessageID string
 	// Err 非 nil 时，假 Client 返回该错误。
+	// Err, when non-nil, is the error the fake client returns.
 	Err error
 	// Called 非 nil 时，假 Client 每次被调用都置 *Called = true。
+	// Called, when non-nil, is set to true on every fake client invocation.
 	Called *bool
 }
 
 // SenderFactory 为某个 Provider 适配器构造受契约测试控制的 Sender。
+// SenderFactory builds a contract-test-controlled Sender for one provider adapter.
 type SenderFactory struct {
 	// Provider 是适配器写入 Receipt.Provider 与 DeliveryError.Provider 的标识。
+	// Provider is the identifier the adapter writes into Receipt.Provider and DeliveryError.Provider.
 	Provider string
 	// New 返回一个由符合 spec 的假 Client 支撑的 Sender。
+	// New returns a Sender backed by a fake client matching spec.
 	New func(t *testing.T, spec ClientSpec) mail.Sender
 }
 
 // ValidMessage 返回一条通过公共校验、覆盖主要字段的消息，
 // 供契约测试与适配器测试复用。
+// ValidMessage returns a message passing shared validation that covers the
+// main fields, for reuse by contract and adapter tests.
 func ValidMessage() mail.Message {
 	return mail.Message{
 		From:    mail.Address{Name: "Gala", Email: "hello@example.com"},
@@ -53,6 +64,10 @@ func ValidMessage() mail.Message {
 // RunSenderContract 对一个 Provider 适配器执行共享行为契约。
 // 字段映射的正确性（To/Cc/Bcc 不串位、Bcc 不进公开 Header 等）
 // 依赖 Provider 请求类型，由各适配器自己的单元测试覆盖。
+// RunSenderContract runs the shared behavior contract against one provider
+// adapter. Field-mapping correctness (To/Cc/Bcc staying in place, Bcc absent
+// from public headers, ...) depends on the provider request type and is
+// covered by each adapter's own unit tests.
 func RunSenderContract(t *testing.T, factory SenderFactory) {
 	t.Helper()
 

@@ -12,20 +12,29 @@ import (
 	"github.com/apus-run/gala/components/fileserver"
 )
 
+// Capabilities declares the backend's support for the optional semantics. A
+// capability that is not declared must return ErrUnsupported before any data
+// is written, instead of being silently ignored.
 // Capabilities 声明后端对可选语义的支持。未声明的能力必须在写入任何数据之前返回
 // ErrUnsupported，而不是静默忽略。
 type Capabilities struct {
-	ContentType bool // 支持 WithContentType，并通过 Stat 返回
-	Metadata    bool // 支持 WithMetadata，并通过 Stat 返回
-	IfNotExists bool // 支持 WithIfNotExists
-	ModTime     bool // Stat 返回非零的 ModTime
-	ETag        bool // Stat 返回非空的 ETag
+	ContentType bool // Supports WithContentType and returns it via Stat | 支持 WithContentType，并通过 Stat 返回
+	Metadata    bool // Supports WithMetadata and returns it via Stat | 支持 WithMetadata，并通过 Stat 返回
+	IfNotExists bool // Supports WithIfNotExists | 支持 WithIfNotExists
+	ModTime     bool // Stat returns a non-zero ModTime | Stat 返回非零的 ModTime
+	ETag        bool // Stat returns a non-empty ETag | Stat 返回非空的 ETag
 }
 
+// StorageFactory creates a new, empty backend for each subtest. Cleanup should
+// be registered via t.Cleanup.
 // StorageFactory 为每个子测试创建一个新的、空的后端。
 // 清理工作应通过 t.Cleanup 注册。
 type StorageFactory func(t *testing.T) fileserver.Storage
 
+// RunStorageSuite runs the shared conformance tests against a Storage
+// implementation, covering the operation semantics table in doc.go, the
+// option rejection rules, the range rules and the Key rules. Each subtest uses
+// a freshly created backend.
 // RunStorageSuite 对 Storage 实现运行共享契约测试，覆盖 doc.go 中的操作语义表、
 // 选项拒绝规则、范围规则与 Key 规则。每个子测试使用一个新建的后端。
 func RunStorageSuite(t *testing.T, newStorage StorageFactory, caps Capabilities) {
@@ -453,7 +462,7 @@ func casePrefixIsNotObject(t *testing.T, s fileserver.Storage, _ Capabilities) {
 	requireContent(t, got, data, "child after prefix Remove")
 }
 
-// ---- 共享辅助函数 ----
+// ---- Shared helpers ---- | ---- 共享辅助函数 ----
 
 func put(t *testing.T, s fileserver.Storage, key string, data []byte, opts ...fileserver.UploadOpt) error {
 	t.Helper()

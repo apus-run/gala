@@ -1,3 +1,11 @@
+// Package config loads the filehttp configuration via components/conf.
+//
+// The configuration source is a YAML/JSON/TOML file (config/config.yaml by
+// default). conf enables AutomaticEnv for every key, so "path-to-underscores"
+// environment variables such as STORAGE_S3_BUCKET can override file values;
+// for compatibility with the existing Docker setup, this package also binds
+// the legacy variable names (S3_BUCKET, LISTEN_ADDR, ...) explicitly to the
+// same keys.
 // Package config 用 components/conf 加载 filehttp 的配置。
 //
 // 配置来源是一个 YAML/JSON/TOML 文件（默认 config/config.yaml）。conf 会为
@@ -16,7 +24,7 @@ import (
 	"github.com/apus-run/gala/components/conf/file"
 )
 
-// Config 是 filehttp 的完整运行配置。
+// Config is the complete runtime configuration of filehttp | Config 是 filehttp 的完整运行配置。
 type Config struct {
 	Server struct {
 		ListenAddr     string `mapstructure:"listen_addr"`
@@ -36,6 +44,8 @@ type Config struct {
 	} `mapstructure:"storage"`
 }
 
+// Load reads CONFIG_PATH (config/config.yaml by default) and applies
+// environment variable overrides.
 // Load 读取 CONFIG_PATH（默认 config/config.yaml）并应用环境变量覆盖。
 func Load() (Config, error) {
 	path := os.Getenv("CONFIG_PATH")
@@ -75,6 +85,9 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// configName returns the cache name conf generates for the config file.
+// Directory sources are named config.*; single-file sources use the file name
+// without its extension.
 // configName 返回 conf 为配置文件生成的缓存名。目录来源按 config.* 命名；
 // 单文件来源使用去掉扩展名的文件名。
 func configName(path string) string {
@@ -85,6 +98,10 @@ func configName(path string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
+// bindLegacyEnv keeps the existing environment variable names. New names
+// (e.g. STORAGE_S3_BUCKET) are supported automatically by conf.Load's
+// AutomaticEnv; the explicit bindings are only a compatibility layer for the
+// old names.
 // bindLegacyEnv 保留既有环境变量名。新名字（如 STORAGE_S3_BUCKET）由 conf.Load
 // 的 AutomaticEnv 自动支持；显式绑定只是旧名字的兼容层。
 func bindLegacyEnv(v *conf.V) {

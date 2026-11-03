@@ -1,4 +1,5 @@
 // Package registrytest provides the shared registration and discovery contract tests.
+// registrytest 提供注册与发现契约的共享测试套件.
 package registrytest
 
 import (
@@ -13,11 +14,12 @@ import (
 
 // NewFunc builds a fresh, empty registry for one test. The suite closes both
 // halves when the test ends.
+// NewFunc 为单个测试构建全新的空注册中心；测试结束时套件会关闭两端.
 type NewFunc func(t *testing.T) (registry.Registry, registry.Discovery)
 
 const wait = 3 * time.Second
 
-// Run runs the whole suite.
+// Run runs the whole suite | Run 运行整套契约测试.
 func Run(t *testing.T, newFn NewFunc) {
 	t.Helper()
 	tests := []struct {
@@ -80,6 +82,7 @@ func recv(t *testing.T, ch <-chan registry.Event) registry.Event {
 }
 
 // expectClosed drains ch and fails unless it is closed in time.
+// expectClosed 排空 ch，超时仍未关闭则判定失败.
 func expectClosed(t *testing.T, ch <-chan registry.Event) {
 	t.Helper()
 	deadline := time.After(wait)
@@ -304,6 +307,7 @@ func testSlowConsumer(t *testing.T, reg registry.Registry, dis registry.Discover
 
 	// Never read from ch while registering far more than any sane buffer.
 	// The Registry must not block, and the subscription must end.
+	// 注册远超合理缓冲数量的事件期间不读 ch。Registry 不得阻塞，订阅最终必须结束.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -322,6 +326,7 @@ func testSlowConsumer(t *testing.T, reg registry.Registry, dis registry.Discover
 
 	// Asynchronous backends forward events from a goroutine; give it time to
 	// overflow the unread subscription before the reader starts draining.
+	// 异步后端由 goroutine 转发事件；在读者开始排空前给它时间把未读订阅撑爆.
 	time.Sleep(100 * time.Millisecond)
 
 	received := 0
@@ -343,6 +348,7 @@ loop:
 	}
 
 	// The consumer's recovery path: resubscribe and see the full state.
+	// 消费方的恢复路径：重新订阅并看到全量状态.
 	ch, err = dis.Subscribe(ctx, "svc")
 	if err != nil {
 		t.Fatal(err)

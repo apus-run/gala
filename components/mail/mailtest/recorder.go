@@ -1,5 +1,7 @@
 // Package mailtest 提供 mail.Sender 的进程内假实现与共享契约测试，
 // 供业务单元测试与 Provider 适配器测试复用。
+// mailtest provides an in-process fake mail.Sender and shared contract tests
+// for reuse by business unit tests and provider adapter tests.
 package mailtest
 
 import (
@@ -14,11 +16,14 @@ import (
 
 // Recorder 是核心 Sender 的进程内假实现，记录收到的每条消息。
 // 零值可用。
+// Recorder is the in-process fake core Sender, recording every received
+// message. The zero value is ready to use.
 type Recorder struct {
 	mu       sync.Mutex
 	messages []mail.Message
 
 	// Receipt 与 Err 必须在首次 Send 前配置，之后不得并发修改。
+	// Receipt and Err must be configured before the first Send and must not be modified concurrently afterwards.
 	Receipt mail.Receipt
 	Err     error
 }
@@ -26,6 +31,7 @@ type Recorder struct {
 var _ mail.Sender = (*Recorder)(nil)
 
 // Send 记录消息的深拷贝，然后返回预配置的 Receipt 或 Err。
+// Send records a deep copy of the message, then returns the configured Receipt or Err.
 func (r *Recorder) Send(ctx context.Context, msg mail.Message) (mail.Receipt, error) {
 	if err := ctx.Err(); err != nil {
 		return mail.Receipt{}, err
@@ -40,6 +46,7 @@ func (r *Recorder) Send(ctx context.Context, msg mail.Message) (mail.Receipt, er
 }
 
 // Messages 对每条消息再次深拷贝，可安全并发调用。
+// Messages deep-copies every message again; it is safe for concurrent use.
 func (r *Recorder) Messages() []mail.Message {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -53,6 +60,8 @@ func (r *Recorder) Messages() []mail.Message {
 
 // cloneMessage 深拷贝 ReplyTo、所有地址 Slice、Headers、Tags、
 // Attachments Slice 以及每个 Attachment.Content。
+// cloneMessage deep-copies ReplyTo, every address slice, Headers, Tags, the
+// Attachments slice and each Attachment.Content.
 func cloneMessage(msg mail.Message) mail.Message {
 	out := msg
 	if msg.ReplyTo != nil {

@@ -2,6 +2,7 @@
 // Adapted from gofiber/fiber/v3/middleware/helmet under the MIT License; see LICENSE.
 
 // Package helmet adds configurable security response headers to Gin requests.
+// helmet 为 Gin 请求添加可配置的安全响应头。
 package helmet
 
 import (
@@ -13,21 +14,26 @@ import (
 
 // Builder creates Helmet handlers without retaining configuration or request state.
 // Each Build captures its own configuration snapshot.
+// Builder 创建 Helmet handler，不保留配置或请求状态；每次 Build 都捕获自己的配置快照。
 type Builder struct{}
 
 // NewBuilder returns a stateless Helmet builder.
+// NewBuilder 返回无状态的 Helmet 构建器。
 func NewBuilder() *Builder {
 	return &Builder{}
 }
 
 // Build creates a Gin middleware with the upstream Helmet configuration semantics.
 // Only the first optional Config is used, as in Fiber Helmet.
+// Build 按上游 Helmet 语义创建 Gin 中间件。与 Fiber Helmet 一样只使用第一个可选 Config。
 func (b *Builder) Build(config ...Config) gin.HandlerFunc {
-	// Init config
+	// Init config | 初始化配置
 	cfg := configDefault(config...)
 
 	// The Strict-Transport-Security value only depends on config, so build it
 	// once instead of formatting it on every secure request.
+	// Strict-Transport-Security 的值只取决于配置，因此只构建一次，
+	// 不在每个安全请求上重复格式化。
 	hstsHeaderValue := ""
 	if cfg.HSTSMaxAge > 0 {
 		var header strings.Builder
@@ -47,9 +53,9 @@ func (b *Builder) Build(config ...Config) gin.HandlerFunc {
 		isSecure = func(c *gin.Context) bool { return c.Request.TLS != nil }
 	}
 
-	// Return middleware handler
+	// Return middleware handler | 返回中间件 handler
 	return func(c *gin.Context) {
-		// Next request to skip middleware
+		// Next request to skip middleware | 命中 Next 的请求跳过中间件
 		if cfg.Next != nil && cfg.Next(c) {
 			c.Next()
 			return
@@ -100,12 +106,12 @@ func (b *Builder) Build(config ...Config) gin.HandlerFunc {
 			c.Header("X-Permitted-Cross-Domain-Policies", cfg.XPermittedCrossDomain)
 		}
 
-		// Handle HSTS headers
+		// Handle HSTS headers | 处理 HSTS 响应头
 		if hstsHeaderValue != "" && isSecure(c) {
 			c.Header("Strict-Transport-Security", hstsHeaderValue)
 		}
 
-		// Handle Content-Security-Policy headers
+		// Handle Content-Security-Policy headers | 处理 Content-Security-Policy 响应头
 		if cfg.ContentSecurityPolicy != "" {
 			if cfg.CSPReportOnly {
 				c.Header("Content-Security-Policy-Report-Only", cfg.ContentSecurityPolicy)
@@ -114,7 +120,7 @@ func (b *Builder) Build(config ...Config) gin.HandlerFunc {
 			}
 		}
 
-		// Handle Permissions-Policy headers
+		// Handle Permissions-Policy headers | 处理 Permissions-Policy 响应头
 		if cfg.PermissionPolicy != "" {
 			c.Header("Permissions-Policy", cfg.PermissionPolicy)
 		}

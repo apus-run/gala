@@ -14,6 +14,8 @@ import (
 	"github.com/apus-run/gala/components/ginx"
 )
 
+// Download serves a file by content hash, supporting HEAD, ETag and a
+// single-range Range.
 // Download 按内容哈希下载，支持 HEAD、ETag 与单区间 Range。
 func (h *FileHandler) Download(c *ginx.Context) (ginx.Result, error) {
 	ctx := c.Request.Context()
@@ -22,6 +24,8 @@ func (h *FileHandler) Download(c *ginx.Context) (ginx.Result, error) {
 	if err != nil {
 		return fail(err)
 	}
+	// Content is addressed by hash and never modified in place, so the
+	// metadata and later range reads refer to the same bytes.
 	// 内容按哈希寻址且不原地修改，属性与后续范围读取对应同一份内容。
 	etag := `"` + d.FileHash + `"`
 	if matchesETag(strings.Join(c.Request.Header.Values("If-None-Match"), ","), etag) {
@@ -70,9 +74,11 @@ func (h *FileHandler) Download(c *ginx.Context) (ginx.Result, error) {
 		c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+length-1, d.FileSize))
 	}
 	c.Status(status)
-	if body == nil { // HEAD 不打开内容流。
+	if body == nil { // HEAD does not open the content stream | HEAD 不打开内容流。
 		return ginx.Result{}, ginx.ErrNoResponse
 	}
+	// Streams returned by Storage.Read do not follow Context cancellation, so
+	// the body must be closed actively when the HTTP connection breaks.
 	// Storage.Read 的流返回后不随 Context 取消，HTTP 断开时需要主动关闭。
 	closeBody := sync.OnceValue(body.Close)
 	defer closeBody()
@@ -84,11 +90,13 @@ func (h *FileHandler) Download(c *ginx.Context) (ginx.Result, error) {
 		err = io.ErrUnexpectedEOF
 	}
 	if err = errors.Join(err, closeBody()); err != nil && !errors.Is(err, context.Canceled) {
-		c.Error(err) //nolint:errcheck // 响应已提交，只记录传输错误，不追加 JSON。
+		c.Error(err) //nolint:errcheck // Response already committed: only log the transfer error, append no JSON | 响应已提交，只记录传输错误，不追加 JSON。
 	}
 	return ginx.Result{}, ginx.ErrNoResponse
 }
 
+// The ETags of this example are comma-free content hashes, so a general
+// opaque-tag parser is unnecessary.
 // 本示例的 ETag 是不含逗号的内容哈希，无需通用的 opaque-tag 解析器。
 func matchesETag(value, etag string) bool {
 	for _, tag := range strings.Split(value, ",") {
@@ -110,6 +118,9 @@ func inlineType(ct string) bool {
 	return false
 }
 
+// parseRange returns a single range clamped to the end of the object.
+// Malformed or multi-range input falls back to a full response; an
+// out-of-bounds start is turned into 416 by the caller.
 // parseRange 返回截到对象末尾的单区间。格式错误或多区间回退完整响应；起点越界由调用方返回 416。
 func parseRange(value string, size int64) (start, length int64, ok bool) {
 	spec, found := strings.CutPrefix(value, "bytes=")
@@ -142,6 +153,8 @@ func parseRange(value string, size int64) (start, length int64, ok bool) {
 	if start >= size {
 		return start, 0, true
 	}
+	// Clamp first, then compute the length, so bytes=0-9223372036854775807
+	// does not overflow the addition.
 	// 先截短再计算长度，避免 bytes=0-9223372036854775807 导致加法溢出。
 	return start, min(end, size-1) - start + 1, true
 }

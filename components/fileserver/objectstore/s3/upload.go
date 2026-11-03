@@ -20,6 +20,16 @@ import (
 
 const mib = 1 << 20
 
+// Upload implements fileserver.Uploader.
+//
+// The strategy is "fill one part first": input ending within the first
+// part uses a single PutObject; otherwise a multipart upload is created
+// and CompleteMultipartUpload runs only after every part succeeds. With a
+// declared length, both overlong and short inputs fail before the commit
+// with ErrSizeMismatch, and any started multipart upload is aborted.
+// Memory is bounded by PartSize × Concurrency. PutObject,
+// CreateMultipartUpload and UploadPart all carry the SHA-256 additional
+// checksum; the receipt's ETag is not treated as a content MD5.
 // Upload 实现 fileserver.Uploader。
 //
 // 策略是"先读满一片"：输入在第一片内结束则使用单次 PutObject；否则创建分片上传，
@@ -77,18 +87,20 @@ func (s *Store) Upload(ctx context.Context, key string, r io.Reader, opts ...fil
 	return nil
 }
 
+// uploadRun holds the state of one Upload. The main goroutine reads and
+// dispatches; each part is uploaded by a worker.
 // uploadRun 保存一次 Upload 的状态。主协程负责读取与派发，每个分片由一个 worker 上传。
 type uploadRun struct {
 	s           *Store
-	ctx         context.Context // 本次调用的内部 Context，出错时取消
+	ctx         context.Context // internal Context of this call, cancelled on error | 本次调用的内部 Context，出错时取消
 	cancel      context.CancelFunc
 	objKey      string
 	meta        putMeta
-	size        int64 // 声明的长度；hasSize 为 false 时无意义
+	size        int64 // declared size; meaningless when hasSize is false | 声明的长度；hasSize 为 false 时无意义
 	hasSize     bool
 	ifNotExists bool
 	prog        *progress
-	uploadID    string // 只由主协程在派发任何 worker 之前写入
+	uploadID    string // written only by the main goroutine before any worker is dispatched | 只由主协程在派发任何 worker 之前写入
 
 	wg   sync.WaitGroup
 	mu   sync.Mutex
@@ -100,17 +112,19 @@ func (u *uploadRun) run(r io.Reader) (int64, error) {
 	partSize := u.s.uploadPartSize(u.size, u.hasSize)
 	bufSize := partSize
 	if u.hasSize && u.size+1 < bufSize {
-		bufSize = u.size + 1 // 小对象不需要分配整片缓冲
+		bufSize = u.size + 1 // small objects need no full part buffer | 小对象不需要分配整片缓冲
 	}
 	src := r
 	if u.hasSize {
+		// Read at most size+1 bytes, to detect an overlong input without
+		// unbounded reading.
 		// 最多读取 size+1 字节，用于在不无界读取的前提下发现超长输入。
 		src = io.LimitReader(r, u.size+1)
 	}
 	c := &chunker{r: iox.Reader(u.ctx, src)}
 	free := make(chan []byte, u.s.concurrency)
 	for range u.s.concurrency {
-		free <- nil // 空槽只限制在途片数；真正读取这一片时才分配缓冲。
+		free <- nil // empty slots only cap in-flight parts; buffers are allocated when this part is actually read | 空槽只限制在途片数；真正读取这一片时才分配缓冲。
 	}
 
 	var total int64
@@ -158,6 +172,8 @@ func (u *uploadRun) run(r io.Reader) (int64, error) {
 	return u.conclude(total)
 }
 
+// checkTotal checks the length once total bytes are read: exceeding the
+// declared length or the configured cap returns the corresponding error.
 // checkTotal 在读到 total 字节后检查长度：超过声明长度或配置上限时返回对应的错误。
 func (u *uploadRun) checkTotal(total int64) error {
 	if u.hasSize && total > u.size {
@@ -169,8 +185,11 @@ func (u *uploadRun) checkTotal(total int64) error {
 	return nil
 }
 
+// conclude commits the object after all parts finish. Any failure
+// abandons the started multipart upload.
 // conclude 在所有分片结束后提交对象。任何失败都会放弃已开始的分片上传。
 func (u *uploadRun) conclude(total int64) (int64, error) {
+	// All workers have exited; read the final error directly.
 	// 所有 worker 已退出，直接读取最终错误。
 	if u.err != nil {
 		return 0, u.abortWith(u.err)
@@ -184,6 +203,8 @@ func (u *uploadRun) conclude(total int64) (int64, error) {
 	return total, nil
 }
 
+// single commits the whole object with a single PutObject. No parts are
+// in flight when it is called.
 // single 使用单次 PutObject 提交整个对象。调用前没有任何分片在途。
 func (u *uploadRun) single(data []byte) error {
 	if u.hasSize && int64(len(data)) != u.size {
@@ -201,6 +222,8 @@ func (u *uploadRun) begin() error {
 	u.meta.applyCreate(in)
 	out, err := u.s.api.CreateMultipartUpload(u.ctx, in, singleAttempt)
 	if err != nil {
+		// On timeout or 5xx the server may already have created the
+		// upload, but the client has no UploadId and cannot Abort.
 		// 超时或 5xx 时服务端可能已经建好上传，但客户端没有 UploadId，无法 Abort。
 		return classifyWrite(err)
 	}
@@ -212,6 +235,9 @@ func (u *uploadRun) begin() error {
 	return nil
 }
 
+// dispatch uploads one part in a worker. After the upload the buffer is
+// returned to free. free's capacity equals the total buffer count, so
+// the return never blocks.
 // dispatch 在 worker 中上传一片。上传结束后，缓冲被归还到 free。
 // free 的容量等于缓冲总数，因此归还不会阻塞。
 func (u *uploadRun) dispatch(part int, buf []byte, n int, free chan<- []byte) {
@@ -240,7 +266,7 @@ func (u *uploadRun) record(part int, etag, sum string, n int64) {
 }
 
 func (u *uploadRun) complete() error {
-	parts := u.done // 所有 worker 已退出；无需复制即可排序。
+	parts := u.done // all workers have exited; sorting in place needs no copy | 所有 worker 已退出；无需复制即可排序。
 	slices.SortFunc(parts, func(a, b types.CompletedPart) int {
 		return int(aws.ToInt32(a.PartNumber) - aws.ToInt32(b.PartNumber))
 	})
@@ -259,6 +285,8 @@ func (u *uploadRun) complete() error {
 	return nil
 }
 
+// acquire takes an idle buffer; it returns the cancellation error when
+// the caller has already cancelled.
 // acquire 取得一个空闲缓冲；调用方已取消时返回取消错误。
 func (u *uploadRun) acquire(free <-chan []byte) ([]byte, error) {
 	select {
@@ -269,7 +297,7 @@ func (u *uploadRun) acquire(free <-chan []byte) ([]byte, error) {
 	}
 }
 
-// fail 记录第一个错误并取消其余工作。
+// fail records the first error and cancels the remaining work | fail 记录第一个错误并取消其余工作。
 func (u *uploadRun) fail(err error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -279,6 +307,9 @@ func (u *uploadRun) fail(err error) {
 	}
 }
 
+// abortWith aborts the multipart upload when one exists. Abort failures
+// are appended to the returned error; leftovers are covered by lifecycle
+// rules.
 // abortWith 在存在分片上传时放弃它。Abort 的失败会附加到返回的错误上，残留由生命周期规则兜底。
 func (u *uploadRun) abortWith(err error) error {
 	if u.uploadID == "" {
@@ -290,6 +321,9 @@ func (u *uploadRun) abortWith(err error) error {
 	return err
 }
 
+// abortUpload abandons an unfinished multipart upload. It uses a short
+// non-cancellable timeout Context derived from parent, so cleanup still
+// works when the caller's Context is already cancelled.
 // abortUpload 放弃未完成的分片上传。它使用基于 parent 派生的、不会被取消的短超时 Context，
 // 因此调用方的 Context 已取消时仍能清理。
 func (s *Store) abortUpload(parent context.Context, objKey, uploadID string) error {
@@ -309,10 +343,16 @@ func (s *Store) abortUpload(parent context.Context, objKey, uploadID string) err
 	return classify(err)
 }
 
+// singleAttempt keeps SDK auto-retries from masking a commit that already
+// took effect but whose response was lost. For example the first write of
+// a conditional create succeeds and the retry gets a 412, from which the
+// whole call cannot be judged unwritten.
 // singleAttempt 防止 SDK 自动重试掩盖一次已经生效但响应丢失的提交。
 // 例如条件创建的第一次写入成功，重试得到 412，无法据此判定整个调用未写入。
 func singleAttempt(o *awss3.Options) { o.RetryMaxAttempts = 1 }
 
+// putObject uploads data with a single PutObject; when the receipt is
+// lost the caller re-checks the object.
 // putObject 使用单次 PutObject 上传 data；丢失回执时由调用方核对对象。
 func (s *Store) putObject(ctx context.Context, objKey string, data []byte, meta putMeta, ifNotExists bool) error {
 	in := &awss3.PutObjectInput{
@@ -333,6 +373,10 @@ func (s *Store) putObject(ctx context.Context, objKey string, data []byte, meta 
 	return nil
 }
 
+// uploadPart uploads one part. It returns the backend-confirmed ETag and
+// SHA-256 (standard base64). When the response echoes the digest it must
+// match the local computation; echoing is not required of compatible
+// backends.
 // uploadPart 上传一片。返回后端确认的 ETag 与 SHA-256（标准 base64）。
 // 响应若回显摘要，必须与本地计算一致；不要求兼容后端回显。
 func (s *Store) uploadPart(ctx context.Context, objKey, uploadID string, partNumber int, data []byte) (string, string, error) {
@@ -348,6 +392,9 @@ func (s *Store) uploadPart(ctx context.Context, objKey, uploadID string, partNum
 		ChecksumSHA256:    aws.String(sum),
 	})
 	if err != nil {
+		// This part is not the commit yet. The caller will Abort; after a
+		// successful Abort the object is unchanged and the upload can be
+		// retried.
 		// 这一片还不是提交。调用方会 Abort；Abort 成功后对象没有变化，可以重试。
 		return "", "", classify(err)
 	}
@@ -362,17 +409,24 @@ func (s *Store) uploadPart(ctx context.Context, objKey, uploadID string, partNum
 	return etag, sum, nil
 }
 
+// uploadPartSize computes the part size. With a known length the part
+// count stays within MaxParts and the size is rounded up to a MiB; with
+// an unknown length the configured part size is used.
 // uploadPartSize 计算分片大小。已知长度时，分片数不超过 MaxParts，并向上取整到 MiB；
 // 未知长度时使用配置的分片大小。
 func (s *Store) uploadPartSize(size int64, hasSize bool) int64 {
 	if !hasSize {
 		return s.partSize
 	}
-	ceilDiv := (size + maxParts - 1) / maxParts // ceil(size / MaxParts)
+	ceilDiv := (size + maxParts - 1) / maxParts // ceil(size / MaxParts) | size 除以 MaxParts 向上取整
 	ps := max(s.partSize, ceilDiv)
 	return (ps + mib - 1) / mib * mib
 }
 
+// chunker splits the input into parts. next fills the buffer and, once
+// full, probes whether more data follows; the probed byte is saved for
+// the next part. Callers can therefore tell whether the current part is
+// the last one.
 // chunker 把输入切成片。next 会填满缓冲，并在填满后探测是否还有数据；
 // 探测到的字节保存下来，留给下一片。因此调用方能判断当前片是否是最后一片。
 type chunker struct {
@@ -381,6 +435,8 @@ type chunker struct {
 	eof   bool
 }
 
+// next fills buf. last true means buf[:n] is the last part; only an empty
+// input can produce an empty one.
 // next 填充 buf。last 为 true 表示 buf[:n] 是最后一片；只有输入为空时，它才可能为空。
 func (c *chunker) next(buf []byte) (n int, last bool, err error) {
 	n = copy(buf, c.carry)
@@ -400,6 +456,9 @@ func (c *chunker) next(buf []byte) (n int, last bool, err error) {
 		}
 	}
 
+	// The one-byte lookahead follows the same error rules as filling the
+	// part; even when data was returned, a non-EOF error must not be
+	// swallowed.
 	// 一字节前瞻与填片遵守同一错误规则；即使返回了数据，也不能吞掉非 EOF 错误。
 	var one [1]byte
 	m, err := iox.ReadSome(c.r, one[:])
@@ -414,7 +473,7 @@ func (c *chunker) next(buf []byte) (n int, last bool, err error) {
 	return n, true, nil
 }
 
-// putMeta 是随对象一起持久化的内容类型与元数据。
+// putMeta is the content type and metadata persisted with the object | putMeta 是随对象一起持久化的内容类型与元数据。
 type putMeta struct {
 	contentType string
 	metadata    map[string]string

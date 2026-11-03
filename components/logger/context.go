@@ -7,6 +7,8 @@ import (
 
 type ctxAttrsKey struct{}
 
+// ContextWithAttrs stores attrs in ctx, merging with any already stored
+// | ContextWithAttrs 把属性存入 ctx，与已有属性合并。
 func ContextWithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -21,6 +23,7 @@ func ContextWithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
 	return context.WithValue(ctx, ctxAttrsKey{}, merged)
 }
 
+// AttrsFromContext returns the attrs stored in ctx | AttrsFromContext 取出 ctx 中保存的属性。
 func AttrsFromContext(ctx context.Context) []slog.Attr {
 	if ctx == nil {
 		return nil
@@ -61,10 +64,12 @@ type contextHandler struct {
 	extractors []Extractor
 }
 
+// Enabled implements slog.Handler | 实现 slog.Handler.
 func (h *contextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.next.Enabled(ctx, level)
 }
 
+// Handle implements slog.Handler, injecting the extracted attrs | 实现 slog.Handler，注入提取到的属性.
 func (h *contextHandler) Handle(ctx context.Context, record slog.Record) error {
 	attrs := h.attrs(ctx)
 	if len(attrs) > 0 {
@@ -74,10 +79,12 @@ func (h *contextHandler) Handle(ctx context.Context, record slog.Record) error {
 	return h.next.Handle(ctx, record)
 }
 
+// WithAttrs implements slog.Handler | 实现 slog.Handler.
 func (h *contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &contextHandler{next: h.next.WithAttrs(attrs), extractors: h.extractors}
 }
 
+// WithGroup implements slog.Handler | 实现 slog.Handler.
 func (h *contextHandler) WithGroup(name string) slog.Handler {
 	return &contextHandler{next: h.next.WithGroup(name), extractors: h.extractors}
 }

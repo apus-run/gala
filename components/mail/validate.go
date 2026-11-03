@@ -8,6 +8,8 @@ import (
 
 // reservedHeaders 是不允许通过自定义 Headers 重写的结构字段，
 // Key 为 textproto.CanonicalMIMEHeaderKey 归一化后的形式。
+// reservedHeaders lists structural fields that custom Headers must not
+// override; keys are in textproto.CanonicalMIMEHeaderKey normalized form.
 var reservedHeaders = map[string]struct{}{
 	"From":         {},
 	"To":           {},
@@ -23,6 +25,10 @@ var reservedHeaders = map[string]struct{}{
 // Provider 特有约束（消息预算、Header 数量、Tag 字符集等）由各适配器
 // 在公共校验之后、调用 Client 之前检查。校验失败的错误满足
 // errors.Is(err, ErrInvalidMessage)。
+// Validate checks the shared rules that hold across providers. Provider-specific
+// constraints (message budget, header count, tag charset, ...) are checked by
+// each adapter after the shared validation and before calling its client.
+// Failures satisfy errors.Is(err, ErrInvalidMessage).
 func (m Message) Validate() error {
 	if err := validateAddress("from", m.From); err != nil {
 		return err
@@ -90,6 +96,8 @@ func (m Message) Validate() error {
 // validHeaderName implements RFC 5322 field-name/ftext: printable ASCII except
 // colon. Iterate by byte so non-ASCII names are rejected rather than partially
 // accepted as UTF-8.
+// validHeaderName 实现 RFC 5322 的 field-name/ftext：除冒号外的可打印 ASCII。
+// 按字节遍历，非 ASCII 名称直接拒绝，而不是被部分接受为 UTF-8。
 func validHeaderName(name string) bool {
 	for i := range len(name) {
 		if name[i] < 33 || name[i] > 126 || name[i] == ':' {
@@ -102,6 +110,8 @@ func validHeaderName(name string) bool {
 // validHeaderValue rejects C0 controls and DEL while retaining HTAB, printable
 // ASCII, and UTF-8 values. CR and LF remain forbidden, so callers cannot fold or
 // inject additional fields.
+// validHeaderValue 拒绝 C0 控制符与 DEL，保留 HTAB、可打印 ASCII 与 UTF-8。
+// CR/LF 仍然禁止，因此调用方无法折叠或注入额外字段。
 func validHeaderValue(value string) bool {
 	for i := range len(value) {
 		if value[i] == '\t' {

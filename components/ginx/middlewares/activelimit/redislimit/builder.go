@@ -1,4 +1,5 @@
-// Package redislimit bounds concurrent requests with expiring Redis leases.
+// Package redislimit bounds concurrent requests with expiring Redis leases
+// | redislimit 用带过期的 Redis 租约限制并发请求数.
 package redislimit
 
 import (
@@ -13,12 +14,15 @@ import (
 	"go.uber.org/atomic"
 )
 
+// counter is the minimal Redis command surface required | counter 是所需的最小 Redis 命令接口.
 type counter interface {
 	Eval(context.Context, string, []string, ...any) *redis.Cmd
 }
 
 // Server time keeps expiry consistent across instances. Acquiring with the same
 // token is idempotent, including when go-redis retries after losing a reply.
+// 使用 Redis 服务器时间保证各实例过期一致；同 token 重复获取是幂等的，
+// 包括 go-redis 在丢失应答后重试的情况。
 const acquireLease = `
 local t = redis.call('TIME')
 local now = t[1] * 1000 + math.floor(t[2] / 1000)
@@ -36,6 +40,8 @@ const releaseLease = `return redis.call('ZREM', KEYS[1], ARGV[1])`
 // RedisActiveLimit shares admission across instances using one lease key.
 // Configure setters before Build, except SetMaxActive, which is concurrency-safe.
 // Do not copy an instance after use.
+// RedisActiveLimit 通过一个租约 key 在多实例间共享准入额度。setter 需在
+// Build 前配置（SetMaxActive 除外，它并发安全）；使用后不要拷贝实例。
 type RedisActiveLimit struct {
 	maxActive        *atomic.Int64
 	key              string
@@ -49,6 +55,9 @@ type RedisActiveLimit struct {
 // cmd must support EVAL and honor context deadlines. For go-redis enable
 // ContextTimeoutEnabled and configure bounded connection timeouts. Coordinate
 // deployment when upgrading from INCR/DECR: the keys are independent.
+// NewRedisActiveLimit 使用 key + ":leases" 存放按请求过期的租约。cmd 必须支持
+// EVAL 并遵守 context 截止时间；go-redis 需开启 ContextTimeoutEnabled 并配置
+// 有界连接超时；从 INCR/DECR 升级时需协调部署，两者的 key 相互独立。
 func NewRedisActiveLimit(cmd counter, maxActive int64, key string) *RedisActiveLimit {
 	if cmd == nil || key == "" {
 		panic("redislimit: Redis client and key are required")
@@ -64,12 +73,14 @@ func NewRedisActiveLimit(cmd counter, maxActive int64, key string) *RedisActiveL
 }
 
 // SetMaxActive changes the admission limit; zero or negative refuses new requests.
+// SetMaxActive 修改准入上限；零或负数将拒绝新请求。
 func (a *RedisActiveLimit) SetMaxActive(maxActive int64) *RedisActiveLimit {
 	a.maxActive.Store(maxActive)
 	return a
 }
 
 // SetLogFunc sets error logging; nil disables logging.
+// SetLogFunc 设置错误日志函数；传 nil 关闭日志。
 func (a *RedisActiveLimit) SetLogFunc(fn func(msg any, args ...any)) *RedisActiveLimit {
 	if fn == nil {
 		fn = func(any, ...any) {}
@@ -81,6 +92,8 @@ func (a *RedisActiveLimit) SetLogFunc(fn func(msg any, args ...any)) *RedisActiv
 // SetLeaseTTL sets both the request execution deadline and the lease lifetime.
 // Handlers and downstream calls must honor Request.Context(); Go cannot forcibly
 // stop a handler that ignores cancellation. TTL must be at least one millisecond.
+// SetLeaseTTL 同时设置请求执行截止时间与租约存活时间。handler 与下游调用必须
+// 遵守 Request.Context()；Go 无法强制停止忽略取消的 handler。TTL 至少 1 毫秒。
 func (a *RedisActiveLimit) SetLeaseTTL(ttl time.Duration) *RedisActiveLimit {
 	if ttl < time.Millisecond {
 		panic("redislimit: lease TTL must be at least one millisecond")
@@ -91,6 +104,8 @@ func (a *RedisActiveLimit) SetLeaseTTL(ttl time.Duration) *RedisActiveLimit {
 
 // SetOperationTimeout sets the deadline for each Redis operation, including
 // cleanup. The injected Redis client must honor context deadlines.
+// SetOperationTimeout 设置每个 Redis 操作（含清理）的截止时间；
+// 注入的 Redis 客户端必须遵守 context 截止时间。
 func (a *RedisActiveLimit) SetOperationTimeout(timeout time.Duration) *RedisActiveLimit {
 	if timeout <= 0 {
 		panic("redislimit: operation timeout must be positive")
@@ -102,11 +117,13 @@ func (a *RedisActiveLimit) SetOperationTimeout(timeout time.Duration) *RedisActi
 // Build snapshots configuration and returns a Gin middleware. A release uses
 // its own bounded context so request cancellation does not prevent cleanup.
 // A failed release or crashed process loses capacity only until lease expiry.
+// Build 快照配置并返回 Gin 中间件。释放使用独立的有界 context，请求取消不会
+// 阻碍清理；释放失败或进程崩溃只损失容量到租约过期为止。
 func (a *RedisActiveLimit) Build() gin.HandlerFunc {
 	cmd, key, ttl, timeout, logFn := a.cmd, a.key, a.leaseTTL, a.operationTimeout, a.logFn
 	ttlMillis := ttl.Milliseconds()
 	if ttl%time.Millisecond != 0 {
-		ttlMillis++ // Redis precision must never shorten the execution deadline.
+		ttlMillis++ // Redis precision must never shorten the execution deadline. | Redis 精度不能缩短执行截止时间。
 	}
 	return func(c *gin.Context) {
 		limit := a.maxActive.Load()
@@ -130,6 +147,7 @@ func (a *RedisActiveLimit) Build() gin.HandlerFunc {
 		done()
 		if err != nil {
 			// A timeout may mean the lease was created but its reply was lost.
+			// 超时可能意味着租约已创建但应答丢失。
 			release()
 			logFn("redislimit: acquire lease", err)
 			c.AbortWithStatus(http.StatusInternalServerError)

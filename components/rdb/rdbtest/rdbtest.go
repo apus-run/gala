@@ -1,4 +1,4 @@
-// Package rdbtest provides an in-memory redis for tests.
+// Package rdbtest provides an in-memory redis for tests | rdbtest 为测试提供内存版 redis.
 package rdbtest
 
 import (
@@ -12,6 +12,7 @@ import (
 
 // New starts a miniredis server and returns a client connected to it.
 // Both are closed when the test finishes.
+// New 启动一个 miniredis 服务并返回连接它的客户端。两者都会在测试结束时关闭。
 func New(tb testing.TB) rdb.Cmdable {
 	tb.Helper()
 

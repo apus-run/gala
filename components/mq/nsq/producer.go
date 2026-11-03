@@ -21,6 +21,10 @@ type producerClient interface {
 	Stop()
 }
 
+// Producer publishes to the configured nsqd list through go-nsq clients, one
+// per address, chosen round-robin.
+// Producer 通过 go-nsq 客户端向配置的 nsqd 列表发布，每个地址一个客户端，
+// 按轮询选择。
 type Producer struct {
 	clients   []producerClient
 	mu        sync.Mutex
@@ -33,6 +37,7 @@ type Producer struct {
 }
 
 // Start is a lifecycle hook. go-nsq connects lazily on the first publish.
+// Start 是生命周期钩子。go-nsq 在首次发布时才惰性建连。
 func (p *Producer) Start() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -42,8 +47,11 @@ func (p *Producer) Start() error {
 	return nil
 }
 
-// Close stops SDK clients and waits for all accepted sends/callbacks to finish.
-// Callbacks must not call Close on this producer or block indefinitely.
+// Close stops SDK clients and waits for all accepted sends/callbacks to
+// finish. Callbacks must not call Close on this producer or block
+// indefinitely.
+// Close 停止 SDK 客户端并等待所有已接受的发送/回调完成。
+// 回调不得在该生产者上调用 Close，也不得无限阻塞。
 func (p *Producer) Close() error {
 	p.closeOnce.Do(func() {
 		p.mu.Lock()
@@ -71,10 +79,12 @@ func validateMessage(message *mq.Message) error {
 	return nil
 }
 
+// Send publishes one message synchronously | Send 同步发送一条消息。
 func (p *Producer) Send(ctx context.Context, message *mq.Message) (mq.SendResponse, error) {
 	return p.SendBatch(ctx, []*mq.Message{message})
 }
 
+// SendBatch publishes a single-topic batch synchronously | SendBatch 同步发送同一主题的一批消息。
 func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.SendResponse, error) {
 	done, err := p.send(ctx, messages, nil)
 	if err != nil {
@@ -88,6 +98,8 @@ func (p *Producer) SendBatch(ctx context.Context, messages []*mq.Message) (mq.Se
 	}
 }
 
+// SendAsync publishes one message and reports the outcome via callback
+// | SendAsync 异步发送一条消息，结果经回调报告。
 func (p *Producer) SendAsync(ctx context.Context, callback mq.AsyncSendCallback, message *mq.Message) error {
 	if callback == nil {
 		return errors.New("nsq: callback is nil")
@@ -140,9 +152,11 @@ func (p *Producer) send(ctx context.Context, messages []*mq.Message, callback mq
 			err = client.MultiPublishAsync(messages[0].Topic, bodies, ack)
 		case messages[0].DeferDuration > 0:
 			// DPUB uses integer milliseconds; round up to avoid early delivery.
+			// DPUB 使用整数毫秒；向上取整以避免提前投递。
 			delay := messages[0].DeferDuration
 			if remainder := delay % time.Millisecond; remainder != 0 {
 				// Saturate the conversion rather than overflowing time.Duration.
+				// 饱和转换，而不是让 time.Duration 溢出。
 				if delay > time.Duration(1<<63-1)-(time.Millisecond-remainder) {
 					err = errors.New("nsq: delay overflows millisecond precision")
 					break
@@ -181,6 +195,8 @@ func (p *Producer) send(ctx context.Context, messages []*mq.Message, callback mq
 		if !acknowledged {
 			// Cancellation doesn't cancel NSQ's command. Keep its slot until the
 			// SDK completes or shutdown, bounding abandoned in-flight commands.
+			// 取消不会撤销 NSQ 的命令。让它的槽位保留到 SDK 完成或关机，
+			// 以约束被放弃的在途命令数量。
 			select {
 			case <-ack:
 			case <-p.stop:

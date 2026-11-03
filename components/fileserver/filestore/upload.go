@@ -14,10 +14,10 @@ import (
 	"github.com/apus-run/gala/components/fileserver/internal/iox"
 )
 
-// uploadPrefix 是普通上传临时文件的名字前缀。
+// uploadPrefix is the name prefix of regular upload temp files | uploadPrefix 是普通上传临时文件的名字前缀。
 const uploadPrefix = "up-"
 
-// tempFile 是临时区中的一个文件。发布成功后 published 为 true，discard 不再删除它。
+// tempFile is one file in the temp area. After a successful publish published is true and discard no longer deletes it | tempFile 是临时区中的一个文件。发布成功后 published 为 true，discard 不再删除它。
 type tempFile struct {
 	root      *os.Root
 	name      string
@@ -25,6 +25,8 @@ type tempFile struct {
 	published bool
 }
 
+// discard closes the still-open file and removes the unpublished temp file.
+// Leftovers of a failed removal are left to CleanupTemp.
 // discard 关闭仍然打开的文件，并删除未发布的临时文件。删除失败的残留交给 CleanupTemp。
 func (t *tempFile) discard() error {
 	if t.file != nil {
@@ -40,8 +42,14 @@ func (t *tempFile) discard() error {
 	return nil
 }
 
+// Upload implements fileserver.Uploader.
 // Upload 实现 fileserver.Uploader。
 //
+// Steps: validate → create parent directories → write the temp file (optional
+// size and overlong checks) → set permissions and sync → publish (rename or
+// link) → sync the parent directory. Any failure before the commit leaves the
+// old object unchanged. fsync cannot be interrupted by the Context: if the
+// Context is already cancelled when it returns, the object is not published.
 // 步骤：校验 → 创建父目录 → 写入临时文件（可选的长度与超长检查）→ 设置权限并同步
 // → 发布（rename 或 link）→ 同步父目录。提交前的任何失败都不改变旧对象。
 // fsync 不能被 Context 打断：它返回时若 Context 已取消，对象不会发布。
@@ -69,11 +77,15 @@ func (s *Store) Upload(ctx context.Context, key string, r io.Reader, opts ...fil
 	if err != nil {
 		return err
 	}
+	// the Progress contract requires the callback to run outside the Store's
+	// locks; the read lock is already released when upload returns.
 	// Progress 契约要求回调不在 Store 的锁内执行；upload 返回时读锁已经释放。
 	report(ctx, uo.Progress(), key, written, written)
 	return nil
 }
 
+// upload commits the object under the Store's read lock and returns the bytes
+// written. The lock is released before returning.
 // upload 在 Store 的读锁内提交对象，返回写入的字节数。锁在返回前释放。
 func (s *Store) upload(ctx context.Context, op, key string, r io.Reader, uo fileserver.UploadOptions) (int64, error) {
 	release, err := s.begin(ctx, op, key)
@@ -91,7 +103,7 @@ func (s *Store) upload(ctx context.Context, op, key string, r io.Reader, uo file
 	return written, nil
 }
 
-// checkSupported 在任何副作用之前拒绝本后端不能持久化的选项。
+// checkSupported rejects options this backend cannot persist, before any side effect | checkSupported 在任何副作用之前拒绝本后端不能持久化的选项。
 func checkSupported(uo fileserver.UploadOptions) error {
 	if uo.ContentType() != "" {
 		return fmt.Errorf("%w: the local store does not persist content type", fileserver.ErrUnsupported)
@@ -102,6 +114,9 @@ func checkSupported(uo fileserver.UploadOptions) error {
 	return nil
 }
 
+// commitUpload writes the input to a temp file and publishes it as key,
+// returning the bytes written. Any failure before publishing removes the temp
+// file; a failed removal is joined onto the main error with errors.Join.
 // commitUpload 把输入写入临时文件并发布为 key，返回写入的字节数。
 // 发布之前的任何失败都会删除临时文件；删除失败用 errors.Join 附带在主错误上。
 func (s *Store) commitUpload(ctx context.Context, key string, r io.Reader, uo fileserver.UploadOptions) (written int64, err error) {
@@ -128,6 +143,8 @@ func (s *Store) commitUpload(ctx context.Context, key string, r io.Reader, uo fi
 	if err = s.finishTemp(tmp, s.cfg.fileMode); err != nil {
 		return 0, err
 	}
+	// fsync itself cannot be cancelled. If the Context is already cancelled when
+	// the sync ends, do not publish; the caller sees the ctx error.
 	// fsync 本身不能被取消。同步结束时 Context 已经取消的话，不发布，调用方看到 ctx 的错误。
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -152,7 +169,7 @@ func (s *Store) commitUpload(ctx context.Context, key string, r io.Reader, uo fi
 	return written, nil
 }
 
-// rejectConditionalCreate 在读取输入之前拒绝当前文件系统做不到的条件创建。
+// rejectConditionalCreate rejects conditional creates the current file system cannot honour, before reading the input | rejectConditionalCreate 在读取输入之前拒绝当前文件系统做不到的条件创建。
 func (s *Store) rejectConditionalCreate() error {
 	switch s.links {
 	case linkUnsupported:
@@ -164,12 +181,15 @@ func (s *Store) rejectConditionalCreate() error {
 	}
 }
 
+// copyInput copies r into dst. When a size is declared, at most size+1 bytes
+// are read so an overlong input is caught before commit; ctx is checked before
+// every read; beyond MaxObjectSize it returns ErrTooLarge.
 // copyInput 把 r 复制到 dst。声明长度时最多读取 size+1 字节，使超长输入在提交前被发现；
 // 每次读取前检查 ctx；超过 MaxObjectSize 时返回 ErrTooLarge。
 func (s *Store) copyInput(ctx context.Context, dst io.Writer, r io.Reader, size int64, hasSize bool) (int64, error) {
 	bufLen := s.cfg.bufferSize
 	if hasSize && size+1 < int64(bufLen) {
-		bufLen = int(size + 1) // 声明长度时最多读取 size+1 字节，不需要分配整段缓冲
+		bufLen = int(size + 1) // read at most size+1 bytes when a size is declared; no full-buffer allocation needed | 声明长度时最多读取 size+1 字节，不需要分配整段缓冲
 	}
 	buf := make([]byte, bufLen)
 	var n int64
@@ -210,6 +230,9 @@ func (s *Store) copyInput(ctx context.Context, dst io.Writer, r io.Reader, size 
 	return n, nil
 }
 
+// finishTemp syncs per the durability policy, then sets the public permission,
+// then closes the temp file. Permissions come after the sync: syncing may take
+// long, and during it the temp file stays 0600. The close error is returned.
 // finishTemp 按耐久策略同步，再设置对外权限，然后关闭临时文件。
 // 权限留到同步之后：同步可能很久，这段时间临时文件保持 0600。关闭错误会被返回。
 func (s *Store) finishTemp(t *tempFile, mode fs.FileMode) error {
@@ -229,6 +252,9 @@ func (s *Store) finishTemp(t *tempFile, mode fs.FileMode) error {
 	return err
 }
 
+// publish publishes the temp file as key. Overwrite mode uses Rename for
+// atomic replacement; ifNotExists uses Link and returns ErrConflict when the
+// target already exists, never degrading to a racy "check then rename".
 // publish 把临时文件发布为 key。覆盖模式使用 Rename 原子替换；ifNotExists 使用 Link，
 // 目标已存在时返回 ErrConflict，不退化为"先检查后改名"的竞争写法。
 func (s *Store) publish(tmp *tempFile, key string, ifNotExists bool) error {
@@ -247,6 +273,8 @@ func (s *Store) publish(tmp *tempFile, key string, ifNotExists bool) error {
 	switch {
 	case err == nil:
 		tmp.published = true
+		// the object is already visible; the leftover temp name is reclaimed by
+		// CleanupTemp and does not affect this success.
 		// 对象已经可见；临时名的残留由 CleanupTemp 回收，不影响本次成功。
 		_ = s.root.Remove(tmp.name)
 		return nil
@@ -261,20 +289,26 @@ func (s *Store) publish(tmp *tempFile, key string, ifNotExists bool) error {
 	}
 }
 
-// syncParent 按耐久策略同步 key 的父目录，使发布的名字在掉电后仍然存在。
+// syncParent syncs the parent directory of key per the durability policy, so the published name survives power loss | syncParent 按耐久策略同步 key 的父目录，使发布的名字在掉电后仍然存在。
 func (s *Store) syncParent(key string) error {
 	return s.syncDirAt(parentDir(key))
 }
 
+// ensureParent creates the parent directories of key level by level, all
+// through the root handle.
 // ensureParent 逐级创建 key 的父目录，全部经由根句柄完成。
 //
+// Creating level by level instead of MkdirAll ensures each level only becomes
+// visible to other calls after its parent directory is synced (see
+// mkdirSynced). Existing directories also get their parent synced; durability
+// is never judged from in-process caches.
 // 逐级创建而不是 MkdirAll，是为了让每一层的创建都在其父目录同步之后才对其他调用可见
 // （见 mkdirSynced）。已有目录也同步其父目录，不依赖进程内缓存判断耐久性。
 func (s *Store) ensureParent(key string) error {
 	dir := parentDir(key)
 	rel, ok := strings.CutPrefix(dir, dataDirName+string(filepath.Separator))
 	if !ok {
-		return nil // 顶层 Key：父目录就是数据区本身
+		return nil // top-level Key: the parent directory is the data area itself | 顶层 Key：父目录就是数据区本身
 	}
 	current := dataDirName
 	for _, name := range strings.Split(rel, string(filepath.Separator)) {
@@ -287,6 +321,10 @@ func (s *Store) ensureParent(key string) error {
 	return nil
 }
 
+// mkdirSynced creates path under parent's lock. On success the parent is
+// synced before the lock is released, so other calls never use a directory
+// about to be rolled back after a failed sync. Existing directories also get
+// their parent synced.
 // mkdirSynced 在 parent 的锁内创建 path。创建成功时，先同步 parent 再放锁，
 // 这样其他调用不会使用同步失败后即将被回滚的目录。已有目录同样同步 parent。
 func (s *Store) mkdirSynced(parent, path string) error {
@@ -323,7 +361,7 @@ func (s *Store) mkdirSynced(parent, path string) error {
 	}
 }
 
-// createUploadTemp 在 New 已准备好的临时区创建文件。O_EXCL 保证不覆盖已有文件。
+// createUploadTemp creates a file in the temp area prepared by New. O_EXCL guarantees no existing file is clobbered | createUploadTemp 在 New 已准备好的临时区创建文件。O_EXCL 保证不覆盖已有文件。
 func (s *Store) createUploadTemp() (*tempFile, error) {
 	for range maxTempAttempts {
 		suffix, err := randomHex(16)
@@ -342,7 +380,7 @@ func (s *Store) createUploadTemp() (*tempFile, error) {
 	return nil, errors.New("filestore: could not allocate a unique temporary name")
 }
 
-// isDir 报告 name 是否是目录（不跟随符号链接）。
+// isDir reports whether name is a directory (symlinks not followed) | isDir 报告 name 是否是目录（不跟随符号链接）。
 func (s *Store) isDir(name string) bool {
 	fi, err := s.root.Lstat(name)
 	return err == nil && fi.IsDir()
@@ -352,7 +390,7 @@ func tooLarge(limit int64) error {
 	return fmt.Errorf("%w: exceeds %d bytes", fileserver.ErrTooLarge, limit)
 }
 
-// indeterminate 表示对象已经可见，但耐久性未能确认。
+// indeterminate marks an object that is already visible but whose durability could not be confirmed | indeterminate 表示对象已经可见，但耐久性未能确认。
 func indeterminate(err error) error {
 	return fmt.Errorf("%w: object is visible but durability is not confirmed: %w", fileserver.ErrIndeterminate, err)
 }

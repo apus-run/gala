@@ -9,6 +9,8 @@ import (
 // NewCodeChecked encodes an ID injectively within [0, len(chars)^length).
 // It validates the alphabet and permutations and uses exact arithmetic.
 // It is not encryption. Legacy NewCode remains available for compatibility.
+// NewCodeChecked 把 ID 单射编码到 [0, len(chars)^length) 区间内：校验字符表
+// 与置换参数，并使用精确算术。它是编码不是加密。旧版 NewCode 出于兼容保留。
 func NewCodeChecked(value uint64, options ...func(*CodeOptions)) (string, error) {
 	o := getCodeOptionsOrSetDefault(nil)
 	o.strict = true

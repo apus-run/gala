@@ -1,9 +1,11 @@
 package slog
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,5 +74,17 @@ func TestNewLogger(t *testing.T) {
 
 	if called.Load() != 1 {
 		t.FailNow()
+	}
+}
+
+func TestNewLoggerHonorsWriterForTextFormat(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewLogger(WithFormat(FormatText), WithWriter(&buf))
+	l.Error("boom")
+	if buf.Len() == 0 {
+		t.Fatal("text-format log output must go to the configured Writer")
+	}
+	if !strings.Contains(buf.String(), "boom") {
+		t.Fatalf("buf = %q, want it to contain boom", buf.String())
 	}
 }

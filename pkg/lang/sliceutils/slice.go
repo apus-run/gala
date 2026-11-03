@@ -1,3 +1,6 @@
+// Package sliceutils provides generic helpers for slices: create, map,
+// filter, partition, count, deduplicate, diff and sort.
+// 包 sliceutils 提供切片的泛型工具：创建、映射、过滤、分区、计数、去重、差集与排序。
 package sliceutils
 
 import (
@@ -12,6 +15,8 @@ import (
 
 // Map applies function f to each element of slice s with type F.
 // Results of f are returned as a newly allocated slice with type T.
+// Map 将函数 f 应用于类型为 F 的切片 s 的每个元素，
+// f 的结果以新分配的类型 T 的切片返回。
 //
 // 🚀 EXAMPLE:
 //
@@ -26,6 +31,11 @@ import (
 //
 //   - Use [FilterMap] if you also want to ignore some element during mapping.
 //   - Use [TryMap] if function f may fail (return (T, error))
+//
+// 💡 提示：
+//
+//   - 映射时还想忽略部分元素，用 [FilterMap]
+//   - 函数 f 可能失败（返回 (T, error)）时，用 [TryMap]
 func Map[F, T any](s []F, f func(F) T) []T {
 	ret := make([]T, 0, len(s))
 	for _, v := range s {
@@ -36,6 +46,7 @@ func Map[F, T any](s []F, f func(F) T) []T {
 
 // ToMap collects elements of slice to map, both map keys and values are produced
 // by mapping function f.
+// ToMap 将切片元素收集为 map，key 和 value 均由映射函数 f 生成。
 //
 // 🚀 EXAMPLE:
 //
@@ -57,6 +68,7 @@ func ToMap[T, V any, K comparable](s []T, f func(T) (K, V)) map[K]V {
 }
 
 // TryMap is a variant of [Map] that allows function f to fail (return error).
+// TryMap 是 [Map] 的变体，允许函数 f 失败（返回 error）。
 //
 // 🚀 EXAMPLE:
 //
@@ -65,6 +77,7 @@ func ToMap[T, V any, K comparable](s []T, f func(T) (K, V)) map[K]V {
 //	TryMap([]string{}, strconv.Atoi)              ⏩ result.OK([]int{})
 //
 // 💡 HINT: Use [TryFilterMap] if you want to ignore error during mapping.
+// 💡 提示：想在映射过程中忽略错误时，用 [TryFilterMap]。
 func TryMap[F, T any](s []F, f func(F) (T, error)) result.R[[]T] {
 	ret := make([]T, 0, len(s))
 	for _, v := range s {
@@ -79,9 +92,11 @@ func TryMap[F, T any](s []F, f func(F) (T, error)) result.R[[]T] {
 
 // Of creates a slice from variadic arguments.
 // If no argument given, an empty (non-nil) slice []T{} is returned.
+// Of 用可变参数构造一个切片；无参数时返回空（非 nil）切片 []T{}。
 //
 // 💡 HINT: This function is used to omit verbose types like "[]LooooongTypeName{}"
 // when constructing slices.
+// 💡 提示：用于省去构造切片时冗长的类型书写，如 "[]LooooongTypeName{}"。
 //
 // 🚀 EXAMPLE:
 //
@@ -91,12 +106,15 @@ func TryMap[F, T any](s []F, f func(F) (T, error)) result.R[[]T] {
 func Of[T any](v ...T) []T {
 	if len(v) == 0 {
 		return []T{} // never return nil
+		// 永不返回 nil
 	}
 	return v
 }
 
 // Filter applies predicate f to each element of slice s,
 // returns those elements that satisfy the predicate f as a newly allocated slice.
+// Filter 对切片 s 的每个元素应用谓词 f，
+// 把满足谓词的元素以新分配的切片返回。
 //
 // 🚀 EXAMPLE:
 //
@@ -107,6 +125,12 @@ func Of[T any](v ...T) []T {
 //   - Use [FilterMap] if you also want to change the element during filtering.
 //   - If you need elements that do not satisfy f, use [Reject]
 //   - If you need both elements, use [Partition]
+//
+// 💡 提示：
+//
+//   - 过滤的同时还想改写元素，用 [FilterMap]
+//   - 需要不满足 f 的元素，用 [Reject]
+//   - 两者都要，用 [Partition]
 func Filter[S ~[]T, T any](s S, f func(T) bool) S {
 	ret := make(S, 0, len(s)/2)
 	for _, v := range s {
@@ -119,10 +143,16 @@ func Filter[S ~[]T, T any](s S, f func(T) bool) S {
 
 // FilterMap does [Filter] and [Map] at the same time, applies function f to
 // each element of slice s. f returns (T, bool):
+// FilterMap 同时做 [Filter] 和 [Map]，对切片 s 的每个元素应用 f。f 返回 (T, bool)：
 //
 //   - If true ,the return value with type T will added to
 //     the result slice []T.
+//
 //   - If false, the return value with type T will be dropped.
+//
+//   - 为 true 时，类型 T 的返回值会加入结果切片 []T
+//
+//   - 为 false 时，类型 T 的返回值会被丢弃
 //
 // 🚀 EXAMPLE:
 //
@@ -130,6 +160,7 @@ func Filter[S ~[]T, T any](s S, f func(T) bool) S {
 //	FilterMap([]int{1, 2, 3, 0, 0}, f) ⏩ []string{"1", "2", "3"}
 //
 // 💡 HINT: Use [TryFilterMap] if function f returns (T, error).
+// 💡 提示：函数 f 返回 (T, error) 时，用 [TryFilterMap]。
 func FilterMap[F, T any](s []F, f func(F) (T, bool)) []T {
 	ret := make([]T, 0, len(s))
 	for _, v := range s {
@@ -142,6 +173,7 @@ func FilterMap[F, T any](s []F, f func(F) (T, bool)) []T {
 }
 
 // TryFilterMap is a variant of [FilterMap] that allows function f to fail (return error).
+// TryFilterMap 是 [FilterMap] 的变体，允许函数 f 失败（返回 error）。
 //
 // 🚀 EXAMPLE:
 //
@@ -153,6 +185,7 @@ func TryFilterMap[F, T any](s []F, f func(F) (T, error)) []T {
 		r, err := f(v)
 		if err != nil {
 			continue // ignored
+			// 忽略出错的元素
 		}
 		ret = append(ret, r)
 	}
@@ -161,6 +194,8 @@ func TryFilterMap[F, T any](s []F, f func(F) (T, error)) []T {
 
 // Reject applies predicate f to each element of slice s,
 // returns those elements that do not satisfy the predicate f as a newly allocated slice.
+// Reject 对切片 s 的每个元素应用谓词 f，
+// 把不满足谓词的元素以新分配的切片返回。
 //
 // 🚀 EXAMPLE:
 //
@@ -170,6 +205,11 @@ func TryFilterMap[F, T any](s []F, f func(F) (T, error)) []T {
 //
 //   - If you need elements that satisfy f, use [Filter]
 //   - If you need both elements, use [Partition]
+//
+// 💡 提示：
+//
+//   - 需要满足 f 的元素，用 [Filter]
+//   - 两者都要，用 [Partition]
 func Reject[S ~[]T, T any](s S, f func(T) bool) S {
 	ret := make(S, 0, len(s)/2)
 	for _, v := range s {
@@ -182,6 +222,8 @@ func Reject[S ~[]T, T any](s S, f func(T) bool) S {
 
 // Partition applies predicate f to each element of slice s,
 // divides elements into 2 parts: satisfy f and do not satisfy f.
+// Partition 对切片 s 的每个元素应用谓词 f，
+// 将元素分成两部分：满足 f 的与不满足 f 的。
 //
 // 🚀 EXAMPLE:
 //
@@ -191,6 +233,11 @@ func Reject[S ~[]T, T any](s S, f func(T) bool) S {
 //
 //   - Use [Filter] or [Reject] if you need only one of the return values
 //   - Use [Chunk] or [Divide] if you want to divide elements by index
+//
+// 💡 提示：
+//
+//   - 只需要其中一个返回值时，用 [Filter] 或 [Reject]
+//   - 想按索引切分元素时，用 [Chunk] 或 [Divide]
 func Partition[S ~[]T, T any](s S, f func(T) bool) (S, S) {
 	var (
 		retTrue  = make(S, 0, len(s)/2)
@@ -207,6 +254,7 @@ func Partition[S ~[]T, T any](s S, f func(T) bool) (S, S) {
 }
 
 // Contains returns whether the element occur in slice.
+// Contains 返回元素是否出现在切片中。
 //
 // 🚀 EXAMPLE:
 //
@@ -219,12 +267,20 @@ func Partition[S ~[]T, T any](s S, f func(T) bool) (S, S) {
 //   - Use [ContainsAll], [ContainsAny] if you have multiple values to query
 //   - Use [Index] if you also want to know index of the found value
 //   - Use [Any] or [Find] if type of v is non-comparable
+//
+// 💡 提示：
+//
+//   - 要查询多个值时，用 [ContainsAll]、[ContainsAny]
+//   - 还想知道找到元素的下标时，用 [Index]
+//   - v 的类型不可比较时，用 [Any] 或 [Find]
 func Contains[T comparable](s []T, v T) bool {
 	return slices.Contains(s, v)
 }
 
 // Select returns a slice containing the elements at the given indices of the input slice.
 // CAUTION: This function panics if any index is out of range.
+// Select 返回由输入切片中给定下标的元素组成的切片。
+// 注意：任一下标越界时会 panic。
 func Select[T any](a []T, indices ...int) []T {
 	if len(indices) == 0 {
 		return nil
@@ -240,6 +296,7 @@ func Select[T any](a []T, indices ...int) []T {
 }
 
 // Find returns the possible first element of slice that satisfies predicate f.
+// Find 返回切片中第一个满足谓词 f 的元素（可能不存在）。
 //
 // 🚀 EXAMPLE:
 //
@@ -254,6 +311,13 @@ func Select[T any](a []T, indices ...int) []T {
 //   - Use [FindRev] if you want to find in reverse order
 //   - Use [Count] if you want to count the occurrences of element
 //
+// 💡 提示：
+//
+//   - 只想知道值是否存在，用 [Contains]
+//   - 想知道元素的下标，用 [IndexBy]
+//   - 想倒序查找，用 [FindRev]
+//   - 想统计元素出现次数，用 [Count]
+//
 // 💡 AKA: Search
 func Find[T any](s []T, f func(T) bool) of.O[T] {
 	for _, v := range s {
@@ -265,6 +329,7 @@ func Find[T any](s []T, f func(T) bool) of.O[T] {
 }
 
 // FindRev is a variant of [Find] in reverse order.
+// FindRev 是 [Find] 的倒序变体。
 //
 // 🚀 EXAMPLE:
 //
@@ -281,6 +346,7 @@ func FindRev[T any](s []T, f func(T) bool) of.O[T] {
 }
 
 // GroupBy adjacent elements according to key returned by function f.
+// GroupBy 依照函数 f 返回的 key 对相邻元素分组。
 //
 // 🚀 EXAMPLE:
 //
@@ -297,6 +363,7 @@ func FindRev[T any](s []T, f func(T) bool) of.O[T] {
 //	}
 //
 // 💡 HINT: If function f returns bool, use [Partition] instead.
+// 💡 提示：函数 f 返回 bool 时，改用 [Partition]。
 func GroupBy[S ~[]T, K comparable, T any](s S, f func(T) K) map[K]S {
 	if s == nil {
 		return nil
@@ -311,6 +378,8 @@ func GroupBy[S ~[]T, K comparable, T any](s S, f func(T) K) map[K]S {
 
 // CloneShallow2DSlice clones a 2D slice, creating a new slice and copying the contents of the underlying array.
 // If `in` is a nil slice, a nil slice is returned. If `in` is an empty slice, an empty slice is returned.
+// CloneShallow2DSlice 克隆二维切片：新建切片并复制底层数组内容。
+// `in` 为 nil 时返回 nil，为空切片时返回空切片。
 func CloneShallow2DSlice[T any](in [][]T) [][]T {
 	if in == nil {
 		return nil
@@ -328,6 +397,8 @@ func CloneShallow2DSlice[T any](in [][]T) [][]T {
 // CloneBy is variant of [Clone], it returns a copy of the slice.
 // Elements are copied using function clone.
 // If the given slice is nil, nil is returned.
+// CloneBy 是 [Clone] 的变体，返回切片的副本，
+// 元素由函数 clone 复制；入参为 nil 时返回 nil。
 //
 // 💡 AKA: CopyBy
 func CloneBy[S ~[]T, T any](s S, f func(T) T) S {
@@ -338,11 +409,14 @@ func CloneBy[S ~[]T, T any](s S, f func(T) T) S {
 }
 
 // Concat returns a new slice concatenating the passed in slices.
+// Concat 拼接传入的切片并返回新切片。
 //
 // This is directly copied from the implementation of https://pkg.go.dev/slices#Concat
 // as of go1.22.2.
 //
 // This may be removed from the repository once go1.22 becomes the minimum required version.
+// 本函数直接复制自 go1.22.2 的 https://pkg.go.dev/slices#Concat 实现，
+// 待仓库最低 Go 版本升到 1.22 后可删除。
 func Concat[S ~[]E, E any](slcs ...S) S {
 	size := 0
 	for _, s := range slcs {
@@ -360,6 +434,8 @@ func Concat[S ~[]E, E any](slcs ...S) S {
 
 // Diff returns, given two slices a and b sorted according to lessFunc, a slice of the elements occurring in a and b
 // only, respectively.
+// Diff 给定两个按 lessFunc 排好序的切片 a 和 b，
+// 分别返回只在 a 中出现、只在 b 中出现的元素切片。
 func Diff[T any](slice1, slice2 []T, lessFunc func(a, b T) bool) (aOnly, bOnly []T) {
 	var i, j int
 	for i < len(slice1) && j < len(slice2) {
@@ -370,6 +446,7 @@ func Diff[T any](slice1, slice2 []T, lessFunc func(a, b T) bool) (aOnly, bOnly [
 			bOnly = append(bOnly, slice2[j])
 			j++
 		} else { // slice1[i] and slice2[j] are "equal"
+			// slice1[i] 与 slice2[j] 视为"相等"
 			i++
 			j++
 		}
@@ -381,9 +458,13 @@ func Diff[T any](slice1, slice2 []T, lessFunc func(a, b T) bool) (aOnly, bOnly [
 }
 
 // Without returns the slice of elements in the first slice that aren't in the second slice.
+// Without 返回第一个切片中不在第二个切片里的元素组成的新切片。
 //
 // 结果去重（每个值只保留第一次出现），并且总是一个新切片：修改结果不会影响 slice1。
 // 两个切片之一为空时也是如此，与非空时的行为一致。
+// The result is deduplicated (each value keeps only its first occurrence) and is
+// always a new slice: modifying it does not affect slice1. This also holds when
+// either slice is empty, consistent with the non-empty behavior.
 func Without[T comparable](slice1, slice2 []T) []T {
 	if len(slice1) == 0 {
 		return nil
@@ -404,6 +485,7 @@ func Without[T comparable](slice1, slice2 []T) []T {
 }
 
 // Reversed returns a slice that contains the elements of the input slice in reverse order.
+// Reversed 返回元素顺序与输入切片相反的新切片。
 func Reversed[T any](slice []T) []T {
 	cloned := slices.Clone(slice)
 	slices.Reverse(cloned)
@@ -411,6 +493,7 @@ func Reversed[T any](slice []T) []T {
 }
 
 // Count returns the times of value v that occur in slice s.
+// Count 返回值 v 在切片 s 中出现的次数。
 //
 // 🚀 EXAMPLE:
 //
@@ -421,6 +504,11 @@ func Reversed[T any](slice []T) []T {
 //
 //   - Use [Contains] if you just want to know whether the element exitss or not
 //   - Use [CountBy] if type of v is non-comparable
+//
+// 💡 提示：
+//
+//   - 只想知道元素是否存在，用 [Contains]
+//   - v 的类型不可比较时，用 [CountBy]
 func Count[T comparable](s []T, v T) int {
 	var count int
 	for i := range s {
@@ -432,6 +520,7 @@ func Count[T comparable](s []T, v T) int {
 }
 
 // CountBy returns the times of element in slice s that satisfy the predicate f.
+// CountBy 返回切片 s 中满足谓词 f 的元素个数。
 //
 // 🚀 EXAMPLE:
 //
@@ -439,6 +528,7 @@ func Count[T comparable](s []T, v T) int {
 //	CountBy([]int{0, 1, 2, 3, 4}, func (v int) bool { return v % i == 0 })    ⏩ 3
 //
 // 💡 HINT: Use [Any] if you just want to know whether at least one element satisfies predicate f.
+// 💡 提示：只想知道是否至少有一个元素满足谓词 f 时，用 [Any]。
 func CountBy[T any](s []T, f func(T) bool) int {
 	var count int
 	for i := range s {
@@ -450,6 +540,7 @@ func CountBy[T any](s []T, f func(T) bool) int {
 }
 
 // CountValues returns the occurrences of each element in slice s.
+// CountValues 返回切片 s 中每个元素的出现次数。
 //
 // 🚀 EXAMPLE:
 //
@@ -459,6 +550,8 @@ func CountBy[T any](s []T, f func(T) bool) int {
 // 💡 HINT:
 //
 //   - Use [CountValuesBy] if the element in slice s is non-comparable
+//
+// 💡 提示：切片 s 的元素不可比较时，用 [CountValuesBy]。
 func CountValues[T comparable](s []T) map[T]int {
 	ret := make(map[T]int, len(s)/2)
 	for i := range s {
@@ -468,6 +561,7 @@ func CountValues[T comparable](s []T) map[T]int {
 }
 
 // CountValuesBy returns the times of each element in slice s that satisfy the predicate f.
+// CountValuesBy 按函数 f 的结果统计切片 s 中各元素的出现次数。
 //
 // 🚀 EXAMPLE:
 //
@@ -498,11 +592,13 @@ func (s naturallySortableSlice[T]) Swap(i, j int) {
 }
 
 // NaturalSort sorts the given slice according to the natural ording of elements.
+// NaturalSort 按元素的自然顺序对给定切片排序。
 func NaturalSort[T constraints.Ordered](slice []T) {
 	sort.Sort(naturallySortableSlice[T](slice))
 }
 
 // StringSlice returns a sorted string slice from the given T.
+// StringSlice 将给定的 T 转为字符串切片并排序后返回。
 func StringSlice[T fmt.Stringer](in ...T) []string {
 	res := make([]string, 0, len(in))
 	for _, i := range in {
@@ -515,6 +611,8 @@ func StringSlice[T fmt.Stringer](in ...T) []string {
 
 // FromStringSlice returns a slice T from the given strings.
 // Note that this only works for types whose underlying type is string.
+// FromStringSlice 由给定字符串构造 T 的切片。
+// 注意：仅适用于底层类型为 string 的类型。
 func FromStringSlice[T ~string](in ...string) []T {
 	res := make([]T, 0, len(in))
 	for _, i := range in {
@@ -525,6 +623,8 @@ func FromStringSlice[T ~string](in ...string) []T {
 
 // Unique returns a new slice that contains only the first occurrence of each element in slice.
 // Example: Unique([]string{"a", "a", b"}) will return []string{"a", "b"}
+// Unique 返回只保留每个元素首次出现的新切片。
+// 例如：Unique([]string{"a", "a", b"}) 返回 []string{"a", "b"}
 func Unique[T comparable](slice []T) []T {
 	if slice == nil {
 		return nil
@@ -536,6 +636,7 @@ func Unique[T comparable](slice []T) []T {
 		preNumElems := len(seenElems)
 		seenElems[elem] = struct{}{}
 		if len(seenElems) == preNumElems { // not added
+			// 未新增，说明是重复元素
 			continue
 		}
 		out = append(out, elem)
@@ -544,6 +645,7 @@ func Unique[T comparable](slice []T) []T {
 }
 
 // Transform returns a new slice that contains the result of applying fn to each element in slice.
+// Transform 对切片每个元素应用 fn，返回结果组成的新切片。
 func Transform[A, B any](src []A, fn func(A) B) []B {
 	if src == nil {
 		return nil
@@ -559,6 +661,8 @@ func Transform[A, B any](src []A, fn func(A) B) []B {
 
 // TransformWithErrorCheck returns a new slice that contains the result of applying fn to each element in slice.
 // If any error occurs, it will be returned immediately.
+// TransformWithErrorCheck 对切片每个元素应用 fn 并返回结果组成的新切片；
+// 任一元素出错时立即返回该错误。
 func TransformWithErrorCheck[A, B any](src []A, fn func(A) (B, error)) ([]B, error) {
 	if src == nil {
 		return nil, nil

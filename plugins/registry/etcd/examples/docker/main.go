@@ -1,4 +1,5 @@
 // Run this example after starting the adjacent compose.yaml.
+// 先启动同目录下的 compose.yaml 再运行本示例.
 package main
 
 import (
@@ -53,6 +54,7 @@ func run(ctx context.Context, address string) (err error) {
 		Metadata:  map[string]string{"source": "docker-example"},
 	}
 	// This endpoint is sample metadata; the example does not start an HTTP server.
+	// 这个 endpoint 只是示例元数据；示例并不会启动 HTTP 服务。
 	if err := r.Register(ctx, instance); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}

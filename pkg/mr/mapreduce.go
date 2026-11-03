@@ -1,7 +1,40 @@
 // Package mr provides a generic MapReduce with a bounded worker pool, guarded
-// channel writes and first-error cancellation. It is modeled on go-zero's core/mr
-// so that fan-out/fan-in data processing can be expressed without manual
-// goroutine and channel plumbing.
+// channel writes and first-error cancellation | 带有界 worker 池、受保护通道
+// 写、首个错误即取消的泛型 MapReduce.
+//
+// # Notes | 说明
+//
+// Modeled on go-zero's core/mr, so fan-out/fan-in needs no manual goroutine
+// and channel plumbing. WithContext makes scheduling and channel writes honor
+// a context; callbacks must check cancellation themselves for cancellable
+// I/O. WithWorkers caps the mapper pool (default 16, minimum 1). The first
+// error passed to cancel stops scheduling and unblocks writers; the first
+// panic in a callback is rethrown in the caller once every callback has
+// joined. Output order is not guaranteed. MapReduce drains its own generator
+// on cancellation; MapReduceChan never drains a caller-owned channel.
+// 参照 go-zero 的 core/mr 实现，扇出/扇入无需手写 goroutine 与 channel。
+// WithContext 让调度与通道写感知 context；回调里的可取消 I/O 需自行检查。
+// WithWorkers 限制 mapper 并发（默认 16，最小 1）。传给 cancel 的第一个错误
+// 会停止调度并解除写阻塞；回调里的第一个 panic 在全部回调 join 后于调用
+// 方重抛。输出顺序不保证。MapReduce 取消时会排空自有生成器；
+// MapReduceChan 不排空调用方持有的通道。
+//
+// # Features | 功能
+//
+// - MapReduce, MapReduceChan and ForEach | 三种执行形态
+// - Finish/FinishVoid run function groups in parallel | 并行执行函数组
+// - ErrCancelWithNil, ErrReduceNoOutput sentinels | 哨兵错误
+//
+// # Example | 示例
+//
+//	val, err := mr.MapReduce(
+//		func(src chan<- int) { for i := range 100 { src <- i } },
+//		func(i int, w mr.Writer[int], _ func(error)) { w.Write(i * i) },
+//		func(pipe <-chan int, w mr.Writer[int], _ func(error)) {
+//			sum := 0
+//			for v := range pipe { sum += v }
+//			w.Write(sum)
+//		})
 package mr
 
 import (
@@ -20,35 +53,42 @@ const (
 )
 
 var (
-	// ErrCancelWithNil is returned when a mapper/reducer cancels with a nil error.
+	// ErrCancelWithNil is returned when a mapper/reducer cancels with a nil error
+	// ErrCancelWithNil 在 mapper/reducer 以 nil 错误调用 cancel 时返回.
 	ErrCancelWithNil = errors.New("mr: cancelled with nil")
-	// ErrReduceNoOutput is returned when the reducer writes no value.
+	// ErrReduceNoOutput is returned when the reducer writes no value
+	// ErrReduceNoOutput 在 reducer 未写出任何值时返回.
 	ErrReduceNoOutput = errors.New("mr: reducer wrote no value")
 )
 
 type (
-	// ForEachFunc processes an element without producing output.
+	// ForEachFunc processes an element without producing output | ForEachFunc 处理单个元素，不产生输出.
 	ForEachFunc[T any] func(item T)
-	// GenerateFunc sends input elements into source.
+	// GenerateFunc sends input elements into source | GenerateFunc 把输入元素送入 source.
 	GenerateFunc[T any] func(source chan<- T)
-	// MapFunc processes an element and writes output to the writer.
+	// MapFunc processes an element and writes output to the writer | MapFunc 处理元素并把输出写给 writer.
 	MapFunc[T, U any] func(item T, writer Writer[U])
-	// MapperFunc processes an element and writes output, or cancels processing.
+	// MapperFunc processes an element and writes output, or cancels processing
+	// MapperFunc 处理元素并写出输出，或取消处理.
 	MapperFunc[T, U any] func(item T, writer Writer[U], cancel func(error))
-	// ReducerFunc reduces the mapper outputs into a single value, or cancels.
+	// ReducerFunc reduces the mapper outputs into a single value, or cancels
+	// ReducerFunc 把 mapper 输出归约为单个值，或取消处理.
 	ReducerFunc[U, V any] func(pipe <-chan U, writer Writer[V], cancel func(error))
-	// VoidReducerFunc reduces the mapper outputs without producing a value.
+	// VoidReducerFunc reduces the mapper outputs without producing a value
+	// VoidReducerFunc 归约 mapper 输出但不产出值.
 	VoidReducerFunc[U any] func(pipe <-chan U, cancel func(error))
-	// Option customizes a MapReduce.
+	// Option customizes a MapReduce | Option 用于定制 MapReduce.
 	Option interface {
 		apply(*mapReduceOptions)
 	}
 
-	// OptionFunc adapts a plain function to Option.
+	// OptionFunc adapts a plain function to Option | OptionFunc 把普通函数适配为 Option.
 	OptionFunc func(opts *mapReduceOptions)
 
 	// Writer is a cancellable sink for active mapper/reducer callbacks.
 	// Do not retain a writer or write after its callback has returned.
+	// Writer 是给处于执行中的 mapper/reducer 回调用的可取消写出端。
+	// 不要持有 writer，也不要在其回调返回后再写。
 	Writer[T any] interface {
 		Write(v T)
 	}
@@ -72,7 +112,8 @@ func (f OptionFunc) apply(opts *mapReduceOptions) {
 	f(opts)
 }
 
-// WithWorkers sets the number of worker goroutines (minimum 1).
+// WithWorkers sets the number of worker goroutines (minimum 1)
+// WithWorkers 设置 worker goroutine 数量（最小为 1）.
 func WithWorkers(workers int) Option {
 	return OptionFunc(func(opts *mapReduceOptions) {
 		if workers < minWorkers {
@@ -85,6 +126,8 @@ func WithWorkers(workers int) Option {
 
 // WithContext makes scheduling and channel writes honor the given context.
 // Callbacks must use ctx themselves for cancellable I/O. Nil means Background.
+// WithContext 让调度与通道写感知给定 context；回调里的可取消 I/O 需自行使用
+// ctx。传 nil 表示 Background。
 func WithContext(ctx context.Context) Option {
 	return OptionFunc(func(opts *mapReduceOptions) { opts.ctx = ctx })
 }
@@ -93,6 +136,9 @@ func WithContext(ctx context.Context) Option {
 // Generate must return and must not close source. Cancellation stops scheduling
 // and writes; remaining input is drained so a finite generator can finish.
 // All started callbacks finish before return. Output order is not guaranteed.
+// MapReduce 对 generate 生成的有限输入做映射并归约为一个值。
+// generate 必须返回且不得关闭 source。取消会停止调度与写出；剩余输入会被
+// 排空，让有限生成器得以结束。返回前所有已启动的回调都会结束。输出顺序不保证。
 func MapReduce[T, U, V any](generate GenerateFunc[T], mapper MapperFunc[T, U], reducer ReducerFunc[U, V],
 	opts ...Option) (V, error) {
 	options := buildOptions(opts...)
@@ -109,6 +155,9 @@ func MapReduce[T, U, V any](generate GenerateFunc[T], mapper MapperFunc[T, U], r
 // MapReduceChan is MapReduce over a caller-owned source channel. The caller
 // closes source and cancels its producer. This function does not drain source
 // on cancellation, and waits for all started mapper and reducer callbacks.
+// MapReduceChan 是对调用方自有 source 通道的 MapReduce：由调用方关闭 source、
+// 取消生产者。取消时本函数不排空 source，并等待所有已启动的 mapper 与
+// reducer 回调结束。
 func MapReduceChan[T, U, V any](source <-chan T, mapper MapperFunc[T, U], reducer ReducerFunc[U, V],
 	opts ...Option) (V, error) {
 	options := buildOptions(opts...)
@@ -121,7 +170,8 @@ func MapReduceChan[T, U, V any](source <-chan T, mapper MapperFunc[T, U], reduce
 	return runMapReduce(source, execution, false, mapper, reducer, options)
 }
 
-// ForEach maps all elements generated by generate with no output.
+// ForEach maps all elements generated by generate with no output
+// ForEach 对 generate 生成的全部元素做映射，不产出输出.
 func ForEach[T any](generate GenerateFunc[T], mapper ForEachFunc[T], opts ...Option) {
 	_, _ = MapReduce(generate,
 		func(item T, _ Writer[any], _ func(error)) { mapper(item) },
@@ -131,7 +181,8 @@ func ForEach[T any](generate GenerateFunc[T], mapper ForEachFunc[T], opts ...Opt
 		}, opts...)
 }
 
-// Finish runs fns in parallel, cancelling on the first error.
+// Finish runs fns in parallel, cancelling on the first error
+// Finish 并行执行 fns，首个错误即取消.
 func Finish(fns ...func() error) error {
 	if len(fns) == 0 {
 		return nil
@@ -156,7 +207,8 @@ func Finish(fns ...func() error) error {
 	return err
 }
 
-// FinishVoid runs fns in parallel and ignores errors.
+// FinishVoid runs fns in parallel and ignores errors
+// FinishVoid 并行执行 fns 并忽略错误.
 func FinishVoid(fns ...func()) {
 	if len(fns) == 0 {
 		return
@@ -185,6 +237,8 @@ func buildOptions(opts ...Option) *mapReduceOptions {
 
 // execution owns cancellation and the first callback panic. Panic reporting is
 // buffered so workers can always finish even when the caller is waiting to join.
+// execution 持有取消逻辑与第一个回调 panic。panic 上报带缓冲，即使调用方正在
+// 等待 join，worker 也总能结束。
 type execution struct {
 	ctx         context.Context
 	cancelCause context.CancelCauseFunc

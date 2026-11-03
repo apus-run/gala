@@ -1,3 +1,11 @@
+// Command examples demonstrates the full use of pagination and sorting.
+//
+//	go run ./examples
+//
+// It covers four things: whitelist-based sort parsing, page parameter
+// normalization, reusing one Options for both the count query and the page
+// query, and rejecting sort fields outside the whitelist. See
+// examples/userlist for a version closer to real business code.
 // Command examples 演示分页与排序的完整用法。
 //
 //	go run ./examples
@@ -20,7 +28,7 @@ import (
 	"github.com/apus-run/gala/components/db/where"
 )
 
-// User 是示例模型。
+// User is the example model | User 是示例模型。
 type User struct {
 	ID        uint   `gorm:"primaryKey" json:"id"`
 	Name      string `gorm:"size:64" json:"name"`
@@ -45,6 +53,7 @@ func main() {
 		}
 	}
 
+	// 1. Whitelist: the sort from a request can only land on these two columns.
 	// 1. 白名单：请求里的 sort 只可能落到这两列上。
 	sortable := where.Sortable{
 		"name":       "name",
@@ -52,9 +61,11 @@ func main() {
 	}
 	columns, err := sortable.Parse("-created_at,name")
 	if err != nil {
-		log.Fatal(err) // 真实服务里映射成 400
+		log.Fatal(err) // map to a 400 in a real service | 真实服务里映射成 400
 	}
 
+	// 2. Pagination + sorting: hand the same Options to the store; it is applied
+	// once for the count and once for the query.
 	// 2. 分页 + 排序：同一个 Options 交给 store，计数与查询各应用一次。
 	params := page.Params{Page: 2, Size: 2}
 	userStore := store.NewStore[User](provider)
@@ -63,6 +74,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// 3. Response = data + metadata.
 	// 3. 响应 = 数据 + 元数据。
 	body := struct {
 		Meta  page.Meta `json:"meta"`
@@ -77,6 +89,7 @@ func main() {
 	}
 	fmt.Println(string(encoded))
 
+	// 4. Fields outside the whitelist are rejected outright, never spliced into SQL.
 	// 4. 白名单外的字段直接拒绝，不会拼进 SQL。
 	if _, err = sortable.Parse("name;drop table users"); err != nil {
 		fmt.Println("rejected:", err)

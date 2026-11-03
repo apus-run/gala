@@ -1,3 +1,19 @@
+// Package registry batch-starts a group of mq consumers with rollback
+// | registry 批量启动一组 mq 消费者并支持失败回滚.
+//
+// # Notes | 说明
+//
+// It wraps one mq.Factory: every registered ConsumerWorker contributes its
+// ConsumerConfig and handler. StartAll starts a snapshot of the registered
+// workers and rolls back everything it already started on failure or
+// cancellation; Close closes consumers in reverse order exactly once. The
+// registry cannot restart, concurrent lifecycle calls fail with ErrBusy, and
+// handler panics are recovered so they surface as handler errors instead of
+// crashing the consumer.
+// 它包装一个 mq.Factory：每个登记的 ConsumerWorker 提供自己的
+// ConsumerConfig 与处理器。StartAll 启动已登记 worker 的一份快照，失败或
+// 取消时回滚已启动的部分；Close 逆序关闭消费者且只关一次。注册器不能重启，
+// 并发生命周期调用返回 ErrBusy，处理器里的 panic 会被恢复为错误而不是拖垮消费者。
 package registry
 
 import (
@@ -11,9 +27,11 @@ import (
 )
 
 var (
-	// ErrBusy means another StartAll or Close call is still in progress.
+	// ErrBusy means another StartAll or Close call is still in progress
+	// | ErrBusy 表示另一个 StartAll 或 Close 正在进行。
 	ErrBusy = errors.New("mq: registry lifecycle operation in progress")
-	// ErrClosed means this registry has been permanently closed.
+	// ErrClosed means this registry has been permanently closed
+	// | ErrClosed 表示该注册器已被永久关闭。
 	ErrClosed = errors.New("mq: registry closed")
 )
 
@@ -22,7 +40,8 @@ type defaultConsumerRegistry struct {
 	mu      sync.Mutex
 	workers []mq.ConsumerWorker
 
-	// TryLock prevents concurrent lifecycle calls and reentrant callbacks from blocking.
+	// TryLock prevents concurrent lifecycle calls and reentrant callbacks from
+	// blocking | TryLock 用非阻塞锁防止并发生命周期调用与重入回调造成阻塞。
 	lifecycle sync.Mutex
 	consumers []mq.Consumer
 	started   bool
@@ -30,10 +49,12 @@ type defaultConsumerRegistry struct {
 	closeErr  error
 }
 
+// NewConsumerRegistry creates a registry over factory | NewConsumerRegistry 基于 factory 创建注册器。
 func NewConsumerRegistry(factory mq.Factory) mq.ConsumerRegistry {
 	return &defaultConsumerRegistry{factory: factory}
 }
 
+// Register implements mq.ConsumerRegistry, appending workers | 实现 mq.ConsumerRegistry，追加 worker.
 func (d *defaultConsumerRegistry) Register(workers []mq.ConsumerWorker) mq.ConsumerRegistry {
 	d.mu.Lock()
 	d.workers = append(d.workers, workers...)
@@ -41,6 +62,7 @@ func (d *defaultConsumerRegistry) Register(workers []mq.ConsumerWorker) mq.Consu
 	return d
 }
 
+// StartAll implements mq.ConsumerRegistry, starting a snapshot of the workers with rollback on failure | 实现 mq.ConsumerRegistry，启动 worker 快照，失败时回滚.
 func (d *defaultConsumerRegistry) StartAll(ctx context.Context) (err error) {
 	if !d.lifecycle.TryLock() {
 		return ErrBusy
@@ -93,6 +115,7 @@ func (d *defaultConsumerRegistry) StartAll(ctx context.Context) (err error) {
 			return fmt.Errorf("mq: worker %d consumer is nil", i)
 		}
 		// A failed Start may still own resources; include it in rollback.
+		// Start 失败的消费者可能仍持有资源；把它纳入回滚。
 		consumers = append(consumers, c)
 		c.RegisterHandler(newSafeConsumerWrapper(worker))
 		if err := ctx.Err(); err != nil {
@@ -110,6 +133,7 @@ func (d *defaultConsumerRegistry) StartAll(ctx context.Context) (err error) {
 	return nil
 }
 
+// Close implements mq.ConsumerRegistry, closing consumers in reverse order exactly once | 实现 mq.ConsumerRegistry，逆序关闭消费者且只关一次.
 func (d *defaultConsumerRegistry) Close() error {
 	if !d.lifecycle.TryLock() {
 		return ErrBusy
@@ -137,6 +161,7 @@ type safeConsumerHandlerDecorator struct {
 	handler mq.ConsumerHandler
 }
 
+// HandleMessage implements mq.ConsumerHandler, recovering handler panics into errors | 实现 mq.ConsumerHandler，把处理器 panic 恢复为错误.
 func (s *safeConsumerHandlerDecorator) HandleMessage(ctx context.Context, msg *mq.MessageExt) (err error) {
 	defer safego.Recover(ctx, &err)
 	return s.handler.HandleMessage(ctx, msg)

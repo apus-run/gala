@@ -13,6 +13,11 @@ import (
 	"github.com/apus-run/gala/components/mail"
 )
 
+// buildMessage builds a core message into a go-mail Msg and returns the
+// Message-ID (without angle brackets) written into the Receipt. go-mail reads
+// attachment content into its own buffers, so the finished Msg references no
+// caller-owned data. All local go-mail construction errors happen before any
+// connection is made and are wrapped as mail.ErrInvalidMessage.
 // buildMessage 把核心消息构造成 go-mail Msg，并返回写入 Receipt 的
 // Message-ID（不含尖括号）。附件内容由 go-mail 读入自有缓冲，构造完成
 // 后 Msg 不引用调用方数据。go-mail 的本地构造错误都发生在建连之前，
@@ -46,6 +51,9 @@ func buildMessage(msg mail.Message, generateMessageID func() string) (*gomail.Ms
 
 	gmsg.Subject(msg.Subject)
 
+	// Text and HTML map independently; with both present go-mail produces
+	// multipart/alternative where HTML, as the last alternative part, is the
+	// preferred rendering.
 	// Text 与 HTML 独立映射；两者都有时生成 multipart/alternative，
 	// HTML 作为最后的 alternative 部分成为偏好呈现。
 	switch {
@@ -58,6 +66,8 @@ func buildMessage(msg mail.Message, generateMessageID func() string) (*gomail.Ms
 		gmsg.SetBodyString(gomail.TypeTextHTML, msg.HTML)
 	}
 
+	// Headers and tags are both written in sorted name order so the rendered
+	// result stays stable for tests.
 	// Headers 与 Tags 均按名排序写入，保证渲染结果与测试稳定。
 	for _, name := range slices.Sorted(maps.Keys(msg.Headers)) {
 		gmsg.SetGenHeader(gomail.Header(name), msg.Headers[name])
@@ -92,6 +102,9 @@ func addAttachment(gmsg *gomail.Msg, a mail.Attachment) error {
 		}
 		return nil
 	}
+	// go-mail writes the Content-ID header verbatim; RFC 2392 requires angle
+	// brackets, so the adapter adds them (provider validation already rejects
+	// ContentIDs containing brackets).
 	// go-mail 原样写入 Content-ID 头；RFC 2392 要求尖括号包裹，
 	// 由适配器补齐（provider 校验已拒绝含尖括号的 ContentID）。
 	options = append(options, gomail.WithFileContentID("<"+a.ContentID+">"))
@@ -101,6 +114,9 @@ func addAttachment(gmsg *gomail.Msg, a mail.Attachment) error {
 	return nil
 }
 
+// applyMessageID writes the Message-ID header and returns the value without
+// angle brackets. Default and custom generator outputs pass through the same
+// validation (SPEC §3.2).
 // applyMessageID 写入 Message-ID 头并返回去尖括号后的值。
 // 默认与自定义生成器的输出走同一校验（SPEC §3.2）。
 func applyMessageID(gmsg *gomail.Msg, generate func() string) (string, error) {
@@ -116,6 +132,10 @@ func applyMessageID(gmsg *gomail.Msg, generate func() string) (string, error) {
 	return id, nil
 }
 
+// validateMessageSize checks the approximate raw message size in bytes (body,
+// headers, tags, addresses and attachments) before any buffering or
+// connection, counting the same fields as the resend/ses adapters. Additions
+// are overflow-safe; over-budget or overflow returns mail.ErrInvalidMessage.
 // validateMessageSize 在任何缓冲与建连之前，检查近似原始消息总字节数
 // （正文、Headers、Tags、地址与附件），字段口径与 resend/ses 适配器
 // 一致。累加使用溢出安全加法；超限或溢出返回 mail.ErrInvalidMessage。

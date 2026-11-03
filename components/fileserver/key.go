@@ -7,16 +7,22 @@ import (
 )
 
 const (
-	// MaxKeyLength 是 Key 的最大字节数（UTF-8 编码后）。
+	// Maximum size of a Key in bytes (UTF-8 encoded) | Key 的最大字节数（UTF-8 编码后）。
 	MaxKeyLength = 1024
-	// MaxSegmentLength 是 Key 中单个路径段的最大字节数。
+	// Maximum size of a single path segment in a Key | Key 中单个路径段的最大字节数。
 	MaxSegmentLength = 255
 )
 
+// forbiddenKeyChars lists the characters Windows file names disallow ('/' is
+// the segment separator and is handled separately). All backends reject them
+// uniformly so the same Key lands on disk on any platform.
 // forbiddenKeyChars 是 Windows 文件名不允许的字符（'/' 是段分隔符，单独处理）。
 // 所有后端统一拒绝它们，使同一个 Key 在任何平台上都能落盘。
 const forbiddenKeyChars = `\:*?"<>|`
 
+// ValidateKey checks key against the Key rules (see doc.go). On failure the
+// returned error satisfies errors.Is(err, ErrInvalidKey), and its text never
+// echoes the key.
 // ValidateKey 按 Key 规则检查 key（见 doc.go）。失败时返回的错误满足
 // errors.Is(err, ErrInvalidKey)，且错误文本不回显 key。
 func ValidateKey(key string) error {
@@ -65,6 +71,8 @@ func segmentViolation(seg string) string {
 	return ""
 }
 
+// isReservedWindowsName reports whether the segment name, with its extension
+// stripped, is a reserved Windows device name.
 // isReservedWindowsName 判断段名去掉扩展名后是否为 Windows 保留设备名。
 func isReservedWindowsName(seg string) bool {
 	base, _, _ := strings.Cut(seg, ".")
@@ -79,6 +87,8 @@ func isReservedWindowsName(seg string) bool {
 	return false
 }
 
+// hasControl reports whether s contains an ASCII control character
+// (0x00–0x1F, 0x7F).
 // hasControl 报告 s 是否包含 ASCII 控制字符（0x00–0x1F、0x7F）。
 func hasControl(s string) bool {
 	for i := range len(s) {

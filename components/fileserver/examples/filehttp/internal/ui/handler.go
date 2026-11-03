@@ -1,4 +1,5 @@
-// Package ui renders the server-side HTML management page with templ + HTMX.
+// Package ui renders the server-side HTML management page with templ + HTMX |
+// Package ui 用 templ + HTMX 渲染服务端 HTML 管理页。
 package ui
 
 import (
@@ -17,22 +18,28 @@ import (
 )
 
 const (
+	// demoUserID lets the page run standalone without an auth service;
+	// production should switch to JWT from components/authn.
 	// demoUserID 让页面脱离认证服务独立运行；生产应换成 components/authn 的 JWT。
 	demoUserID uint64 = 1
 	pageSize          = 100
 )
 
+// Handler is the adaptation layer of the HTML management page: it only parses
+// HTTP, calls the service and renders templ.
 // Handler 是 HTML 管理页的适配层：只解析 HTTP、调用 service、渲染 templ。
 type Handler struct {
 	files     service.FileService
 	maxUpload int64
 }
 
-// NewHandler 构造 HTML Handler。
+// NewHandler constructs the HTML Handler | NewHandler 构造 HTML Handler。
 func NewHandler(files service.FileService, maxUpload int64) *Handler {
 	return &Handler{files: files, maxUpload: maxUpload}
 }
 
+// Register mounts the HTML routes. The JSON API is still mounted by
+// api.FileHandler under /api.
 // Register 挂载 HTML 路由。JSON API 仍由 api.FileHandler 挂载在 /api 下。
 func (h *Handler) Register(r *gin.Engine) {
 	r.GET("/", h.page)
@@ -40,7 +47,7 @@ func (h *Handler) Register(r *gin.Engine) {
 	r.GET("/ui/files", h.list)
 	r.POST("/ui/files", h.upload)
 	r.PUT("/ui/files/:hash", h.rename)
-	r.POST("/ui/files/:hash", h.rename) // 无 JS 时的表单回退
+	r.POST("/ui/files/:hash", h.rename) // Form fallback when JS is unavailable | 无 JS 时的表单回退。
 	r.DELETE("/ui/files/:hash", h.remove)
 }
 
@@ -64,6 +71,8 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func (h *Handler) upload(c *gin.Context) {
+	// Limit the request body before parsing multipart, so oversized files are
+	// not fully spilled to disk.
 	// 在解析 multipart 前限制请求体，避免把超大文件全部落盘。
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxUpload+(1<<20))
 
@@ -115,6 +124,8 @@ func (h *Handler) remove(c *gin.Context) {
 	h.render(c, http.StatusOK, templates.FileList(h.view(c, "已删除", "")))
 }
 
+// view reads the current user's file list. flash/error are used for this
+// render only.
 // view 读取当前用户的文件列表。flash/error 只用于本次渲染。
 func (h *Handler) view(c *gin.Context, flash, errMsg string) templates.View {
 	files, total, err := h.files.List(c.Request.Context(), demoUserID, "", 1, pageSize)

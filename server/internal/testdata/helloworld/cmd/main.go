@@ -13,14 +13,17 @@ import (
 	helloworldpb "github.com/apus-run/gala/server/internal/testdata/helloworld"
 )
 
+// server implements the Greeter service for the testdata app | server 是示例应用中实现 Greeter 服务的类型.
 type server struct {
 	helloworldpb.UnimplementedGreeterServer
 }
 
+// NewServer creates the testdata Greeter server | 创建示例应用的 Greeter 服务.
 func NewServer() *server {
 	return &server{}
 }
 
+// SayHello implements helloworldpb.GreeterServer | 实现 helloworldpb.GreeterServer.
 func (s *server) SayHello(ctx context.Context, in *helloworldpb.HelloRequest) (*helloworldpb.HelloReply, error) {
 	return &helloworldpb.HelloReply{Message: in.Name + " world"}, nil
 }

@@ -12,19 +12,26 @@ import (
 
 // Typed is a thin value adapter; all types share the same serialized Cache.
 // Use distinct namespaces/key domains for incompatible schemas.
+// Typed 是薄薄的值适配层；所有类型共享同一个序列化 Cache。
+// 不兼容的 schema 请使用不同的 namespace/key 域。
 type Typed[V any] struct{ *Cache }
 
+// NewTyped wraps c with a typed view | NewTyped 为 c 包一层泛型视图。
 func NewTyped[V any](c *Cache) *Typed[V] {
 	if c == nil {
 		panic("layercache: nil cache")
 	}
 	return &Typed[V]{c}
 }
+
+// Get reads and decodes into V | Get 读取并解码为 V。
 func (c *Typed[V]) Get(ctx context.Context, key string) (V, error) {
 	var v V
 	err := c.Cache.Get(ctx, key, &v)
 	return v, err
 }
+
+// GetSkippingLocal reads L2 only | GetSkippingLocal 仅读远端层。
 func (c *Typed[V]) GetSkippingLocal(ctx context.Context, key string) (V, error) {
 	var v V
 	err := c.Cache.GetSkippingLocal(ctx, key, &v)
@@ -33,9 +40,14 @@ func (c *Typed[V]) GetSkippingLocal(ctx context.Context, key string) (V, error) 
 
 // Explicit typed arguments take precedence over Value/Do item options. Clip
 // prevents append from modifying a caller-owned backing array with spare capacity.
+// 显式的泛型参数优先于 Value/Do 条目选项。Clip 防止 append 修改调用方
+// 拥有的、还有富余容量的底层数组。
 func (c *Typed[V]) Set(ctx context.Context, key string, value V, opts ...ItemOption) error {
 	return c.Cache.Set(ctx, key, append(slices.Clip(opts), Value(value), Do(nil))...)
 }
+
+// GetOrLoad runs the read-through path with a typed loader
+// | GetOrLoad 用泛型加载器执行读穿透路径。
 func (c *Typed[V]) GetOrLoad(ctx context.Context, key string, load Loader[V], opts ...ItemOption) (V, error) {
 	var v V
 	if load == nil {
@@ -88,8 +100,11 @@ func (c *Typed[V]) MGet(ctx context.Context, keys []string, load BatchLoader[V])
 // T mirrors JetCache's ordered-ID facade. Prefix/id concatenation is explicit;
 // applications must choose non-colliding key domains and separators. Raw-key
 // operations and coordinator lifecycle are available explicitly through Typed.
+// T 对应 JetCache 的有序 ID 门面。前缀/id 拼接是显式的；应用必须自选不冲突
+// 的 key 域与分隔符。裸 key 操作与协调器生命周期请显式通过 Typed 使用。
 type T[K cmp.Ordered, V any] struct{ Typed *Typed[V] }
 
+// NewT wraps c with an ordered-ID view | NewT 为 c 包一层有序 ID 视图。
 func NewT[K cmp.Ordered, V any](c *Cache) *T[K, V] { return &T[K, V]{NewTyped[V](c)} }
 func (c *T[K, V]) key(prefix string, id K) string {
 	return prefix + c.Typed.opts.separator + fmt.Sprint(id)
@@ -124,6 +139,7 @@ func (c *T[K, V]) Exists(ctx context.Context, prefix string, id K) (bool, error)
 }
 
 // MGet returns partial successes with errors instead of swallowing batch failures.
+// MGet 连同错误一起返回部分成功结果，而不是吞掉批量失败。
 func (c *T[K, V]) MGet(ctx context.Context, prefix string, ids []K, load func(context.Context, []K) (map[K]V, error)) (map[K]V, error) {
 	reverse := make(map[string]K, len(ids))
 	keys := make([]string, 0, len(ids))
@@ -161,6 +177,7 @@ func (c *T[K, V]) MGet(ctx context.Context, prefix string, ids []K, load func(co
 }
 
 // mget is called inside Typed.MGet's lifetime registration, including decoding.
+// mget 在 Typed.MGet 的生命周期注册内被调用，包括解码。
 func (c *Cache) mget(ctx context.Context, keys []string, load func(context.Context, []string) (map[string]any, error)) (map[string][]byte, error) {
 	result := make(map[string][]byte)
 	keys = slices.Clone(keys)
@@ -194,6 +211,8 @@ func (c *Cache) mget(ctx context.Context, keys []string, load func(context.Conte
 	}
 	// Sorting the missing set produces a canonical, collision-free flight key.
 	// Cache-only requests must not join a source-loading request (or vice versa).
+	// 对缺失集合排序可生成规范、无冲突的 flight key；
+	// 仅查缓存的请求不得与回源请求合并（反之亦然）。
 	kind := "batch/cache"
 	if load != nil {
 		kind = "batch/load"
@@ -261,6 +280,8 @@ func (c *Cache) loadBatch(ctx context.Context, ts []*ticket, load func(context.C
 		if !batched || !found && batchErr != nil {
 			// No batch capability, or an aggregate error left this key ambiguous.
 			// Reuse the single-key path to distinguish a miss from a failure.
+			// 没有批量能力，或聚合错误使该 key 结果不明时，
+			// 复用单 key 路径以区分未命中与失败。
 			e, err = c.readCache(ctx, t, false)
 		} else {
 			if !found {
@@ -345,6 +366,8 @@ func (c *Cache) commitBatch(ctx context.Context, ts []*ticket, writes map[string
 	var successful []string
 	// A later group can fail after earlier writes committed. Notify those
 	// successes on every exit, even when the request's context has expired.
+	// 后一组可能在前面的写入已提交后失败。无论从哪条路径退出都要通知这些
+	// 成功项，即使请求 context 已过期。
 	defer func() {
 		if len(successful) > 0 {
 			slices.Sort(successful)
@@ -367,12 +390,15 @@ func (c *Cache) commitBatch(ctx context.Context, ts []*ticket, writes map[string
 		i := ItemOptions{ttl: c.defaultTTL()}
 		if remote, ok := c.remote.(BatchRemote); ok {
 			// One TTL per class, as in JetCache's positive/negative MSet partition.
+			// 每类一个 TTL，对应 JetCache 的正/负值 MSet 分区。
 			ttl := c.ttl(i.ttl, negative)
 			limit := time.Now().Add(ttl)
 			op, cancel := context.WithTimeout(ctx, c.opts.remoteTimeout)
 			receipts, err := remote.MSet(op, group, ttl)
 			// Receipts acknowledge writes even when their reply arrives after the
 			// operation budget. Notify peers, while withholding late L1 fills.
+			// 即使应答晚于操作预算到达，回执也确认了写入。通知对端，
+			// 但扣下迟到的 L1 回填。
 			for key, deadline := range receipts {
 				if _, requested := group[key]; requested && !deadline.IsZero() {
 					successful = append(successful, strings.TrimPrefix(key, c.prefix))

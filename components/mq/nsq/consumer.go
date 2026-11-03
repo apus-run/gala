@@ -17,6 +17,7 @@ type consumerClient interface {
 	Stop()
 }
 
+// Consumer consumes one NSQ topic and channel through go-nsq | Consumer 通过 go-nsq 消费一个 NSQ topic 与 channel。
 type Consumer struct {
 	client    consumerClient
 	stop      <-chan int
@@ -32,12 +33,14 @@ type Consumer struct {
 	active    sync.WaitGroup
 }
 
+// RegisterHandler sets the handler for the next Start | RegisterHandler 设置下一次 Start 使用的处理器。
 func (c *Consumer) RegisterHandler(handler mq.ConsumerHandler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.handler = handler
 }
 
+// Start connects the consumer to the configured nsqd list | Start 把消费者连到配置的 nsqd 列表。
 func (c *Consumer) Start() error {
 	if !c.lifecycle.TryLock() {
 		return ErrBusy
@@ -63,6 +66,7 @@ func (c *Consumer) Start() error {
 	return nil
 }
 
+// Close stops the consumer and waits for in-flight handlers | Close 停止消费者并等待在途处理器返回。
 func (c *Consumer) Close() error {
 	if !c.lifecycle.TryLock() {
 		return ErrBusy
@@ -83,7 +87,9 @@ func (c *Consumer) close() {
 	c.cancel()
 	c.client.Stop()
 	<-c.stop
-	// SDK StopChan can close after its shutdown timeout even with a live handler.
+	// The SDK StopChan can close after its shutdown timeout even with a live
+	// handler still running.
+	// 即使处理器仍在运行，SDK 的 StopChan 也可能在关机超时后关闭。
 	c.active.Wait()
 }
 
@@ -119,6 +125,8 @@ func (c *Consumer) handle(ctx context.Context, message *nsqclient.Message) (err 
 	if err != nil {
 		return err
 	}
-	// A nil handler return after shutdown/timeout must still trigger REQ, not FIN.
+	// A nil handler return after shutdown/timeout must still trigger REQ, not
+	// FIN.
+	// 关闭/超时后即使处理器返回 nil，也必须触发 REQ 而不是 FIN。
 	return ctx.Err()
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// TlsVersion maps a version string like "1.2" to its crypto/tls constant
+// | TlsVersion 把 "1.2" 这类版本字符串映射为 crypto/tls 的对应常量.
 var TlsVersion = map[string]uint16{
 	"1.0": tls.VersionTLS10,
 	"1.1": tls.VersionTLS11,

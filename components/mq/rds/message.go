@@ -29,8 +29,15 @@ func topicKey(topic string) string { return "gala:mq:{" + hex.EncodeToString([]b
 
 // StreamKey names the retained stream. ACK does not delete entries, so other
 // groups can still process them; retention must be managed by the application.
+// StreamKey 命名保留的 stream。ACK 不会删除条目，其他组仍可处理；
+// 保留策略必须由应用管理。
 func StreamKey(topic string) string { return topicKey(topic) + ":stream" }
-func DelayKey(topic string) string  { return topicKey(topic) + ":delay" }
+
+// DelayKey names the sorted set holding delayed messages of a topic
+// | DelayKey 命名按主题存放延迟消息的 sorted set。
+func DelayKey(topic string) string { return topicKey(topic) + ":delay" }
+
+// DeadLetterKey names a group's dead-letter stream | DeadLetterKey 命名某个组的死信 stream。
 func DeadLetterKey(topic, group string) string {
 	return topicKey(topic) + ":dead:" + hex.EncodeToString([]byte(group))
 }

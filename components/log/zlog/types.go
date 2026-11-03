@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Logger is the logging contract shared by zap-based loggers | 基于 zap 的日志器共同实现的接口.
 type Logger interface {
 	Debugf(format string, args ...any)
 	Infof(format string, args ...any)
@@ -44,11 +45,15 @@ type Logger interface {
 	Sugar() *zap.SugaredLogger
 }
 
+// Field is an alias of zapcore.Field | Field 是 zapcore.Field 的别名.
 type Field = zapcore.Field
 
+// Format selects the log output encoding | Format 选择日志输出编码.
 type Format string
 
 const (
+	// FormatText selects console-style text output | 表示控制台风格的文本输出.
 	FormatText Format = "text"
+	// FormatJSON selects JSON output | 表示 JSON 输出.
 	FormatJSON Format = "json"
 )

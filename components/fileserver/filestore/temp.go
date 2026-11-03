@@ -8,9 +8,19 @@ import (
 	"time"
 )
 
+// CleanupTemp removes leftover files in the temp area whose modification time
+// is older than olderThan: half-written files left by a process that exited
+// before publishing. olderThan must be positive, otherwise ErrInvalidArgument
+// is returned; a negative value would push the cutoff into the future and
+// delete active files.
 // CleanupTemp 删除临时区中修改时间早于 olderThan 的残留文件：进程在发布前退出时留下的半成品。
 // olderThan 必须为正，否则返回 ErrInvalidArgument；负值会把 cutoff 推到未来并删除活跃文件。
 //
+// The library starts no background service; callers invoke it at their own
+// pace (cron or at startup). olderThan of at least 24 hours is recommended.
+// It touches only .fs-tmp, never the data area. A single failing entry does
+// not abort the whole run; errors are joined with errors.Join, and the return
+// value is the number of entries removed.
 // 库不启动后台服务，由调用方按自己的节奏调用（cron 或启动时）。建议 olderThan 不小于 24 小时。
 // 它只触碰 .fs-tmp，不触碰数据区。
 // 单个条目失败不会中断整体，错误用 errors.Join 汇总；返回值是已删除的条目数。
@@ -60,7 +70,7 @@ func (s *Store) CleanupTemp(ctx context.Context, olderThan time.Duration) (int, 
 	return removed, nil
 }
 
-// readDirEntries 读取 dir 下的全部条目，最多一次系统调用。
+// readDirEntries reads all entries under dir in at most one syscall | readDirEntries 读取 dir 下的全部条目，最多一次系统调用。
 func (s *Store) readDirEntries(dir string) ([]fs.DirEntry, error) {
 	f, err := s.root.Open(dir)
 	if err != nil {

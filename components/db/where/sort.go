@@ -8,15 +8,30 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrInvalidSort is returned when the sort parameter is invalid: an empty
+// field, a bare "-", or a field outside the whitelist.
 // ErrInvalidSort 表示排序参数不合法：空字段、单独的 "-"，或字段不在白名单内。
 var ErrInvalidSort = errors.New("where: invalid sort")
 
+// Sortable maps sort field names from requests to database column names.
+//
+// It is the only security boundary for sorting: ORDER BY column names cannot
+// be parameterized with placeholders, so only the values configured here ever
+// enter the SQL; strings coming from a request never do. Keys are
+// case-sensitive.
 // Sortable 把请求里的排序字段名映射到数据库列名。
 //
 // 它是排序的唯一安全边界：ORDER BY 的列名无法用占位符参数化，所以只有这里配置
 // 的值会进入 SQL，请求带来的字符串永远不会。键区分大小写。
 type Sortable map[string]string
 
+// Parse parses a sort parameter of the form "-created,name".
+//
+// The spec is split on commas, leading and trailing whitespace is trimmed per
+// segment, and a "-" prefix means descending. An empty spec returns nil; empty
+// segments, a bare "-" and fields outside the whitelist all return
+// ErrInvalidSort. A column that appears twice keeps only its first entry, so
+// the output length never exceeds the whitelist size.
 // Parse 解析 "-created,name" 形式的排序参数。
 //
 // 逗号分段，段首尾空白去掉，"-" 前缀表示倒序。空参数返回 nil；空段、单独的
@@ -37,6 +52,8 @@ func (s Sortable) Parse(spec string) ([]clause.OrderByColumn, error) {
 
 		desc := strings.HasPrefix(name, "-")
 		if desc {
+			// The name after the prefix is not trimmed again: `- id` is not a
+			// valid field and fails the whitelist check.
 			// 前缀后的名字不再去空白：`- id` 不是合法字段，走白名单校验失败。
 			name = name[1:]
 		}
@@ -46,6 +63,8 @@ func (s Sortable) Parse(spec string) ([]clause.OrderByColumn, error) {
 
 		column, ok := s[name]
 		if !ok || column == "" {
+			// A whitelist entry with an empty column name is a configuration
+			// error; treat it as invalid to avoid emitting an empty column.
 			// 列名为空的白名单项是配置错误，按非法处理，避免生成空列名。
 			return nil, fmt.Errorf("%w: %q", ErrInvalidSort, segment)
 		}

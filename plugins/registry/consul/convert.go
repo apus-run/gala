@@ -14,6 +14,7 @@ import (
 )
 
 // Reserved Meta keys. User metadata must not start with metaPrefix.
+// 保留的 Meta key。用户元数据不得使用 metaPrefix 开头。
 const (
 	metaPrefix    = "gala."
 	metaID        = "gala.id"
@@ -21,14 +22,18 @@ const (
 	metaEndpoints = "gala.endpoints"
 
 	// Consul limits a Meta value to 512 bytes.
+	// Consul 限制单个 Meta 值最大 512 字节。
 	maxMetaValue = 512
 )
 
 // ErrReservedMetadata is returned when instance metadata uses the "gala."
 // key prefix, which this plugin keeps for itself.
+//
+// ErrReservedMetadata 在实例元数据使用了本插件保留的 "gala." key 前缀时返回.
 var ErrReservedMetadata = errors.New("consul registry: metadata key uses reserved prefix \"gala.\"")
 
 // agentService is the body of PUT /v1/agent/service/register.
+// agentService 是 PUT /v1/agent/service/register 的请求体.
 type agentService struct {
 	ID      string            `json:"ID"`
 	Name    string            `json:"Name"`
@@ -47,6 +52,7 @@ type agentCheck struct {
 }
 
 // healthEntry is one element of the answer of /v1/health/service/<name>.
+// healthEntry 是 /v1/health/service/<name> 应答中的一个元素.
 type healthEntry struct {
 	Node struct {
 		Address string `json:"Address"`
@@ -62,9 +68,12 @@ type healthEntry struct {
 
 // serviceID is the Consul service ID. Consul scopes it to the agent, so it
 // carries the name: two services may well use the same instance ID.
+// serviceID 是 Consul 的 service ID。它由 agent 限定作用范围，因此要带上
+// 服务名：两个服务完全可能使用同一个实例 ID。
 func serviceID(name, id string) string { return name + "/" + id }
 
 // checkID is the ID Consul gives the inline check of a service.
+// checkID 是 Consul 为服务内联检查分配的 ID.
 func checkID(svcID string) string { return "service:" + svcID }
 
 func toAgentService(ins *registry.ServiceInstance, o *Options) (*agentService, error) {
@@ -93,7 +102,9 @@ func toAgentService(ins *registry.ServiceInstance, o *Options) (*agentService, e
 		CheckID: checkID(svcID),
 		Name:    "gala ttl",
 		TTL:     secs(o.ttl),
-		Status:  "passing", // healthy right away; the keepalive keeps it so
+		// healthy right away; the keepalive keeps it so
+		// 注册即健康；续约保持这一状态
+		Status: "passing",
 	}
 	if o.deregisterAfter > 0 {
 		check.DeregisterCriticalServiceAfter = o.deregisterAfter.String()
@@ -104,11 +115,13 @@ func toAgentService(ins *registry.ServiceInstance, o *Options) (*agentService, e
 }
 
 // secs renders a duration as Consul's whole-second TTL, rounding up.
+// secs 把时长渲染为 Consul 的整秒 TTL，向上取整.
 func secs(d time.Duration) string {
 	return strconv.FormatInt(int64((d+time.Second-1)/time.Second), 10) + "s"
 }
 
 // hostPort picks Address and Port from the first endpoint that has a host.
+// hostPort 从第一个带主机的 endpoint 中选出 Address 与 Port.
 func hostPort(endpoints []string) (string, int) {
 	for _, e := range endpoints {
 		u, err := url.Parse(e)
@@ -129,10 +142,14 @@ func fromHealthEntry(e healthEntry) *registry.ServiceInstance {
 		ins.ID = id
 		ins.Version = s.Meta[metaVersion]
 		if raw := s.Meta[metaEndpoints]; raw != "" {
-			_ = json.Unmarshal([]byte(raw), &ins.Endpoints) // a bad value falls back below
+			// a bad value falls back below
+			// 值坏了也没关系，下面有兜底
+			_ = json.Unmarshal([]byte(raw), &ins.Endpoints)
 		}
 	} else {
-		ins.ID = s.ID // registered by another tool
+		// registered by another tool
+		// 由其它工具注册的
+		ins.ID = s.ID
 	}
 
 	for k, v := range s.Meta {

@@ -1,3 +1,6 @@
+// Command userlist is a list example close to real business code: status
+// filtering, keyword search, whitelist sorting and pagination, printing
+// meta + items. It depends only on gorm + SQLite.
 // Command userlist 是一个接近真实业务的列表示例：状态过滤、关键词搜索、
 // 白名单排序、分页，输出 meta + items。只依赖 gorm + SQLite。
 //
@@ -20,7 +23,7 @@ import (
 	"github.com/apus-run/gala/components/db/where"
 )
 
-// User 是示例业务模型。
+// User is the example business model | User 是示例业务模型。
 type User struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Name      string    `gorm:"size:64;index" json:"name"`
@@ -34,6 +37,8 @@ const (
 	statusDisabled = "disabled"
 )
 
+// userSort holds the fields this endpoint allows sorting on; the sort from a
+// request can only land on these three columns.
 // userSort 是这个接口允许排序的字段，请求里的 sort 只能落到这三列。
 var userSort = where.Sortable{
 	"id":         "id",
@@ -41,6 +46,8 @@ var userSort = where.Sortable{
 	"created_at": "created_at",
 }
 
+// listQuery holds the query parameters the endpoint receives, usually filled
+// in directly by ShouldBindQuery.
 // listQuery 是接口收到的查询参数，通常由 ShouldBindQuery 直接填充。
 type listQuery struct {
 	Page     int
@@ -50,24 +57,26 @@ type listQuery struct {
 	Keyword  string
 }
 
+// listUsers shows the service-layer pattern: parse the sort, assemble the
+// filters, fetch one page of data.
 // listUsers 是 service 层的写法：解析排序、拼过滤条件、取一页数据。
 func listUsers(ctx context.Context, users *store.Store[User], q listQuery) (page.Meta, []*User, error) {
 	columns, err := userSort.Parse(q.Sort)
 	if err != nil {
-		return page.Meta{}, nil, fmt.Errorf("bad request: %w", err) // 映射成 400
+		return page.Meta{}, nil, fmt.Errorf("bad request: %w", err) // map to a 400 | 映射成 400
 	}
 
 	opts := where.P(q.Page, q.PageSize).S(columns...)
 	if q.Status != "" {
-		opts.F("status", q.Status) // 等值过滤
+		opts.F("status", q.Status) // equality filter | 等值过滤
 	}
 	if q.Keyword != "" {
-		opts.Q("name LIKE ?", "%"+q.Keyword+"%") // 关键词搜索
+		opts.Q("name LIKE ?", "%"+q.Keyword+"%") // keyword search | 关键词搜索
 	}
 
 	total, rows, err := users.List(ctx, opts)
 	if err != nil {
-		return page.Meta{}, nil, fmt.Errorf("list users: %w", err) // 映射成 500
+		return page.Meta{}, nil, fmt.Errorf("list users: %w", err) // map to a 500 | 映射成 500
 	}
 
 	return page.NewMeta(page.Params{Page: q.Page, Size: q.PageSize}, total), rows, nil
@@ -81,21 +90,26 @@ func main() {
 
 	users := store.NewStore[User](provider)
 
+	// 1. Active users, newest first.
 	// 1. 活跃用户，按注册时间倒序。
 	run(ctx, users, "活跃用户，按注册时间倒序", listQuery{
 		Page: 1, PageSize: 5, Sort: "-created_at", Status: statusActive,
 	})
 
+	// 2. Search for "张", name ascending, page 1.
 	// 2. 搜索「张」，按姓名升序，第 1 页。
 	run(ctx, users, "搜索「张」，按姓名升序", listQuery{
 		Page: 1, PageSize: 2, Sort: "name", Keyword: "张",
 	})
 
+	// 3. Page 2 of the same search.
 	// 3. 同一个搜索的第 2 页。
 	run(ctx, users, "搜索「张」的第 2 页", listQuery{
 		Page: 2, PageSize: 2, Sort: "name", Keyword: "张",
 	})
 
+	// 4. Sort fields outside the whitelist are rejected outright, never spliced
+	// into SQL.
 	// 4. 白名单外的排序字段直接被拒绝，不会拼进 SQL。
 	run(ctx, users, "非法排序字段", listQuery{
 		Page: 1, PageSize: 5, Sort: "email;drop table users",

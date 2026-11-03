@@ -1,5 +1,7 @@
 // Package msgpack adapts JetCache's MessagePack + S2 threshold algorithm.
 // See ../../LICENSE.jetcache-go and ../../NOTICE.md.
+// msgpack 适配 JetCache 的 MessagePack + S2 阈值算法。
+// 许可信息见 ../../LICENSE.jetcache-go 与 ../../NOTICE.md。
 package msgpack
 
 import (
@@ -15,6 +17,8 @@ import (
 // Codec appends a compression discriminator to MessagePack payloads. Payloads
 // shorter than 64 bytes are not compressed. MaxDecodedBytes bounds decompression;
 // zero uses 16 MiB. It must be nonnegative.
+// Codec 在 MessagePack 载荷后追加压缩判别字节。短于 64 字节的载荷不压缩。
+// MaxDecodedBytes 限制解压大小；零值用 16 MiB；必须非负。
 type Codec struct{ MaxDecodedBytes int }
 
 func (c Codec) limit() (int, error) {
@@ -26,6 +30,8 @@ func (c Codec) limit() (int, error) {
 	}
 	return c.MaxDecodedBytes, nil
 }
+
+// Marshal encodes v as MessagePack, compressing large payloads | Marshal 把 v 编码为 MessagePack，大载荷压缩.
 func (c Codec) Marshal(v any) ([]byte, error) {
 	limit, err := c.limit()
 	if err != nil {
@@ -46,6 +52,8 @@ func (c Codec) Marshal(v any) ([]byte, error) {
 	}
 	return append(s2.Encode(nil, b), 1), nil
 }
+
+// Unmarshal decodes a payload produced by Marshal | Unmarshal 解码 Marshal 产出的载荷.
 func (c Codec) Unmarshal(b []byte, v any) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -99,6 +107,8 @@ func (c Codec) Unmarshal(b []byte, v any) (err error) {
 // validate scans framing without allocating containers. The upstream decoder
 // allocates interface maps/slices from declared lengths before reading their
 // contents; a tiny forged header must not request an enormous allocation.
+// validate 只扫描帧结构，不分配容器。上游解码器会按声明长度预先分配
+// interface map/slice 再读内容；伪造的小头绝不能申请巨额分配。
 func validate(b []byte) error { _, err := scan(b); return err }
 
 func scan(b []byte) (map[int64]struct{}, error) {
@@ -219,6 +229,8 @@ func scan(b []byte) (map[int64]struct{}, error) {
 		pos += int(payload)
 		// Every child requires at least a tag byte. This rejects huge count headers
 		// before invoking the allocating decoder, and bounds nesting to 64 levels.
+		// 每个子项至少需要一个 tag 字节。这样会在调用会分配内存的解码器之前
+		// 拒绝超大的计数头，并把嵌套限制在 64 层。
 		if children > uint64(len(b)-pos) {
 			return nil, invalid
 		}
@@ -240,11 +252,16 @@ func scan(b []byte) (map[int64]struct{}, error) {
 // proper extension decoders (including time.Time) consume it with Read instead.
 // The reader also implements ByteScanner, so upstream does not hide its offsets
 // behind a bufio.Reader. No global decoder/extension registrations are modified.
+// vmihailenco 的 DecodeMapLen 会跳过扩展头并把其 body 当作 map tag 读取。
+// 禁止把不透明 body 的首字节当新 tag 读；规范的扩展解码器（含 time.Time）
+// 改用 Read 消费它。该 reader 同时实现 ByteScanner，因此上游不会把偏移藏进
+// bufio.Reader。不修改任何全局 decoder/extension 注册。
 type extensionReader struct {
 	*bytes.Reader
 	starts map[int64]struct{}
 }
 
+// ReadByte rejects reads into opaque extension bodies | ReadByte 拒绝读取不透明扩展体的字节.
 func (r *extensionReader) ReadByte() (byte, error) {
 	pos := r.Size() - int64(r.Len())
 	if _, opaque := r.starts[pos]; opaque {
