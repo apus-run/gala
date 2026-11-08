@@ -13,8 +13,7 @@ import (
 )
 
 func TestDatabase_Client(t *testing.T) {
-	ctx := context.Background()
-	client, err := NewClient(ctx, WithURI("mongodb://root:example@localhost:27017/"))
+	client, err := NewClient(WithURI("mongodb://root:example@localhost:27017/"))
 	if err != nil {
 		t.Fatalf("连接客户端失败: %v", err)
 	}

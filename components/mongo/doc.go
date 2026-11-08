@@ -23,6 +23,12 @@
 // Database 与 Collection。会话与事务需要副本集；repo 子包的
 // WithTransaction 要求传入 mongo.SessionContext。
 //
+// Constructors do no I/O: NewClient and Open only validate options and the
+// driver dials on the first command. Call Ping explicitly to fail fast at
+// startup; Close (alias of Disconnect) releases the sockets.
+// 构造函数不做 I/O：NewClient 与 Open 只校验选项，驱动在首条命令时才拨号。
+// 需要启动即校验连通性请显式调用 Ping；释放连接用 Close（Disconnect 的别名）。
+//
 // The repo subpackage adds a generic Repository/Query abstraction. Several
 // SQL-flavored Query methods are no-ops on MongoDB (With, WithCount, GroupBy,
 // Having, Distinct) — see the repo package doc.

@@ -3,7 +3,6 @@ package mongo
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
@@ -26,32 +25,33 @@ func defaultProcessor(processFn processFn) error {
 	return processFn(&cmd{req: make([]any, 0, 1)})
 }
 
-// NewClient creates a MongoDB client from options | NewClient 按选项创建 MongoDB 客户端。
-func NewClient(ctx context.Context, opts ...Option) (*Client, error) {
+// NewClient creates a MongoDB client from options. Construction performs no
+// I/O: the driver dials lazily on the first command, so a bad URI or an
+// unreachable server surfaces on Ping or on the first command, not here.
+// Call Ping right after NewClient to fail fast at startup.
+// NewClient 按选项创建 MongoDB 客户端。构造不做任何 I/O：驱动在首条命令时才
+// 真正拨号，错误的 URI 或不可达的服务器要到 Ping 或首条命令时才暴露。若需
+// 启动即失败，请在 NewClient 之后显式调用 Ping。
+func NewClient(opts ...Option) (*Client, error) {
 	cfg := NewOptions(opts...)
-	return client(ctx, cfg)
+	return client(cfg)
 }
 
-func client(ctx context.Context, cfg *Config) (*Client, error) {
-	option := options.Client()
-	option = cfg.ClientOptions
+func client(cfg *Config) (*Client, error) {
+	option := cfg.ClientOptions
 	option.ApplyURI(cfg.Uri)
 
-	client, err := mongo.Connect(ctx, option)
+	// mongo.Connect does not dial: it only validates options and defers
+	// connecting to the first command, so context.Background() suffices.
+	// mongo.Connect 不会拨号：它只校验选项，建连推迟到首条命令，
+	// 因此这里传 context.Background() 即可。
+	mc, err := mongo.Connect(context.Background(), option)
 	if err != nil {
-		return nil, fmt.Errorf("can't connect to mongo: %w", err)
-	}
-
-	// Half of the default connect timeout
-	// 取默认连接超时的一半
-	pCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err = client.Ping(pCtx, readpref.Primary()); err != nil {
-		return nil, fmt.Errorf("can't ping mongo: %w", err)
+		return nil, fmt.Errorf("can't create mongo client: %w", err)
 	}
 
 	return &Client{
-		client:    client,
+		client:    mc,
 		registry:  option.Registry,
 		processor: defaultProcessor,
 	}, nil
@@ -79,18 +79,17 @@ func (c *Client) Disconnect(ctx context.Context) error {
 	})
 }
 
-// Close closes sockets to the topology referenced by this Client.
-// Close 关闭该 Client 连接的拓扑上的所有 socket。
+// Close closes sockets to the topology referenced by this Client; it is an
+// alias of Disconnect and runs through the same processor chain.
+// Close 关闭该 Client 连接的拓扑上的所有 socket；它是 Disconnect 的别名，
+// 走同一条 processor 链。
 func (c *Client) Close(ctx context.Context) error {
-	err := c.client.Disconnect(ctx)
-	return err
+	return c.Disconnect(ctx)
 }
 
-// Ping confirms the connection is alive | Ping 确认连接仍存活。
-func (c *Client) Ping(timeout int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
-
+// Ping confirms the connection is alive, respecting the caller's context
+// | Ping 确认连接仍存活，遵循调用方的 context。
+func (c *Client) Ping(ctx context.Context) error {
 	return c.processor(func(cmd *cmd) error {
 		logCmd(c.logMode, cmd, "Ping", nil)
 		return c.client.Ping(ctx, readpref.Primary())

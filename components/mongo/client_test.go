@@ -16,8 +16,7 @@ import (
 )
 
 func initClient() *Mongo {
-	ctx := context.Background()
-	cli, err := Open(ctx, WithMongoConfig(func(options *Config) {
+	cli, err := Open(WithMongoConfig(func(options *Config) {
 		monitor := &event.CommandMonitor{
 			// 每个命令（查询）执行之前
 			Started: func(ctx context.Context, startedEvent *event.CommandStartedEvent) {
@@ -80,7 +79,6 @@ func TestNewClientOpen(t *testing.T) {
 	}
 
 	cli, err := Open(
-		ctx,
 		WithURI("mongodb://root:example@localhost:27017/"),
 		WithDatabaseName("test_db"),
 		WithCollectionName("testopen"),
@@ -95,7 +93,7 @@ func TestNewClientOpen(t *testing.T) {
 	assert.Equal(t, cli.GetDatabaseName(), "test_db")
 	assert.Equal(t, cli.GetCollectionName(), "testopen")
 
-	err = cli.Ping(5)
+	err = cli.Ping(ctx)
 	assert.NoError(t, err)
 
 	res, err := cli.InsertOne(
@@ -132,13 +130,13 @@ func TestNewClientOpen(t *testing.T) {
 	)
 	assert.EqualError(t, err, "client is disconnected")
 
-	err = cli.Ping(5)
+	err = cli.Ping(ctx)
 	assert.Error(t, err)
 }
 
 func TestNewClient(t *testing.T) {
 	ctx := context.Background()
-	client, err := NewClient(ctx, WithURI("mongodb://root:example@localhost:27017/"))
+	client, err := NewClient(WithURI("mongodb://root:example@localhost:27017/"))
 	if err != nil {
 		t.Fatalf("连接客户端失败: %v", err)
 	}
@@ -148,7 +146,7 @@ func TestNewClient(t *testing.T) {
 
 	assert.Equal(t, coll.GetCollectionName(), "testopen")
 
-	err = client.Ping(5)
+	err = client.Ping(ctx)
 	assert.NoError(t, err)
 
 	res, err := coll.InsertOne(ctx, D(KV("count", 1)))
@@ -163,7 +161,7 @@ func TestNewClient(t *testing.T) {
 	_, err = coll.InsertOne(ctx, bson.D{{Key: "x", Value: 1}})
 	assert.EqualError(t, err, "client is disconnected")
 
-	err = client.Ping(5)
+	err = client.Ping(ctx)
 	assert.Error(t, err)
 }
 

@@ -1,7 +1,6 @@
 package mongo
 
 import (
-	"context"
 	"fmt"
 )
 
@@ -13,14 +12,17 @@ type Mongo struct {
 	*Collection
 }
 
-// Open connects with opts and bundles the configured database and collection;
-// Debug enables logging and the interceptor chain.
-// Open 按 opts 建连并组装配置的数据库与集合；Debug 开启日志与拦截器链。
-func Open(ctx context.Context, opts ...Option) (*Mongo, error) {
+// Open builds a Client, Database and Collection from one Config without
+// dialing; Debug enables logging and the interceptor chain. Use the embedded
+// Client's Ping to fail fast on an unreachable server.
+// Open 依据一份 Config 组装 Client、Database 与 Collection，不发起建连；
+// Debug 开启日志与拦截器链。若需启动即发现不可达的服务器，请显式调用
+// 内嵌 Client 的 Ping。
+func Open(opts ...Option) (*Mongo, error) {
 	cfg := NewOptions(opts...)
-	client, err := client(ctx, cfg)
+	client, err := client(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("new client fail: %v", err)
+		return nil, fmt.Errorf("new client fail: %w", err)
 	}
 
 	if cfg.Debug {
