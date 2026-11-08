@@ -9,7 +9,7 @@ import (
 	"context"
 	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/apus-run/gala/components/conf/v2"
@@ -29,7 +29,24 @@ type Source struct {
 //
 // New 返回按给定映射读取进程环境的来源。
 func New(bindings map[string]string) *Source {
-	return &Source{bindings: maps.Clone(bindings), lookup: os.LookupEnv}
+	return NewWithLookup(bindings, os.LookupEnv)
+}
+
+// NewWithLookup is New with a custom value lookup matching os.LookupEnv's
+// signature. A nil lookup falls back to the process environment. Absorbed
+// from koanf v2.4.1's env Opt.EnvironFunc: callers can supply values without
+// touching the process environment, so tests need no t.Setenv (which forbids
+// parallel tests) and fakes stay local.
+//
+// NewWithLookup 与 New 相同，但用自定义取值函数（签名同 os.LookupEnv）。
+// lookup 为 nil 时回退进程环境。吸收自 koanf v2.4.1 env 包的
+// Opt.EnvironFunc：调用方可以不碰进程环境地提供值，测试无需 t.Setenv
+// （它会禁止并行），伪造值也保持局部。
+func NewWithLookup(bindings map[string]string, lookup func(name string) (string, bool)) *Source {
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	return &Source{bindings: maps.Clone(bindings), lookup: lookup}
 }
 
 // SafeName is the empty string: env errors name the variable, which Load
@@ -48,20 +65,18 @@ func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// An invalid mapping is a *conf.Error of stage "config" naming the
+	// variable; the core keeps its stage and adds the source index.
+	// 无效映射是阶段为 "config" 的 *conf.Error，携带变量名；核心保留阶段
+	// 并补上来源序号。
 	if err := checkPaths(s.bindings); err != nil {
-		return nil, &conf.MappingError{Err: err}
+		return nil, err
 	}
 
 	// Iterate in sorted order so errors are deterministic.
 	// 按排序遍历，使错误可重现。
-	names := make([]string, 0, len(s.bindings))
-	for name := range s.bindings {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
 	out := map[string]any{}
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(s.bindings)) {
 		val, ok := s.lookup(name)
 		if !ok || val == "" {
 			continue
@@ -77,12 +92,7 @@ func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 func checkPaths(bindings map[string]string) error {
 	seen := map[string]string{}
 	paths := make([]string, 0, len(bindings))
-	names := make([]string, 0, len(bindings))
-	for name := range bindings {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(bindings)) {
 		path := bindings[name]
 		if path == "" {
 			return conf.SourceError(conf.StageConfig, name, "", nil)
@@ -98,7 +108,7 @@ func checkPaths(bindings map[string]string) error {
 		seen[path] = name
 		paths = append(paths, path)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	for i := range paths {
 		for j := range paths {
 			if i != j && strings.HasPrefix(paths[j], paths[i]+".") {

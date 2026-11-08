@@ -56,7 +56,7 @@ func bindPath(err error) string {
 func firstName(msg string) string {
 	if m := quotedName.FindStringSubmatch(msg); m != nil {
 		if len(m) > 2 && m[2] != "" {
-			key := strings.Split(m[2], ", ")[0]
+			key, _, _ := strings.Cut(m[2], ", ")
 			if m[1] == "" {
 				return key
 			}

@@ -3,6 +3,7 @@ package conf_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -27,9 +28,7 @@ func (f *fakeSource) Load(context.Context) (map[string]any, error) {
 		return nil, f.err
 	}
 	out := map[string]any{}
-	for k, v := range f.data {
-		out[k] = v
-	}
+	maps.Copy(out, f.data)
 	return out, nil
 }
 
@@ -60,7 +59,7 @@ func TestC01EnvWinsAfterFileReload(t *testing.T) {
 	file := &fakeSource{data: portFile(8080)}
 	env := &fakeSource{data: portEnv("9000")}
 
-	cfg, err := conf.Open[appConfig](context.Background(), file, env)
+	cfg, err := conf.Open[appConfig](t.Context(), file, env)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -69,7 +68,7 @@ func TestC01EnvWinsAfterFileReload(t *testing.T) {
 	}
 
 	file.data = portFile(8081)
-	if err := cfg.Reload(context.Background()); err != nil {
+	if err := cfg.Reload(t.Context()); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	if got := cfg.Current().Server.Port; got != 9000 {
@@ -84,13 +83,13 @@ func TestC02RemoveOverrideAndKeepLastGood(t *testing.T) {
 	file := &fakeSource{data: portFile(8081)}
 	env := &fakeSource{data: portEnv("9000")}
 
-	cfg, err := conf.Open[appConfig](context.Background(), file, env)
+	cfg, err := conf.Open[appConfig](t.Context(), file, env)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
 	env.data = map[string]any{}
-	if err := cfg.Reload(context.Background()); err != nil {
+	if err := cfg.Reload(t.Context()); err != nil {
 		t.Fatalf("reload without env: %v", err)
 	}
 	if got := cfg.Current().Server.Port; got != 8081 {
@@ -98,7 +97,7 @@ func TestC02RemoveOverrideAndKeepLastGood(t *testing.T) {
 	}
 
 	file.data = portFile(0)
-	if err := cfg.Reload(context.Background()); err == nil {
+	if err := cfg.Reload(t.Context()); err == nil {
 		t.Fatal("reload with invalid port: want error")
 	}
 	if got := cfg.Current().Server.Port; got != 8081 {
@@ -115,13 +114,13 @@ func TestC03BindErrorIsAtomic(t *testing.T) {
 		Port int    `mapstructure:"port"`
 	}
 	file := &fakeSource{data: map[string]any{"name": "old", "port": 8080}}
-	c, err := conf.Open[cfg](context.Background(), file)
+	c, err := conf.Open[cfg](t.Context(), file)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
 	file.data = map[string]any{"name": "new", "port": "abc"}
-	if err := c.Reload(context.Background()); err == nil {
+	if err := c.Reload(t.Context()); err == nil {
 		t.Fatal("reload with bad port: want error")
 	}
 	if got := c.Current().Name; got != "old" {
@@ -129,7 +128,7 @@ func TestC03BindErrorIsAtomic(t *testing.T) {
 	}
 
 	file.data = map[string]any{"name": "new", "port": 9090}
-	if err := c.Reload(context.Background()); err != nil {
+	if err := c.Reload(t.Context()); err != nil {
 		t.Fatalf("reload after fix: %v", err)
 	}
 	if got := c.Current(); got.Name != "new" || got.Port != 9090 {
@@ -141,7 +140,7 @@ func TestC03BindErrorIsAtomic(t *testing.T) {
 // C04：首次加载失败时不返回实例，也不 panic。
 func TestC04FirstLoadFailureReturnsNil(t *testing.T) {
 	file := &fakeSource{err: errors.New("disk on fire /secret/path/cfg.yaml")}
-	c, err := conf.Open[appConfig](context.Background(), file)
+	c, err := conf.Open[appConfig](t.Context(), file)
 	if err == nil {
 		t.Fatal("open: want error")
 	}
@@ -155,13 +154,13 @@ func TestC04FirstLoadFailureReturnsNil(t *testing.T) {
 // C04（重载）：重载失败保留旧指针，且不泄露来源的原始错误文本。
 func TestC04ReloadFailureKeepsOldAndHidesText(t *testing.T) {
 	file := &fakeSource{data: portFile(8080)}
-	c, err := conf.Open[appConfig](context.Background(), file)
+	c, err := conf.Open[appConfig](t.Context(), file)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	file.err = errors.New("leak: /secret/path/cfg.yaml token=TOPSECRET")
 
-	err = c.Reload(context.Background())
+	err = c.Reload(t.Context())
 	if err == nil {
 		t.Fatal("reload: want error")
 	}
@@ -185,7 +184,7 @@ func TestC06SerializedReloadAndCancelledWaiter(t *testing.T) {
 	started := make(chan struct{}, 8)
 	file := &blockingSource{data: portFile(8080), gate: gate, started: started}
 
-	c, err := conf.Open[appConfig](context.Background(), file)
+	c, err := conf.Open[appConfig](t.Context(), file)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -195,10 +194,10 @@ func TestC06SerializedReloadAndCancelledWaiter(t *testing.T) {
 	file.setGate(make(chan struct{}))
 
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- c.Reload(context.Background()) }()
+	go func() { firstDone <- c.Reload(t.Context()) }()
 	<-started // the first reload is now blocked inside Load | 第一个 Reload 已阻塞在 Load 中
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	before := file.count()
 	if err := c.Reload(ctx); err == nil {
@@ -235,9 +234,7 @@ func (b *blockingSource) Load(context.Context) (map[string]any, error) {
 	}
 	<-b.gate
 	out := map[string]any{}
-	for k, v := range b.data {
-		out[k] = v
-	}
+	maps.Copy(out, b.data)
 	return out, nil
 }
 

@@ -1,7 +1,6 @@
 package config_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +38,7 @@ func clearEnv(t *testing.T) {
 // 删除后的文件可以加载，且值与真实文件一致。
 func TestCleanedConfigLoads(t *testing.T) {
 	clearEnv(t)
-	c, err := config.Load(context.Background(), cleaned)
+	c, err := config.Load(t.Context(), cleaned)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -59,7 +58,7 @@ func TestCleanedConfigLoads(t *testing.T) {
 // 存在 server.mode 时，严格绑定拒绝该文件（规格 C08）。
 func TestOriginalWithModeIsRejected(t *testing.T) {
 	clearEnv(t)
-	if _, err := config.Load(context.Background(), original); err == nil {
+	if _, err := config.Load(t.Context(), original); err == nil {
 		t.Fatal("original with server.mode: want error, got nil")
 	}
 }
@@ -70,7 +69,7 @@ func TestBucketNewNameWins(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("S3_BUCKET", "legacy-bucket")
 	t.Setenv("STORAGE_S3_BUCKET", "new-bucket")
-	c, err := config.Load(context.Background(), cleaned)
+	c, err := config.Load(t.Context(), cleaned)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -86,7 +85,7 @@ func TestBucketEmptyNewNameFallsBackToLegacy(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("S3_BUCKET", "legacy-bucket")
 	t.Setenv("STORAGE_S3_BUCKET", "")
-	c, err := config.Load(context.Background(), cleaned)
+	c, err := config.Load(t.Context(), cleaned)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -107,7 +106,7 @@ func TestBindErrorDoesNotEchoSecret(t *testing.T) {
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := config.Load(context.Background(), p)
+	_, err := config.Load(t.Context(), p)
 	if err == nil {
 		t.Fatal("want bind error for list-valued dsn")
 	}

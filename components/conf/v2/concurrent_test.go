@@ -22,7 +22,7 @@ type pair struct {
 func TestC03ReadersSeeOneVersion(t *testing.T) {
 	src := &mutableSource{}
 	src.set(1)
-	c, err := conf.Open[pair](context.Background(), src)
+	c, err := conf.Open[pair](t.Context(), src)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestC03ReadersSeeOneVersion(t *testing.T) {
 	wg.Go(func() {
 		for n := 2; n < iterations; n++ {
 			src.set(n)
-			if err := c.Reload(context.Background()); err != nil {
+			if err := c.Reload(t.Context()); err != nil {
 				select {
 				case errs <- "reload: " + err.Error():
 				default:

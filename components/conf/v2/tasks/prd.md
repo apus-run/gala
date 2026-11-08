@@ -195,6 +195,7 @@ type Error struct {
 
 - 阶段归类（已定，可由评审推翻）：阶段为 `read`、`decode`、`merge`、`bind`、`validate`、`canceled`、`config` 共七项。env 映射错误（重复路径、父子冲突、空段）归为 `config`：它在读取任何值之前就已错误，既非读取失败也非绑定失败。缺少 codec 归为 `decode`，因为它是解码所需组件缺失。由 `env/stage_test.go` 固定。
 - 业务 `Validate` 错误：`Error()` 包含其文本、`Unwrap` 返回它，与 §6 一致。
+- 吸收 koanf v2.4.1 env 包的 `Opt.EnvironFunc` 思想：新增 `env.NewWithLookup(bindings, lookup)`，lookup 签名同 `os.LookupEnv`，nil 回退进程环境；`New` 为其特例。测试可注入取值而不用 `t.Setenv`（后者禁止并行）。按 §8，Watch 适配器仍待需求明确后再加。
 
 **仍未完成：**
 

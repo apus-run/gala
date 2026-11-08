@@ -9,6 +9,7 @@ package conf
 import (
 	"context"
 	"reflect"
+	"slices"
 	"sync/atomic"
 )
 
@@ -52,7 +53,7 @@ func Open[T any](ctx context.Context, sources ...Source) (*Config[T], error) {
 			return nil, newError(StageConfig, i, "", "", nil)
 		}
 	}
-	c := &Config[T]{sources: append([]Source(nil), sources...), sem: make(chan struct{}, 1)}
+	c := &Config[T]{sources: slices.Clone(sources), sem: make(chan struct{}, 1)}
 	if err := c.Reload(ctx); err != nil {
 		return nil, err
 	}

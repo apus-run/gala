@@ -1,7 +1,6 @@
 package env_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -16,7 +15,7 @@ type stageCfg struct {
 // An invalid env mapping is reported as stage "config", not "read" or "bind".
 // 无效的 env 映射报告为 "config" 阶段，而非 "read" 或 "bind"。
 func TestInvalidMappingIsConfigStage(t *testing.T) {
-	_, err := conf.Open[stageCfg](context.Background(), env.New(map[string]string{
+	_, err := conf.Open[stageCfg](t.Context(), env.New(map[string]string{
 		"A": "name",
 		"B": "name",
 	}))

@@ -72,7 +72,7 @@ func copyValue(v reflect.Value) (reflect.Value, error) {
 		} else {
 			out = reflect.New(v.Type()).Elem()
 		}
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			value, err := copyValue(v.Index(i))
 			if err != nil {
 				return reflect.Value{}, err

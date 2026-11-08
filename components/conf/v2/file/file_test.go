@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -34,14 +33,16 @@ func TestC07FormatsAgree(t *testing.T) {
 
 	var got []shape
 	for _, name := range []string{"a.json", "a.yaml", "a.yml"} {
-		c, err := conf.Open[shape](context.Background(), file.New(filepath.Join(dir, name)))
+		c, err := conf.Open[shape](t.Context(), file.New(filepath.Join(dir, name)))
 		if err != nil {
 			t.Fatalf("%s: open: %v", name, err)
 		}
 		got = append(got, *c.Current())
 	}
+	// shape is comparable, so a direct comparison beats reflect.DeepEqual.
+	// shape 可直接比较，无需 reflect.DeepEqual。
 	for i := 1; i < len(got); i++ {
-		if !reflect.DeepEqual(got[0], got[i]) {
+		if got[0] != got[i] {
 			t.Fatalf("format %d differs: %+v vs %+v", i, got[0], got[i])
 		}
 	}
@@ -53,13 +54,13 @@ func TestC07FormatsAgree(t *testing.T) {
 func TestC07MissingFileAndUnknownExt(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := conf.Open[shape](context.Background(), file.New(filepath.Join(dir, "nope.yaml")))
+	_, err := conf.Open[shape](t.Context(), file.New(filepath.Join(dir, "nope.yaml")))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing file: errors.Is(ErrNotExist) = false, err = %v", err)
 	}
 
 	write(t, filepath.Join(dir, "c.toml"), "name = \"x\"\n")
-	if _, err := conf.Open[shape](context.Background(), file.New(filepath.Join(dir, "c.toml"))); err == nil {
+	if _, err := conf.Open[shape](t.Context(), file.New(filepath.Join(dir, "c.toml"))); err == nil {
 		t.Fatal("unknown extension: want error, got nil")
 	}
 }
@@ -72,7 +73,7 @@ func TestC07ReadsOnce(t *testing.T) {
 	write(t, p, "name: x\n")
 
 	counted := &countingSource{inner: file.New(p)}
-	if _, err := conf.Open[shape](context.Background(), counted); err != nil {
+	if _, err := conf.Open[shape](t.Context(), counted); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if counted.calls != 1 {
@@ -87,7 +88,7 @@ func TestSafeErrorText(t *testing.T) {
 	p := filepath.Join(dir, "bad.yaml")
 	write(t, p, "server: [unclosed\n")
 
-	_, err := conf.Open[shape](context.Background(), file.New(p))
+	_, err := conf.Open[shape](t.Context(), file.New(p))
 	if err == nil {
 		t.Fatal("want decode error")
 	}

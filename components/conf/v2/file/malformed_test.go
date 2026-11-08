@@ -1,7 +1,6 @@
 package file_test
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -34,7 +33,7 @@ func TestC08MalformedInputHidesSecret(t *testing.T) {
 			p := filepath.Join(dir, tc.name)
 			write(t, p, tc.body)
 
-			_, err := conf.Open[shape](context.Background(), file.New(p))
+			_, err := conf.Open[shape](t.Context(), file.New(p))
 			if err == nil {
 				t.Fatal("malformed input: want error, got nil")
 			}

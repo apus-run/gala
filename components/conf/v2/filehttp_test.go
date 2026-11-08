@@ -1,7 +1,6 @@
 package conf_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,13 +97,13 @@ func TestC08ServerModeIsRejectedUntilRemoved(t *testing.T) {
 	withMode := filepath.Join(dir, "with-mode.yaml")
 	writeFile(t, withMode, "server:\n  mode: \"prod\"\n"+strings.TrimPrefix(filehttpYAML, "server:\n"))
 
-	if _, err := conf.Open[filehttpConfig](context.Background(), file.New(withMode)); err == nil {
+	if _, err := conf.Open[filehttpConfig](t.Context(), file.New(withMode)); err == nil {
 		t.Fatal("server.mode present: want unknown-key error, got nil")
 	}
 
 	cleaned := filepath.Join(dir, "cleaned.yaml")
 	writeFile(t, cleaned, filehttpYAML)
-	c, err := conf.Open[filehttpConfig](context.Background(), file.New(cleaned))
+	c, err := conf.Open[filehttpConfig](t.Context(), file.New(cleaned))
 	if err != nil {
 		t.Fatalf("server.mode removed: open: %v", err)
 	}
@@ -139,7 +138,7 @@ func TestC08BucketEnvPrecedence(t *testing.T) {
 			writeFile(t, p, filehttpYAML)
 
 			sources := append([]conf.Source{file.New(p)}, filehttpEnv()...)
-			c, err := conf.Open[filehttpConfig](context.Background(), sources...)
+			c, err := conf.Open[filehttpConfig](t.Context(), sources...)
 			if err != nil {
 				t.Fatalf("open: %v", err)
 			}
@@ -165,7 +164,7 @@ func TestC08DSNNotLeaked(t *testing.T) {
 	bad := map[string]any{"database": map[string]any{"dsn": []any{dsn}}}
 	sources := append([]conf.Source{file.New(p)}, filehttpEnv()...)
 	sources = append(sources, &fakeSource{data: bad})
-	_, err := conf.Open[filehttpConfig](context.Background(), sources...)
+	_, err := conf.Open[filehttpConfig](t.Context(), sources...)
 	if err == nil {
 		t.Fatal("want bind error")
 	}

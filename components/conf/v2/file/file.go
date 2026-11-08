@@ -6,6 +6,7 @@
 package file
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -63,7 +64,9 @@ func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, s.wrapRead(err)
 	}
-	if len(strings.TrimSpace(string(raw))) == 0 {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		// An empty file is an explicit error, never an empty config.
+		// 空文件是明确错误，而不是空配置。
 		return nil, s.failure(conf.StageDecode, nil)
 	}
 
