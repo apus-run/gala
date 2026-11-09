@@ -7,7 +7,7 @@ import (
 	"time"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
-	"github.com/apus-run/gala/components/conf/v2/env"
+	"github.com/apus-run/gala/components/conf/v2/sources/env"
 )
 
 type typed struct {
@@ -32,7 +32,7 @@ func TestC05ZeroValuesAndEnvAbsence(t *testing.T) {
 		"tags":   []any{},
 		"nested": map[string]any{"level": 0},
 	}}
-	c, err := conf.Open[typed](t.Context(), file)
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(file))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -49,9 +49,9 @@ func TestC05ZeroValuesAndEnvAbsence(t *testing.T) {
 func TestC05EnvEmptyDoesNotOverride(t *testing.T) {
 	t.Setenv("TEST_CONF_NAME_EMPTY", "")
 	file := &fakeSource{data: map[string]any{"name": "from-file"}}
-	c, err := conf.Open[typed](t.Context(), file, env.New(map[string]string{
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(file, env.New(map[string]string{
 		"TEST_CONF_NAME_EMPTY": "name",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestC05EnvEmptyDoesNotOverride(t *testing.T) {
 // C06a：ENV 形式的字符串能绑定到 int、bool 与 Duration；文件中的整数也能绑定。
 func TestC06aEnvStringsBind(t *testing.T) {
 	env := &fakeSource{data: map[string]any{"port": "9000", "debug": "true", "timeout": "500ms"}}
-	c, err := conf.Open[typed](t.Context(), env)
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(env))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestC06RejectsBadInputs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := conf.Open[typed](t.Context(), &fakeSource{data: tc.data})
+			_, err := conf.Open[typed](t.Context(), conf.WithSources(&fakeSource{data: tc.data}))
 			if err == nil {
 				t.Fatalf("want error, got nil")
 			}
@@ -107,19 +107,18 @@ func TestC06RejectsBadInputs(t *testing.T) {
 	}
 }
 
-// Business Validate errors are exposed through Unwrap and Error() by design.
-// 业务 Validate 的错误按设计经 Unwrap 与 Error() 暴露。
-func TestValidateErrorIsExposed(t *testing.T) {
-	_, err := conf.Open[appConfig](t.Context(), &fakeSource{data: portFile(0)})
+// Business validation causes are available only through Unwrap.
+func TestValidateErrorIsRedacted(t *testing.T) {
+	_, err := conf.Open[appConfig](t.Context(), conf.WithSources(&fakeSource{data: portFile(0)}))
 	if err == nil {
 		t.Fatal("want validate error")
 	}
-	var ce *conf.Error
-	if !errors.As(err, &ce) || ce.Stage != conf.StageValidate {
+	ce, ok := errors.AsType[*conf.Error](err)
+	if !ok || ce.Stage != conf.StageValidate {
 		t.Fatalf("stage != validate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "server.port") {
-		t.Fatalf("Error() omits validate text: %q", err.Error())
+	if strings.Contains(err.Error(), "server.port") {
+		t.Fatalf("Error() exposes validate text: %q", err.Error())
 	}
 	if errors.Unwrap(err) == nil {
 		t.Fatal("Unwrap returned nil for validate error")
@@ -129,10 +128,10 @@ func TestValidateErrorIsExposed(t *testing.T) {
 // C06 (values): valid integer strings and in-range numbers still bind exactly.
 // C06（值）：合法的整数字符串与范围内的数字仍精确绑定。
 func TestC06AcceptsExactValues(t *testing.T) {
-	c, err := conf.Open[typed](t.Context(), &fakeSource{data: map[string]any{
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(&fakeSource{data: map[string]any{
 		"port": 8080,
 		"n8":   127,
-	}})
+	}}))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

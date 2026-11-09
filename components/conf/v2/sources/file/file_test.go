@@ -13,7 +13,7 @@ import (
 	_ "github.com/apus-run/gala/pkg/encoding/yaml"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
-	"github.com/apus-run/gala/components/conf/v2/file"
+	"github.com/apus-run/gala/components/conf/v2/sources/file"
 )
 
 type shape struct {
@@ -33,7 +33,7 @@ func TestC07FormatsAgree(t *testing.T) {
 
 	var got []shape
 	for _, name := range []string{"a.json", "a.yaml", "a.yml"} {
-		c, err := conf.Open[shape](t.Context(), file.New(filepath.Join(dir, name)))
+		c, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(filepath.Join(dir, name))))
 		if err != nil {
 			t.Fatalf("%s: open: %v", name, err)
 		}
@@ -54,13 +54,13 @@ func TestC07FormatsAgree(t *testing.T) {
 func TestC07MissingFileAndUnknownExt(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := conf.Open[shape](t.Context(), file.New(filepath.Join(dir, "nope.yaml")))
+	_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(filepath.Join(dir, "nope.yaml"))))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing file: errors.Is(ErrNotExist) = false, err = %v", err)
 	}
 
 	write(t, filepath.Join(dir, "c.toml"), "name = \"x\"\n")
-	if _, err := conf.Open[shape](t.Context(), file.New(filepath.Join(dir, "c.toml"))); err == nil {
+	if _, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(filepath.Join(dir, "c.toml")))); err == nil {
 		t.Fatal("unknown extension: want error, got nil")
 	}
 }
@@ -73,7 +73,7 @@ func TestC07ReadsOnce(t *testing.T) {
 	write(t, p, "name: x\n")
 
 	counted := &countingSource{inner: file.New(p)}
-	if _, err := conf.Open[shape](t.Context(), counted); err != nil {
+	if _, err := conf.Open[shape](t.Context(), conf.WithSources(counted)); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if counted.calls != 1 {
@@ -88,15 +88,15 @@ func TestSafeErrorText(t *testing.T) {
 	p := filepath.Join(dir, "bad.yaml")
 	write(t, p, "server: [unclosed\n")
 
-	_, err := conf.Open[shape](t.Context(), file.New(p))
+	_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
 	if err == nil {
 		t.Fatal("want decode error")
 	}
 	if msg := err.Error(); strings.Contains(msg, dir) {
 		t.Fatalf("error exposes directory: %q", msg)
 	}
-	var ce *conf.Error
-	if !errors.As(err, &ce) || ce.Stage != conf.StageDecode {
+	ce, ok := errors.AsType[*conf.Error](err)
+	if !ok || ce.Stage != conf.StageDecode {
 		t.Fatalf("stage = %v, want decode (err: %v)", ce, err)
 	}
 }
@@ -120,11 +120,11 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-func TestFileErrorRetainsSafeName(t *testing.T) {
+func TestFileErrorOmitsUntrustedName(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "missing.yaml")
-	_, err := conf.Open[shape](t.Context(), file.New(p))
-	var ce *conf.Error
-	if !errors.As(err, &ce) || ce.Name != "missing.yaml" || ce.Source != 0 {
+	_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
+	ce, ok := errors.AsType[*conf.Error](err)
+	if !ok || ce.Name != "" || ce.Source != 0 {
 		t.Fatalf("file identity: %#v", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestActualCodecsIntegerPrecision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), tc.name)
 			write(t, p, tc.body)
-			c, err := conf.Open[shape](t.Context(), file.New(p))
+			c, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
 			}

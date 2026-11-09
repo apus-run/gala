@@ -12,25 +12,25 @@ import (
 func TestInvalidArgumentsUseConfigError(t *testing.T) {
 	var nilSource *fakeSource
 	for _, sources := range [][]conf.Source{nil, {nil}, {nilSource}} {
-		c, err := conf.Open[typed](t.Context(), sources...)
-		var ce *conf.Error
-		if c != nil || !errors.As(err, &ce) || ce.Stage != conf.StageConfig {
+		c, err := conf.Open[typed](t.Context(), conf.WithSources(sources...))
+		ce, ok := errors.AsType[*conf.Error](err)
+		if c != nil || !ok || ce.Stage != conf.StageConfig {
 			t.Fatalf("invalid arguments: %v, %v", c, err)
 		}
 	}
-	if _, err := conf.Open[*typed](t.Context(), &fakeSource{}); err == nil {
+	if _, err := conf.Open[*typed](t.Context(), conf.WithSources(&fakeSource{})); err == nil {
 		t.Fatal("pointer T accepted")
 	}
 }
 
 func TestIntegerKindsCannotBypassChecks(t *testing.T) {
 	for _, value := range []any{int16(300), int32(300), float32(300), float32(1.5), uint(300), uint64(300), math.NaN(), math.Inf(1)} {
-		if _, err := conf.Open[typed](t.Context(), &fakeSource{data: map[string]any{"n8": value}}); err == nil {
+		if _, err := conf.Open[typed](t.Context(), conf.WithSources(&fakeSource{data: map[string]any{"n8": value}})); err == nil {
 			t.Errorf("accepted %T %v", value, value)
 		}
 	}
 	for _, value := range []any{int8(-128), int16(127), int32(127), int64(127), float32(127), float64(127), "-128"} {
-		if _, err := conf.Open[typed](t.Context(), &fakeSource{data: map[string]any{"n8": value}}); err != nil {
+		if _, err := conf.Open[typed](t.Context(), conf.WithSources(&fakeSource{data: map[string]any{"n8": value}})); err != nil {
 			t.Errorf("rejected %T: %v", value, err)
 		}
 	}
@@ -38,9 +38,9 @@ func TestIntegerKindsCannotBypassChecks(t *testing.T) {
 
 func TestNullRejectedInsideCollections(t *testing.T) {
 	for _, value := range []any{nil, []any{nil}, []any{map[string]any{"hidden": nil}}, map[string]any(nil), []string(nil)} {
-		_, err := conf.Open[typed](t.Context(), &fakeSource{data: map[string]any{"tags": value}})
-		var ce *conf.Error
-		if !errors.As(err, &ce) || ce.Stage != conf.StageMerge {
+		_, err := conf.Open[typed](t.Context(), conf.WithSources(&fakeSource{data: map[string]any{"tags": value}}))
+		ce, ok := errors.AsType[*conf.Error](err)
+		if !ok || ce.Stage != conf.StageMerge {
 			t.Fatalf("null %T: %v", value, err)
 		}
 	}
@@ -49,7 +49,7 @@ func TestNullRejectedInsideCollections(t *testing.T) {
 func TestPublishedSliceDoesNotAliasSource(t *testing.T) {
 	tags := []string{"old"}
 	source := &fakeSource{data: map[string]any{"tags": tags}}
-	c, err := conf.Open[typed](t.Context(), source)
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(source))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestPublishedSliceDoesNotAliasSource(t *testing.T) {
 
 func TestSourcesListIsCaptured(t *testing.T) {
 	sources := []conf.Source{&fakeSource{data: map[string]any{"port": 1}}}
-	c, err := conf.Open[typed](t.Context(), sources...)
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(sources...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +79,9 @@ func TestSourcesListIsCaptured(t *testing.T) {
 }
 
 func TestUnknownFieldPath(t *testing.T) {
-	_, err := conf.Open[typed](t.Context(), &fakeSource{data: map[string]any{"nested": map[string]any{"prot": "SECRET"}}})
-	var ce *conf.Error
-	if !errors.As(err, &ce) || ce.Path != "nested.prot" {
+	_, err := conf.Open[typed](t.Context(), conf.WithSources(&fakeSource{data: map[string]any{"nested": map[string]any{"prot": "SECRET"}}}))
+	ce, ok := errors.AsType[*conf.Error](err)
+	if !ok || ce.Path != "" {
 		t.Fatalf("path: %#v", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestCancellationStopsFollowingSourceAndPublication(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	first := sourceFunc(func(context.Context) (map[string]any, error) { cancel(); return map[string]any{}, nil })
 	next := &fakeSource{}
-	c, err := conf.Open[typed](ctx, first, next)
+	c, err := conf.Open[typed](ctx, conf.WithSources(first, next))
 	if c != nil || !errors.Is(err, context.Canceled) || next.calls != 0 {
 		t.Fatalf("cancellation: %v, %v, calls=%d", c, err, next.calls)
 	}
@@ -103,7 +103,7 @@ func TestCancellationStopsFollowingSourceAndPublication(t *testing.T) {
 func TestSecondSourceFailurePreservesPointer(t *testing.T) {
 	first := &fakeSource{data: map[string]any{"port": 1}}
 	second := &fakeSource{}
-	c, err := conf.Open[typed](t.Context(), first, second)
+	c, err := conf.Open[typed](t.Context(), conf.WithSources(first, second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestSecondSourceFailurePreservesPointer(t *testing.T) {
 }
 
 func BenchmarkCurrent(b *testing.B) {
-	c, err := conf.Open[typed](b.Context(), &fakeSource{})
+	c, err := conf.Open[typed](b.Context(), conf.WithSources(&fakeSource{}))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func BenchmarkCurrent(b *testing.B) {
 }
 
 func BenchmarkReloadTwoSources(b *testing.B) {
-	c, err := conf.Open[typed](b.Context(), &fakeSource{data: map[string]any{"port": 8080}}, &fakeSource{data: map[string]any{"port": "9000"}})
+	c, err := conf.Open[typed](b.Context(), conf.WithSources(&fakeSource{data: map[string]any{"port": 8080}}, &fakeSource{data: map[string]any{"port": "9000"}}))
 	if err != nil {
 		b.Fatal(err)
 	}

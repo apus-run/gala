@@ -6,9 +6,7 @@
 package file
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,6 +15,8 @@ import (
 	"github.com/apus-run/gala/pkg/encoding"
 
 	"github.com/apus-run/gala/components/conf/v2"
+	"github.com/apus-run/gala/components/conf/v2/internal/diagnostic"
+	"github.com/apus-run/gala/components/conf/v2/internal/document"
 )
 
 // Source reads a single file. The path is explicit; nothing is scanned or
@@ -24,7 +24,9 @@ import (
 //
 // Source 读取单个文件。路径须显式给出，不扫描目录，不设默认值。
 type Source struct {
-	path string
+	path  string
+	fsys  fs.FS
+	useFS bool
 }
 
 // New returns a Source for path. The codec is looked up by extension at Load
@@ -36,11 +38,9 @@ func New(path string) *Source {
 	return &Source{path: path}
 }
 
-// SafeName returns the basename, which is the only file identity the library
-// exposes in errors.
-// SafeName 返回 basename，这是错误中唯一暴露的文件标识。
-func (s *Source) SafeName() string {
-	return filepath.Base(s.path)
+// NewFS reads one valid, non-root io/fs path. Invalid arguments fail on Load.
+func NewFS(fsys fs.FS, name string) *Source {
+	return &Source{path: name, fsys: fsys, useFS: true}
 }
 
 // Load reads and decodes the file. Each call reads the file once and returns
@@ -51,46 +51,47 @@ func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, s.failure(conf.StageCanceled, err)
 	}
+	if s.useFS && (s.fsys == nil || !fs.ValidPath(s.path) || s.path == ".") {
+		return nil, s.failure(conf.StageConfig, nil)
+	}
 	ext := normalizeExt(s.path)
 	codec := encoding.GetCodec(ext)
 	if codec == nil {
 		// A missing codec is a composition error: the app did not import it.
 		// It is reported as a decode-stage failure so the cause is explicit.
 		// 缺少 codec 是组合错误：应用未导入它。以 decode 阶段报告，使原因明确。
-		return nil, s.failure(conf.StageDecode, nil)
+		return nil, s.failure(conf.StageDecode, diagnostic.CodecMissing)
 	}
 
-	raw, err := os.ReadFile(s.path)
+	raw, err := s.ReadBytes(ctx)
 	if err != nil {
-		return nil, s.wrapRead(err)
+		return nil, err
 	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		// An empty file is an explicit error, never an empty config.
-		// 空文件是明确错误，而不是空配置。
-		return nil, s.failure(conf.StageDecode, nil)
-	}
-
-	var out any
-	if err := codec.Unmarshal(raw, &out); err != nil {
-		// codec error text may echo input; keep only the marker.
-		// codec 的错误文本可能回显输入，只保留标记。
-		return nil, s.failure(conf.StageDecode, nil)
-	}
-	root, ok := out.(map[string]any)
-	if !ok {
-		return nil, s.failure(conf.StageDecode, nil)
-	}
-	return root, nil
+	return document.Decode(codec, raw)
 }
 
-// wrapRead keeps only the not-exist sentinel; other OS errors can contain the
-// full path, which must not be exposed.
-// wrapRead 只保留“不存在”哨兵；其他系统错误可能含完整路径，不得暴露。
-func (s *Source) wrapRead(err error) error {
-	if errors.Is(err, fs.ErrNotExist) {
-		return s.failure(conf.StageRead, fs.ErrNotExist)
+// ReadBytes reads the file without choosing a codec, for document composition.
+func (s *Source) ReadBytes(ctx context.Context) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return s.failure(conf.StageRead, nil)
+	if s.useFS && (s.fsys == nil || !fs.ValidPath(s.path) || s.path == ".") {
+		return nil, s.failure(conf.StageConfig, nil)
+	}
+	var raw []byte
+	var err error
+	if s.useFS {
+		raw, err = fs.ReadFile(s.fsys, s.path)
+	} else {
+		raw, err = os.ReadFile(s.path)
+	}
+	if cause := ctx.Err(); cause != nil {
+		return nil, cause
+	}
+	if err != nil {
+		return nil, s.failure(conf.StageRead, err)
+	}
+	return raw, nil
 }
 
 // normalizeExt lowercases the extension and maps "yml" to "yaml".
@@ -104,5 +105,5 @@ func normalizeExt(path string) string {
 }
 
 func (s *Source) failure(stage conf.Stage, cause error) error {
-	return conf.SourceError(stage, s.SafeName(), "", cause)
+	return conf.SourceError(stage, "", "", cause)
 }

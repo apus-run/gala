@@ -3,7 +3,7 @@ package env_test
 import (
 	"testing"
 
-	"github.com/apus-run/gala/components/conf/v2/env"
+	"github.com/apus-run/gala/components/conf/v2/sources/env"
 )
 
 // Duplicate paths, parent/child conflicts, and empty segments are rejected

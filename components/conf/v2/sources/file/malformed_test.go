@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
-	"github.com/apus-run/gala/components/conf/v2/file"
+	"github.com/apus-run/gala/components/conf/v2/sources/file"
 )
 
 // C08 (malformed input): a syntactically broken file that embeds a secret must
@@ -33,7 +33,7 @@ func TestC08MalformedInputHidesSecret(t *testing.T) {
 			p := filepath.Join(dir, tc.name)
 			write(t, p, tc.body)
 
-			_, err := conf.Open[shape](t.Context(), file.New(p))
+			_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
 			if err == nil {
 				t.Fatal("malformed input: want error, got nil")
 			}
@@ -43,8 +43,8 @@ func TestC08MalformedInputHidesSecret(t *testing.T) {
 			if cause := errors.Unwrap(err); cause != nil && strings.Contains(cause.Error(), secret) {
 				t.Fatalf("unwrapped cause leaks secret: %q", cause.Error())
 			}
-			var ce *conf.Error
-			if !errors.As(err, &ce) || ce.Stage != conf.StageDecode {
+			ce, ok := errors.AsType[*conf.Error](err)
+			if !ok || ce.Stage != conf.StageDecode {
 				t.Fatalf("stage != decode: %v", err)
 			}
 		})

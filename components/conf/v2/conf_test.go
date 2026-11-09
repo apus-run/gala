@@ -59,7 +59,7 @@ func TestC01EnvWinsAfterFileReload(t *testing.T) {
 	file := &fakeSource{data: portFile(8080)}
 	env := &fakeSource{data: portEnv("9000")}
 
-	cfg, err := conf.Open[appConfig](t.Context(), file, env)
+	cfg, err := conf.Open[appConfig](t.Context(), conf.WithSources(file, env))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestC02RemoveOverrideAndKeepLastGood(t *testing.T) {
 	file := &fakeSource{data: portFile(8081)}
 	env := &fakeSource{data: portEnv("9000")}
 
-	cfg, err := conf.Open[appConfig](t.Context(), file, env)
+	cfg, err := conf.Open[appConfig](t.Context(), conf.WithSources(file, env))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestC03BindErrorIsAtomic(t *testing.T) {
 		Port int    `mapstructure:"port"`
 	}
 	file := &fakeSource{data: map[string]any{"name": "old", "port": 8080}}
-	c, err := conf.Open[cfg](t.Context(), file)
+	c, err := conf.Open[cfg](t.Context(), conf.WithSources(file))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestC03BindErrorIsAtomic(t *testing.T) {
 // C04：首次加载失败时不返回实例，也不 panic。
 func TestC04FirstLoadFailureReturnsNil(t *testing.T) {
 	file := &fakeSource{err: errors.New("disk on fire /secret/path/cfg.yaml")}
-	c, err := conf.Open[appConfig](t.Context(), file)
+	c, err := conf.Open[appConfig](t.Context(), conf.WithSources(file))
 	if err == nil {
 		t.Fatal("open: want error")
 	}
@@ -154,7 +154,7 @@ func TestC04FirstLoadFailureReturnsNil(t *testing.T) {
 // C04（重载）：重载失败保留旧指针，且不泄露来源的原始错误文本。
 func TestC04ReloadFailureKeepsOldAndHidesText(t *testing.T) {
 	file := &fakeSource{data: portFile(8080)}
-	c, err := conf.Open[appConfig](t.Context(), file)
+	c, err := conf.Open[appConfig](t.Context(), conf.WithSources(file))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestC06SerializedReloadAndCancelledWaiter(t *testing.T) {
 	started := make(chan struct{}, 8)
 	file := &blockingSource{data: portFile(8080), gate: gate, started: started}
 
-	c, err := conf.Open[appConfig](t.Context(), file)
+	c, err := conf.Open[appConfig](t.Context(), conf.WithSources(file))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

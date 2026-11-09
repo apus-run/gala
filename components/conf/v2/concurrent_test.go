@@ -22,7 +22,7 @@ type pair struct {
 func TestC03ReadersSeeOneVersion(t *testing.T) {
 	src := &mutableSource{}
 	src.set(1)
-	c, err := conf.Open[pair](t.Context(), src)
+	c, err := conf.Open[pair](t.Context(), conf.WithSources(src))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

@@ -49,11 +49,6 @@ func NewWithLookup(bindings map[string]string, lookup func(name string) (string,
 	return &Source{bindings: maps.Clone(bindings), lookup: lookup}
 }
 
-// SafeName is the empty string: env errors name the variable, which Load
-// reports directly.
-// SafeName 返回空串：ENV 错误直接在 Load 中给出变量名。
-func (s *Source) SafeName() string { return "" }
-
 // Load builds a nested map from the bindings. An unset variable and a
 // variable set to "" are both absent, so they never override a lower layer.
 // Duplicate target paths and parent/child path conflicts are rejected before
@@ -65,10 +60,6 @@ func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// An invalid mapping is a *conf.Error of stage "config" naming the
-	// variable; the core keeps its stage and adds the source index.
-	// 无效映射是阶段为 "config" 的 *conf.Error，携带变量名；核心保留阶段
-	// 并补上来源序号。
 	if err := checkPaths(s.bindings); err != nil {
 		return nil, err
 	}

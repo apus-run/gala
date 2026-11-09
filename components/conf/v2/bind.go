@@ -4,7 +4,6 @@ import (
 	"errors"
 	"math"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,11 +15,11 @@ import (
 var durationType = reflect.TypeFor[time.Duration]()
 
 // bind decodes merged into out strictly. Unknown keys, exact-match only, and
-// explicit type rules from hook.go. Errors carry the field path but never the
-// raw value.
+// explicit type rules from strictHook. Errors never include the
+// raw value. Diagnostic paths are derived from matched schema fields only.
 //
-// bind 把 merged 严格解码进 out：未知键报错、精确匹配、类型规则见 hook。
-// 错误只携带字段路径，不携带原始值。
+// bind 把 merged 严格解码进 out：未知键报错、精确匹配、类型规则见 strictHook。
+// 错误不携带原始值或无法确认安全的动态路径。
 func bind(merged map[string]any, out any) error {
 	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:      out,
@@ -32,39 +31,20 @@ func bind(merged map[string]any, out any) error {
 		return newError(StageBind, -1, "", "", err)
 	}
 	if err := dec.Decode(merged); err != nil {
-		failure := newError(StageBind, -1, "", bindPath(err), nil)
-		if errors.Is(err, errStringType) {
-			failure.reason = "string required; quote string values"
+		failure := newError(StageBind, -1, "", "", nil)
+		for _, reason := range []error{errStringType, errNotUnit, errRange, errNotInteger, errTypeMismatch} {
+			if errors.Is(err, reason) {
+				failure.reason = reason.Error()
+				break
+			}
+		}
+		if path, reason := schemaFailure(merged, reflect.TypeOf(out).Elem(), ""); reason != nil {
+			failure.Path = path
+			failure.reason = reason.Error()
 		}
 		return failure
 	}
 	return nil
-}
-
-// quotedName matches the leading field name mapstructure puts in each error.
-// quotedName 匹配 mapstructure 每条错误开头的字段名。
-var quotedName = regexp.MustCompile(`(?m)^(?:error decoding )?'([^']*)'(?: has invalid keys: ([^\n]+)| )`)
-
-// bindPath returns the first field path from a mapstructure error, without
-// any value text. It returns "" when no path can be recovered.
-// bindPath 返回 mapstructure 错误中的第一个字段路径，不含任何值文本；
-// 无法解析时返回 ""。
-func bindPath(err error) string {
-	return firstName(err.Error())
-}
-
-func firstName(msg string) string {
-	if m := quotedName.FindStringSubmatch(msg); m != nil {
-		if len(m) > 2 && m[2] != "" {
-			key, _, _ := strings.Cut(m[2], ", ")
-			if m[1] == "" {
-				return key
-			}
-			return m[1] + "." + key
-		}
-		return m[1]
-	}
-	return ""
 }
 
 // strictHook implements the conversion table in the spec. It returns data
@@ -108,7 +88,10 @@ func parseInt(to reflect.Type, data any) (any, error) {
 	case string:
 		p, err := strconv.ParseInt(v, 10, bits)
 		if err != nil {
-			return nil, errTypeMismatch
+			if errors.Is(err, strconv.ErrRange) {
+				return nil, errRange
+			}
+			return nil, errNotInteger
 		}
 		n = p
 	default:

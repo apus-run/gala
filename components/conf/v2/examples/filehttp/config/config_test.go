@@ -123,3 +123,33 @@ func mustRead(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+func TestBucketMissingNewNameFallsBackToLegacy(t *testing.T) {
+	clearEnv(t)
+	if err := os.Unsetenv("STORAGE_S3_BUCKET"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("S3_BUCKET", "legacy-bucket")
+	c, err := config.Load(t.Context(), cleaned)
+	if err != nil || c.Current().Storage.S3Bucket != "legacy-bucket" {
+		t.Fatalf("fallback: %v", err)
+	}
+}
+
+func TestBucketBothMissingRetainFile(t *testing.T) {
+	clearEnv(t)
+	for _, name := range []string{"STORAGE_S3_BUCKET", "S3_BUCKET"} {
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := strings.Replace(mustRead(t, cleaned), `s3_bucket: ""`, `s3_bucket: "file-bucket"`, 1)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(t.Context(), path)
+	if err != nil || c.Current().Storage.S3Bucket != "file-bucket" {
+		t.Fatalf("file fallback: %v", err)
+	}
+}

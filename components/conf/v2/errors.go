@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/apus-run/gala/components/conf/v2/internal/diagnostic"
 	"io/fs"
 )
 
@@ -18,6 +19,8 @@ const (
 	StageBind     Stage = "bind"
 	StageValidate Stage = "validate"
 	StageConfig   Stage = "config"
+	StageResolve  Stage = "resolve"
+	StageWatch    Stage = "watch"
 	StageCanceled Stage = "canceled"
 )
 
@@ -28,12 +31,12 @@ const (
 // 不包含原始输入。
 type Error struct {
 	Stage  Stage
-	Source int    // source index, or -1 when unknown | 来源序号，未知为 -1
-	Name   string // safe name: basename or env var name | 安全名：basename 或变量名
-	Path   string // field path, optional | 字段路径，可选
-	reason string // fixed diagnostic, never raw input
-	detail string // business validation text only | 仅业务校验文本
-	cause  error  // exposed only through Unwrap | 仅经 Unwrap 暴露
+	Source int               // source index, or -1 when unknown | 来源序号，未知为 -1
+	Name   string            // optional public source identifier
+	Path   string            // field path, optional | 字段路径，可选
+	decode diagnostic.Decode // fixed document failure supplied by built-in sources
+	reason string            // fixed diagnostic, never raw input
+	cause  error             // exposed only through Unwrap | 仅经 Unwrap 暴露
 }
 
 func (e *Error) Error() string {
@@ -50,25 +53,32 @@ func (e *Error) Error() string {
 	if e.reason != "" {
 		msg += ": " + e.reason
 	}
-	if e.detail != "" {
-		msg += ": " + e.detail
-	}
 	return msg
 }
 
-// Unwrap exposes only the sentinel causes that carry no input content.
-// Unwrap 只暴露不含输入内容的哨兵原因。
+// Unwrap exposes cancellation/file sentinels or the original business validation
+// cause. The latter is for programmatic inspection, not safe display.
 func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// newValidateError wraps a business Validate error. Per spec §6 the library
-// does not redact it: Error() includes its text and Unwrap returns it, so the
-// business must keep its messages free of configuration values.
-// newValidateError 包装业务 Validate 的错误。按规格第 6 节，库不做脱敏：
-// Error() 包含其文本，Unwrap 返回它，因此业务须保证消息不含配置值。
+// newValidateError preserves the business cause only for programmatic inspection.
 func newValidateError(err error) *Error {
-	return &Error{Stage: StageValidate, Source: -1, cause: err, detail: err.Error()}
+	return &Error{Stage: StageValidate, Source: -1, cause: err, reason: "validation rejected configuration"}
+}
+
+// Only internally generated merge errors are used as fixed diagnostics.
+func newMergeError(source int, cause error) *Error {
+	e := newError(StageMerge, source, "", "", nil)
+	switch cause {
+	case errNull, errSourceType, errCycle, errDepth:
+		e.reason = cause.Error()
+	}
+	return e
+}
+
+func newConfigError(source int, reason string) *Error {
+	return &Error{Stage: StageConfig, Source: source, reason: reason}
 }
 
 func newError(stage Stage, source int, name, path string, cause error) *Error {
@@ -92,37 +102,40 @@ func safeCause(err error) error {
 	return nil
 }
 
-// wrapSourceErr converts an error from Source i into an *Error. It keeps the
-// source index and a safe name when the source exposes one.
-// wrapSourceErr 把来源 i 的错误转为 *Error，保留序号与安全名（若来源提供）。
+// wrapSourceErr assigns the source index and discards untrusted metadata.
 func wrapSourceErr(i int, err error) *Error {
-	if ce, ok := errors.AsType[*Error](err); ok {
-		stage := ce.Stage
-		switch stage {
-		case StageRead, StageDecode, StageMerge, StageBind, StageConfig, StageCanceled:
-		default:
-			stage = StageRead
-		}
-		return newError(stage, i, ce.Name, ce.Path, err)
+	if errors.Is(err, context.Canceled) {
+		return newError(StageCanceled, i, "", "", context.Canceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return newError(StageCanceled, i, "", "", context.DeadlineExceeded)
 	}
 	stage := StageRead
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		stage = StageCanceled
-	}
-	if de, ok := errors.AsType[*DecodeError](err); ok {
+	var decode diagnostic.Decode
+	if ce, ok := errors.AsType[*Error](err); ok {
+		switch ce.Stage {
+		case StageRead, StageDecode, StageConfig:
+			stage = ce.Stage
+			if stage == StageDecode {
+				decode = ce.decode
+			}
+		}
+	} else if _, ok := errors.AsType[*DecodeError](err); ok {
 		stage = StageDecode
-		err = de.Err
-	}
-	if me, ok := errors.AsType[*MappingError](err); ok {
+	} else if _, ok := errors.AsType[*MappingError](err); ok {
 		stage = StageConfig
-		err = me.Err
 	}
-	name := ""
-	var named interface{ SafeName() string }
-	if errors.As(err, &named) {
-		name = named.SafeName()
+	// Source-provided names and paths have no trusted schema provenance.
+	var cause error
+	if stage == StageRead && errors.Is(err, fs.ErrNotExist) {
+		cause = fs.ErrNotExist
 	}
-	return newError(stage, i, name, "", err)
+	result := newError(stage, i, "", "", cause)
+	if decode != 0 {
+		result.decode = decode
+		result.reason = decode.Error()
+	}
+	return result
 }
 
 // DecodeError marks a failure to decode a source's bytes, so the core can
@@ -149,9 +162,28 @@ type MappingError struct {
 func (e *MappingError) Error() string { return "invalid mapping" }
 func (e *MappingError) Unwrap() error { return e.Err }
 
-// SourceError constructs a redacted source error. Name must be a safe identifier
-// (a basename or environment variable name), and path a field path, never a value.
-// The core assigns the source index when loading the batch.
+// SourceError marks a source failure. Names and paths are intentionally omitted:
+// arbitrary source metadata cannot be established as safe to display.
+// Only read, decode and config are accepted; cancellation causes take priority.
 func SourceError(stage Stage, name, path string, cause error) *Error {
-	return newError(stage, -1, name, path, cause)
+	if errors.Is(cause, context.Canceled) {
+		return newError(StageCanceled, -1, "", "", context.Canceled)
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return newError(StageCanceled, -1, "", "", context.DeadlineExceeded)
+	}
+	switch stage {
+	case StageRead, StageDecode, StageConfig:
+	default:
+		stage = StageRead
+	}
+	if stage == StageDecode {
+		if code, ok := cause.(diagnostic.Decode); ok {
+			return &Error{Stage: stage, Source: -1, decode: code, reason: code.Error()}
+		}
+	}
+	if stage != StageRead {
+		cause = nil
+	}
+	return newError(stage, -1, "", "", cause)
 }
