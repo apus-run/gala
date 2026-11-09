@@ -458,6 +458,74 @@ func TestStore_ListPageBeyondEnd(t *testing.T) {
 	assert.Empty(t, rows)
 }
 
+func TestStore_ListPaginationResult(t *testing.T) {
+	db, dataStore := setupTestDB(t)
+	store := genericStore.NewStore[UserModel](dataStore)
+	rows := make([]UserModel, 106)
+	for i := range rows {
+		rows[i] = UserModel{ID: int64(i + 1), Name: "included"}
+	}
+	rows[len(rows)-1].Name = "excluded"
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	fromPage, err := page.FromPage(2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name       string
+		pagination page.Pagination
+		wantOffset int
+		wantLimit  int
+		wantRows   int
+	}{
+		{name: "default", wantLimit: 20, wantRows: 20},
+		{name: "page input", pagination: fromPage, wantOffset: 10, wantLimit: 10, wantRows: 10},
+		{
+			name: "arbitrary offset", pagination: page.Pagination{Offset: 15, Limit: 10},
+			wantOffset: 15, wantLimit: 10, wantRows: 10,
+		},
+		{
+			name: "capped limit", pagination: page.Pagination{Limit: 1000},
+			wantLimit: 100, wantRows: 100,
+		},
+		{
+			name: "partial last page", pagination: page.Pagination{Offset: 100, Limit: 20},
+			wantOffset: 100, wantLimit: 20, wantRows: 5,
+		},
+		{
+			name: "beyond last page", pagination: page.Pagination{Offset: 200, Limit: 20},
+			wantOffset: 200, wantLimit: 20,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.pagination.Normalize()
+			opts := where.O(p.Offset).L(p.Limit).F("name", "included").S(clause.OrderByColumn{
+				Column: clause.Column{Name: "id"},
+			})
+			total, items, err := store.List(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := page.NewPage(items, total, p)
+			if result.Total != 105 || result.Offset != tt.wantOffset || result.Limit != tt.wantLimit {
+				t.Fatalf("unexpected result metadata: %+v", result)
+			}
+			if result.Items == nil || len(result.Items) != tt.wantRows {
+				t.Fatalf("Items = %v, want %d rows in a non-nil slice", result.Items, tt.wantRows)
+			}
+			for i, item := range result.Items {
+				if wantID := int64(tt.wantOffset + i + 1); item.ID != wantID {
+					t.Fatalf("Items[%d].ID = %d, want %d", i, item.ID, wantID)
+				}
+			}
+		})
+	}
+}
+
 func TestStore_ListNilOptions(t *testing.T) {
 	db, dataStore := setupTestDB(t)
 	store := genericStore.NewStore[UserModel](dataStore)

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 
 	"gorm.io/driver/sqlite"
 
@@ -67,22 +68,26 @@ func main() {
 	// 2. Pagination + sorting: hand the same Options to the store; it is applied
 	// once for the count and once for the query.
 	// 2. 分页 + 排序：同一个 Options 交给 store，计数与查询各应用一次。
-	params := page.Params{Page: 2, Size: 2}
+	params, err := page.ParsePageParams(url.Values{"page": {"2"}, "size": {"2"}})
+	if err != nil {
+		log.Fatal(err) // map ErrInvalidPagination to HTTP 400 | 将 ErrInvalidPagination 映射为 HTTP 400
+	}
+	pagination, err := page.FromPage(params.Page, params.Size)
+	if err != nil {
+		log.Fatal(err) // reject an overflowing offset | 拒绝偏移溢出
+	}
+	// Offset/limit endpoints use ParsePagination directly.
+	// offset/limit 接口直接使用 ParsePagination。
 	userStore := store.NewStore[User](provider)
-	total, users, err := userStore.List(ctx, where.P(params.Page, params.Size).S(columns...))
+	opts := where.O(pagination.Offset).L(pagination.Limit).S(columns...)
+	total, users, err := userStore.List(ctx, opts)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// 3. Response = data + metadata.
-	// 3. 响应 = 数据 + 元数据。
-	body := struct {
-		Meta  page.Meta `json:"meta"`
-		Items []*User   `json:"items"`
-	}{
-		Meta:  page.NewMeta(params, total),
-		Items: users,
-	}
+	// 3. Both inputs share a response with the actual query offset and limit.
+	// 3. 两种输入共用响应结构，返回实际查询使用的偏移和条数。
+	body := page.NewPage(users, total, pagination)
 	encoded, err := json.MarshalIndent(body, "", "  ")
 	if err != nil {
 		log.Fatal(err)

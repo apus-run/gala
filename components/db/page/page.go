@@ -1,6 +1,5 @@
-// Package page defines the normalization rules for page parameters and the
-// pagination metadata.
-// Package page 定义页码参数的归一规则与分页元数据。
+// Package page defines pagination parameters, normalization and results.
+// Package page 定义分页参数、归一规则与查询结果。
 //
 // where, repo and store share this single set of rules: defaults, the cap and
 // offset overflow handling are defined only here. The package itself does not
@@ -9,14 +8,91 @@
 // 包本身不依赖 gorm。
 package page
 
-import "math"
+import (
+	"errors"
+	"math"
+)
 
 const (
-	// DefaultSize is the size used when no per-page size is given | DefaultSize 是未指定每页条数时使用的值。
-	DefaultSize = 20
-	// MaxSize is the upper bound of the per-page size | MaxSize 是每页条数的上限。
-	MaxSize = 100
+	// DefaultLimit is used when no positive limit is given | DefaultLimit 是未指定正条数时使用的默认值。
+	DefaultLimit = 20
+	// MaxLimit is the maximum number of rows per page | MaxLimit 是分页条数的上限。
+	MaxLimit = 100
+
+	// DefaultSize preserves the page-size name | DefaultSize 保留原页大小常量名称。
+	DefaultSize = DefaultLimit
+	// MaxSize preserves the page-size name | MaxSize 保留原页大小上限常量名称。
+	MaxSize = MaxLimit
 )
+
+// Pagination describes a bounded offset-based query. Normalize it before use.
+// Pagination 表示按偏移量读取有限条记录的查询参数，使用前调用 Normalize。
+type Pagination struct {
+	Offset int `json:"offset"`
+	Limit  int `json:"limit"`
+}
+
+// Normalize returns a copy with a nonnegative offset and a limit in [1, MaxLimit].
+// A nonpositive limit uses DefaultLimit; zero never means an unbounded query.
+// Normalize 返回归一后的副本：负偏移取 0，非正条数取默认值，超过上限的条数截断。
+// 条数为零不表示无限制查询。
+func (p Pagination) Normalize() Pagination {
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+	switch {
+	case p.Limit <= 0:
+		p.Limit = DefaultLimit
+	case p.Limit > MaxLimit:
+		p.Limit = MaxLimit
+	}
+	return p
+}
+
+// FromPage converts a one-based page number and size into normalized pagination.
+// Page numbers below 1 use page 1; size follows Normalize. Offset overflow returns
+// an error and a zero Pagination. HTTP callers should validate explicit input
+// before calling this function when invalid values must be rejected.
+// FromPage 将页码和条数转换成归一后的分页参数：页码小于 1 按第 1 页处理，条数
+// 遵循 Normalize；偏移溢出时返回错误和零值。HTTP 层按需先校验显式输入。
+func FromPage(page, size int) (Pagination, error) {
+	p := (Pagination{Limit: size}).Normalize()
+	if page <= 1 {
+		return p, nil
+	}
+	if page-1 > math.MaxInt/p.Limit {
+		return Pagination{}, errors.New("page: offset overflows int")
+	}
+	p.Offset = (page - 1) * p.Limit
+	return p, nil
+}
+
+// Page contains one page of items and the total number of matching records.
+// Total is a count, not a sentinel for an uncounted query.
+// Page 包含一页数据和全部匹配记录的总数；Total 不用于表示未执行计数。
+type Page[T any] struct {
+	Items  []T   `json:"items"`
+	Total  int64 `json:"total"`
+	Offset int   `json:"offset"`
+	Limit  int   `json:"limit"`
+}
+
+// NewPage assembles a result using the pagination actually used by the query.
+// It preserves the count and pagination, and converts nil items to an empty slice
+// so JSON contains [] rather than null. Non-nil items are not copied or truncated.
+// NewPage 使用查询实际使用的分页参数组装结果，保留总数和分页值，将 nil 数据
+// 转为空切片以输出 JSON []；非 nil 数据不会被复制或截断。
+func NewPage[T any](items []T, total int64, p Pagination) Page[T] {
+	if items == nil {
+		items = []T{}
+	}
+	return Page[T]{
+		Items:  items,
+		Total:  total,
+		Offset: p.Offset,
+		Limit:  p.Limit,
+	}
+}
 
 // Params holds the page parameters.
 //
@@ -38,14 +114,7 @@ type Params struct {
 // Size>MaxSize becomes MaxSize.
 // Limit 返回归一后的每页条数：Size<1 取 DefaultSize，Size>MaxSize 取 MaxSize。
 func (p Params) Limit() int {
-	switch {
-	case p.Size < 1:
-		return DefaultSize
-	case p.Size > MaxSize:
-		return MaxSize
-	default:
-		return p.Size
-	}
+	return (Pagination{Limit: p.Size}).Normalize().Limit
 }
 
 // Offset returns the normalized offset.
@@ -57,14 +126,11 @@ func (p Params) Limit() int {
 //
 // 页码大到乘法会溢出时饱和到 math.MaxInt，等价于「超出末页」，不会变成负偏移。
 func (p Params) Offset() int {
-	size := p.Limit()
-	if p.Page < 2 {
-		return 0
-	}
-	if p.Page-1 > math.MaxInt/size {
+	pagination, err := FromPage(p.Page, p.Size)
+	if err != nil {
 		return math.MaxInt
 	}
-	return (p.Page - 1) * size
+	return pagination.Offset
 }
 
 // Meta is the pagination metadata; its JSON shape matches the former

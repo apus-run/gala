@@ -1,10 +1,44 @@
 package page_test
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/apus-run/gala/components/db/page"
 )
+
+func ExamplePagination_Normalize() {
+	p := (page.Pagination{Offset: 15, Limit: 1000}).Normalize()
+	fmt.Println(p.Offset, p.Limit)
+
+	// Output: 15 100
+}
+
+func ExampleFromPage() {
+	p, err := page.FromPage(3, 20)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(p.Offset, p.Limit)
+
+	// Output: 40 20
+}
+
+func ExampleNewPage() {
+	p := (page.Pagination{Offset: 15, Limit: 10}).Normalize()
+	// Use p.Offset and p.Limit for the query, then pass the same p to NewPage.
+	// 查询使用 p.Offset、p.Limit，构造响应时传入同一个 p。
+	result := page.NewPage([]string{"alice", "bob"}, 17, p)
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(string(encoded))
+
+	// Output: {"items":["alice","bob"],"total":17,"offset":15,"limit":10}
+}
 
 // ExampleNewMeta 展示页码参数归一与元数据计算。
 func ExampleNewMeta() {

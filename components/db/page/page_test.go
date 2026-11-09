@@ -1,9 +1,157 @@
 package page
 
 import (
+	"encoding/json"
 	"math"
+	"slices"
 	"testing"
 )
+
+func TestPaginationNormalize(t *testing.T) {
+	tests := []struct {
+		name  string
+		input Pagination
+		want  Pagination
+	}{
+		{name: "zero value", input: Pagination{}, want: Pagination{Limit: 20}},
+		{name: "negative values", input: Pagination{Offset: -1, Limit: -1}, want: Pagination{Limit: 20}},
+		{name: "arbitrary offset", input: Pagination{Offset: 15, Limit: 10}, want: Pagination{Offset: 15, Limit: 10}},
+		{name: "minimum limit", input: Pagination{Limit: 1}, want: Pagination{Limit: 1}},
+		{name: "maximum limit", input: Pagination{Limit: 100}, want: Pagination{Limit: 100}},
+		{name: "clamped limit", input: Pagination{Offset: 15, Limit: 101}, want: Pagination{Offset: 15, Limit: 100}},
+		{
+			name:  "integer extremes",
+			input: Pagination{Offset: math.MinInt, Limit: math.MinInt},
+			want:  Pagination{Limit: 20},
+		},
+		{
+			name:  "large offset is preserved",
+			input: Pagination{Offset: math.MaxInt, Limit: math.MaxInt},
+			want:  Pagination{Offset: math.MaxInt, Limit: 100},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := tt.input
+			got := input.Normalize()
+			if got != tt.want {
+				t.Fatalf("Normalize() = %+v, want %+v", got, tt.want)
+			}
+			if input != tt.input {
+				t.Fatal("Normalize changed its receiver")
+			}
+			if got.Normalize() != got {
+				t.Fatal("Normalize is not idempotent")
+			}
+		})
+	}
+}
+
+func TestFromPage(t *testing.T) {
+	tests := []struct {
+		name    string
+		page    int
+		size    int
+		want    Pagination
+		wantErr bool
+	}{
+		{name: "zero value", want: Pagination{Limit: 20}},
+		{name: "first page", page: 1, size: 10, want: Pagination{Limit: 10}},
+		{name: "third page", page: 3, size: 20, want: Pagination{Offset: 40, Limit: 20}},
+		{name: "default size", page: 2, want: Pagination{Offset: 20, Limit: 20}},
+		{name: "negative size", page: 2, size: -1, want: Pagination{Offset: 20, Limit: 20}},
+		{name: "clamp before conversion", page: 3, size: 1000, want: Pagination{Offset: 200, Limit: 100}},
+		{name: "negative page", page: math.MinInt, size: 10, want: Pagination{Limit: 10}},
+		{
+			name: "largest page with one row", page: math.MaxInt, size: 1,
+			want: Pagination{Offset: math.MaxInt - 1, Limit: 1},
+		},
+		{
+			name: "last representable offset", page: math.MaxInt/100 + 1, size: 100,
+			want: Pagination{Offset: (math.MaxInt / 100) * 100, Limit: 100},
+		},
+		{name: "first overflowing page", page: math.MaxInt/100 + 2, size: 100, wantErr: true},
+		{name: "overflow with default size", page: math.MaxInt, wantErr: true},
+		{
+			name: "size is capped before overflow check", page: math.MaxInt/100 + 1, size: math.MaxInt,
+			want: Pagination{Offset: (math.MaxInt / 100) * 100, Limit: 100},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FromPage(tt.page, tt.size)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("FromPage() error = %v, want error %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("FromPage() = %+v, want %+v", got, tt.want)
+			}
+
+			// The existing API shares normalization but keeps its saturation contract.
+			// 旧 API 共用归一规则，但保留偏移溢出时饱和的兼容行为。
+			legacy := Params{Page: tt.page, Size: tt.size}
+			if tt.wantErr {
+				if legacy.Offset() != math.MaxInt {
+					t.Fatal("legacy offset must saturate on overflow")
+				}
+				return
+			}
+			if legacy.Offset() != got.Offset || legacy.Limit() != got.Limit {
+				t.Fatal("legacy pagination disagrees with FromPage")
+			}
+		})
+	}
+}
+
+func TestNewPage(t *testing.T) {
+	tests := []struct {
+		name       string
+		items      []int
+		total      int64
+		pagination Pagination
+	}{
+		{name: "empty result", pagination: Pagination{Limit: 20}},
+		{name: "beyond last page", total: 10, pagination: Pagination{Offset: 100, Limit: 20}},
+		{
+			name: "partial page", items: []int{16, 17}, total: 17,
+			pagination: Pagination{Offset: 15, Limit: 10},
+		},
+		{
+			name: "large total", items: []int{1}, total: math.MaxInt64,
+			pagination: Pagination{Limit: 20},
+		},
+		{
+			name: "preserve actual query limit", items: []int{1, 2}, total: 2,
+			pagination: Pagination{Limit: 200},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewPage(tt.items, tt.total, tt.pagination)
+			if got.Items == nil || !slices.Equal(got.Items, tt.items) {
+				t.Fatalf("Items = %#v, want non-nil equivalent of %#v", got.Items, tt.items)
+			}
+			if got.Total != tt.total || got.Offset != tt.pagination.Offset || got.Limit != tt.pagination.Limit {
+				t.Fatalf("NewPage() changed query metadata: %+v", got)
+			}
+		})
+	}
+}
+
+func TestNewPageJSON(t *testing.T) {
+	result := NewPage[int](nil, 5, Pagination{Offset: 15, Limit: 10})
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"items":[],"total":5,"offset":15,"limit":10}`
+	if string(encoded) != want {
+		t.Fatalf("JSON = %s, want %s", encoded, want)
+	}
+}
 
 func TestParamsLimit(t *testing.T) {
 	tests := []struct {
