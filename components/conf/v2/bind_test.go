@@ -3,14 +3,21 @@ package conf_test
 import (
 	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
 	"math"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
 	"github.com/apus-run/gala/components/conf/v2/sources/env"
+	"github.com/apus-run/gala/components/conf/v2/sources/file"
+	"github.com/apus-run/gala/components/conf/v2/sources/flagset"
 )
 
 type typed struct {
@@ -193,15 +200,12 @@ func TestTypePreflight(t *testing.T) {
 	invalidType(t, tree{}, "Children")
 	invalidType(t, struct{ M dict }{}, "M")
 	invalidType(t, struct{ Bad any }{}, "Bad")
-	invalidType(t, struct{ When time.Time }{}, "When")
-	invalidType(t, struct{ Bad [1]int }{}, "Bad")
 	invalidType(t, struct{ Bad uintptr }{}, "Bad")
 	invalidType(t, struct{ Bad complex64 }{}, "Bad")
 	invalidType(t, struct{ Bad chan int }{}, "Bad")
 	invalidType(t, struct{ Bad func() }{}, "Bad")
 	invalidType(t, struct{ Bad map[int]bool }{}, "Bad")
 	invalidType(t, struct{ Bad **int }{}, "Bad")
-	invalidType(t, struct{ Base }{}, "Base")
 	invalidType(t, struct {
 		A, B int `conf:"x"`
 	}{}, "x")
@@ -217,5 +221,156 @@ func TestTypePreflight(t *testing.T) {
 	}{}, &inputSource{data: map[string]any{"M": map[string]any{"x": []any{map[string]int{"V": 2}}}}})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+type secretText struct{ private string }
+
+func (s *secretText) UnmarshalText(raw []byte) error {
+	s.private = string(raw)
+	return fmt.Errorf("SECRET %s", raw)
+}
+func TestTextBinding(t *testing.T) {
+	type Base struct{ Count int }
+	type Config struct {
+		Base
+		Level slog.Level
+		When  time.Time
+		IP    *netip.Addr
+		Pair  [2]int
+		Extra map[string]any
+	}
+	ctx := t.Context()
+	src := &fakeSource{data: map[string]any{"Base": map[string]any{"Count": 2}, "Level": "WARN", "When": "2026-11-11T01:02:03Z", "IP": "192.0.2.1", "Pair": []any{1, 2}, "Extra": map[string]any{"nested": []any{true}}}}
+	c, err := conf.Open(ctx, Config{}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Current()
+	if got.Count != 2 || got.Level != slog.LevelWarn || got.When.Year() != 2026 || got.IP.String() != "192.0.2.1" || got.Pair != [2]int{1, 2} || got.Extra["nested"].([]any)[0] != true {
+		t.Fatal("incorrect binding")
+	}
+	src.data["Pair"] = []any{1}
+	if err = c.Reload(ctx); err == nil || got != c.Current() {
+		t.Fatal("short array accepted")
+	}
+	_, err = conf.Open(ctx, struct{ Text secretText }{}, &fakeSource{data: map[string]any{"Text": "CANARY"}})
+	var ce *conf.Error
+	if !errors.As(err, &ce) || ce.Path != "Text" || ce.Err.Error() != "invalid text value" || strings.Contains(err.Error(), "CANARY") {
+		t.Fatal(err)
+	}
+}
+func TestUnknownKeySuggestion(t *testing.T) {
+	_, err := conf.Open(t.Context(), typed{}, &fakeSource{data: map[string]any{"prot": 1}})
+	if err == nil || !strings.Contains(err.Error(), "did you mean port?") || strings.Contains(err.Error(), "prot") {
+		t.Fatal(err)
+	}
+}
+
+func TestStrictMergeTextOverlay(t *testing.T) {
+	type config struct {
+		Port int `conf:"port"`
+	}
+	src := file.FS(fstest.MapFS{"app.json": {Data: []byte(`{"port":8080}`)}}, "app.json", file.JSON)
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	flags.Int("port", 80, "")
+	if err := flags.Parse([]string{"-port=9090"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, overlay := range []conf.Source{env.NewWithLookup(map[string]string{"PORT": "port"}, func(string) (string, bool) { return "9090", true }), flagset.New(flags)} {
+		cfg, err := conf.Open(t.Context(), config{}, src, overlay)
+		if err != nil || cfg.Current().Port != 9090 {
+			t.Fatal(err)
+		}
+		_, err = conf.OpenWith(t.Context(), config{}, conf.Options{Merge: conf.StrictMerge}, src, overlay)
+		if cause, ok := errors.AsType[*conf.Error](err); !ok || cause.Stage != conf.StageMerge || cause.Source != 1 {
+			t.Fatal(err)
+		}
+	}
+}
+
+type timestamp struct{ *time.Time }
+
+func TestEmbeddedNilTextReceiver(t *testing.T) {
+	src := &fakeSource{}
+	cfg, err := conf.Open(t.Context(), struct{ When timestamp }{}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := cfg.Current()
+	src.data = map[string]any{"When": "2026-11-11T12:00:00Z"}
+	err = cfg.Reload(t.Context())
+	cause, ok := errors.AsType[*conf.Error](err)
+	if !ok || cause.Stage != conf.StageBind || cause.Path != "When" || cfg.Current() != old {
+		t.Fatalf("unexpected outcome: %v", err)
+	}
+}
+
+type textPayload struct{ Value any }
+
+func (p *textPayload) UnmarshalText(b []byte) error { p.Value = string(b); return nil }
+
+func TestTextDecoderObjectFallback(t *testing.T) {
+	src := &fakeSource{data: map[string]any{"items": []any{map[string]any{"Value": 42}, "text"}}}
+	cfg, err := conf.OpenTree(t.Context(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := conf.Get[[]textPayload](cfg.Snapshot().Tree, "items")
+	if err != nil || !reflect.DeepEqual(values, []textPayload{{42}, {"text"}}) {
+		t.Fatal(values, err)
+	}
+	_, err = conf.Open(t.Context(), struct {
+		Items []textPayload `conf:"items"`
+	}{}, src)
+	if cause, ok := errors.AsType[*conf.Error](err); !ok || cause.Stage != conf.StageBind {
+		t.Fatal(err)
+	}
+}
+
+func TestPromotedTextDecoderRootPreflight(t *testing.T) {
+	src := &fakeSource{}
+	_, err := conf.Open(t.Context(), struct {
+		time.Time
+		Invalid chan int
+	}{}, src)
+	if cause, ok := errors.AsType[*conf.Error](err); !ok || cause.Stage != conf.StageConfig || cause.Path != "Invalid" || src.calls != 0 {
+		t.Fatalf("reads=%d err=%v", src.calls, err)
+	}
+}
+
+type nilPanicText string
+
+func (v *nilPanicText) UnmarshalText(text []byte) error {
+	*v = nilPanicText(text)
+	panic(nil)
+}
+
+func TestNilTextPanicRollsBack(t *testing.T) {
+	for _, setting := range []string{"panicnil=0", "panicnil=1"} {
+		t.Run(setting, func(t *testing.T) {
+			t.Setenv("GODEBUG", setting)
+			type app struct{ Field nilPanicText }
+			src := &fakeSource{data: map[string]any{}}
+			cfg, err := conf.Open(t.Context(), app{Field: "initial"}, src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, changes, stop := cfg.SubscribeSnapshot("Field")
+			defer stop()
+			src.data["Field"] = "partial"
+			err = cfg.Reload(t.Context())
+			if cause, ok := errors.AsType[*conf.Error](err); !ok || cause.Stage != conf.StageBind || cause.Path != "Field" {
+				t.Fatalf("expected bind error at Field, got %v", err)
+			}
+			if cfg.Current() != old.Value || cfg.Current().Field != "initial" || cfg.Snapshot().Revision != old.Revision {
+				t.Fatal("failed text decode changed the published snapshot")
+			}
+			select {
+			case <-changes:
+				t.Fatal("failed text decode notified subscriber")
+			default:
+			}
+		})
 	}
 }

@@ -42,7 +42,7 @@ func TestLoadModes(t *testing.T) {
 		t.Fatal(m, err)
 	}
 	raw = []byte("SECRET")
-	if _, err := src.Load(t.Context()); err == nil || err.Error() != "decode failed" {
+	if _, err := src.Load(t.Context()); err == nil || err.Error() != "decode failed at line 1, column 1" {
 		t.Fatal(err)
 	}
 	var pairs api.KVPairs

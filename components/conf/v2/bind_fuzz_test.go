@@ -18,7 +18,7 @@ func FuzzBind(f *testing.F) {
 		var target struct {
 			Port int8 `conf:"port"`
 		}
-		err := bindValue(map[string]any{"port": raw}, reflect.ValueOf(&target).Elem(), fieldPath{})
+		err := bindValue(map[string]any{"port": raw}, reflect.ValueOf(&target).Elem(), fieldPath{}, false)
 		if err != nil {
 			ce, ok := errors.AsType[*Error](err)
 			if !ok || ce.Path != "port" || ce.Stage != StageBind || errors.Unwrap(err) == nil {
@@ -34,7 +34,7 @@ func FuzzBind(f *testing.F) {
 		}
 
 		var empty struct{}
-		err = bindValue(map[string]any{raw: "SECRET"}, reflect.ValueOf(&empty).Elem(), fieldPath{})
+		err = bindValue(map[string]any{raw: "SECRET"}, reflect.ValueOf(&empty).Elem(), fieldPath{}, false)
 		if err == nil || err.Error() != "conf: bind failed: unknown key" {
 			t.Fatalf("unknown key exposed: %v", err)
 		}

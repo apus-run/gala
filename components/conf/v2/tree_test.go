@@ -1,10 +1,12 @@
 package conf_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"reflect"
 	"strings"
@@ -598,6 +600,125 @@ func TestExpandNamedStrings(t *testing.T) {
 	for _, value := range []any{Text("${missing}"), Text("${x}")} {
 		if err := conf.Expand(map[string]any{"x": value}); err == nil {
 			t.Fatal("accepted unresolved named string")
+		}
+	}
+}
+
+func TestStableRevisionAndPendingBefore(t *testing.T) {
+	ctx := t.Context()
+	data := map[string]any{"a": 1, "b": 1, "v": "${a}"}
+	c, err := conf.OpenWith(ctx, conf.Tree{}, conf.Options{Resolve: conf.Expand}, conf.SourceFunc(func(context.Context) (map[string]any, error) { return data, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := c.Snapshot()
+	initial, ch, stop := c.SubscribeSnapshot("v")
+	defer stop()
+	data["v"] = "${b}"
+	if err = c.Reload(ctx); err != nil || c.Current() != old.Value || c.Snapshot().Revision != initial.Revision {
+		t.Fatal("no-op changed revision", err)
+	}
+	for _, n := range []int{2, 3, 4} {
+		if err = c.Set(ctx, n, "b"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev := <-ch
+	first, _ := ev.Before.Lookup("v")
+	last, _ := ev.After.Lookup("v")
+	if first != 1 || last != 4 || c.Snapshot().Revision != old.Revision+3 {
+		t.Fatal(first, last, c.Snapshot().Revision)
+	}
+}
+func TestTreeLoggingAndExplicitExport(t *testing.T) {
+	c, err := conf.OpenTree(t.Context(), &fakeSource{data: map[string]any{"Token": "SECRET"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.Snapshot()
+	var b bytes.Buffer
+	for _, v := range []any{s.Tree, s, &s, s.Value, conf.Change{After: s.Tree}} {
+		fmt.Fprintf(&b, "%v %+v %#v", v, v, v)
+		slog.New(slog.NewJSONHandler(&b, nil)).Info("config", "snapshot", v)
+		slog.New(slog.NewTextHandler(&b, nil)).Info("config", "snapshot", v)
+	}
+	if strings.Contains(b.String(), "SECRET") {
+		t.Fatal("diagnostic output leaked")
+	}
+	raw, err := json.Marshal(s.Tree)
+	if err != nil || !bytes.Contains(raw, []byte("SECRET")) {
+		t.Fatal("invalid explicit export", err)
+	}
+}
+func TestEscapedPlaceholder(t *testing.T) {
+	m := map[string]any{"raw": "a$${not.set}b", "copy": "${raw}", "mixed": "$${p}=${p}", "p": json.Number("3"), "open": "$${"}
+	if err := conf.Expand(m); err != nil || m["raw"] != "a${not.set}b" || m["copy"] != m["raw"] || m["mixed"] != "${p}=3" || m["open"] != "${" {
+		t.Fatal(m, err)
+	}
+}
+func TestCallerMayModifyDefaultsAfterOpen(t *testing.T) {
+	type opts struct{ N int }
+	type config struct{ Values map[string][]*opts }
+	o := &opts{2}
+	d := config{map[string][]*opts{"x": {o, o}}}
+	c, err := conf.Open(t.Context(), d, &fakeSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.N = 7
+	d.Values["x"][1] = nil
+	delete(d.Values, "x")
+	v := c.Current().Values["x"]
+	if len(v) != 2 || v[0].N != 2 || v[0] != v[1] {
+		t.Fatal("defaults still alias caller")
+	}
+	if err = c.Reload(t.Context()); err != nil || c.Current().Values["x"][0].N != 2 {
+		t.Fatal(err)
+	}
+}
+
+func TestReloadSignedZero(t *testing.T) {
+	type number float32
+	src := &fakeSource{data: map[string]any{"F": number(0)}}
+	cfg, err := conf.Open(t.Context(), struct{ F number }{}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, changes, stop := cfg.SubscribeSnapshot("F")
+	defer stop()
+	src.data["F"] = number(math.Copysign(0, -1))
+	if err := cfg.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	next := cfg.Snapshot()
+	if next.Revision != initial.Revision+1 || !math.Signbit(float64(next.Value.F)) {
+		t.Fatal("negative zero was not published")
+	}
+	select {
+	case event := <-changes:
+		raw, err := event.After.MarshalJSON()
+		if err != nil || string(raw) != `{"F":-0}` {
+			t.Fatal(string(raw), err)
+		}
+	default:
+		t.Fatal("no notification for sign change")
+	}
+	if err := cfg.Reload(t.Context()); err != nil || cfg.Current() != next.Value {
+		t.Fatal("unchanged sign changed snapshot", err)
+	}
+}
+
+func TestSnapshotFormatting(t *testing.T) {
+	cfg, err := conf.Open(t.Context(), struct{ Token string }{}, &fakeSource{data: map[string]any{"Token": "format-canary"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Snapshot()
+	for _, v := range []any{s, s.Tree, &s, conf.Change{Before: s.Tree, After: s.Tree}} {
+		for _, format := range []string{"%v", "%#v", "%d", "%p", "%T", "%q", "%x"} {
+			if strings.Contains(fmt.Sprintf(format, v), "format-canary") {
+				t.Errorf("%T leaked through %s", v, format)
+			}
 		}
 	}
 }

@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/apus-run/gala/components/conf/v2/internal/backoff"
 	"github.com/apus-run/gala/components/conf/v2/sources/file"
 	"github.com/fsnotify/fsnotify"
 )
@@ -34,6 +36,17 @@ func New(path string, dec func([]byte, any) error) *Source {
 	return &Source{path: abs, file: file.New(abs, dec)}
 }
 
+// WithMaxBytes applies file.Source's read limit to a copy of this source.
+func (s *Source) WithMaxBytes(n int64) *Source {
+	next := *s
+	if n < 0 {
+		next.file = nil
+	} else if next.file != nil {
+		next.file = next.file.WithMaxBytes(n)
+	}
+	return &next
+}
+
 // Load reads and decodes the file once, with the same semantics as file.New.
 func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
@@ -50,7 +63,8 @@ func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 // Open. Changes to the named entry are coalesced; callers decide when to Reload.
 // An interrupted watch retries until ctx ends. Cancellation releases OS
 // resources and closes the channel. Changes only to an external symlink target
-// are outside the watched directory entry.
+// require an event in the watched directory. Atomic ..data symlink swaps
+// in projected Kubernetes volumes are observed.
 func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -66,7 +80,7 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 	signals := make(chan struct{}, 1)
 	// Capture presence before signaling. A removal may be reported under a
 	// different spelling after the entry is already gone.
-	previous, _ := os.Lstat(s.path)
+	previous, _ := os.Stat(s.path)
 	signals <- struct{}{}
 	go func() {
 		defer close(signals)
@@ -79,18 +93,17 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 			// Lost events or a removed directory require a full read. Signal
 			// again after registering the replacement to cover the gap.
 			signal(signals)
+			var retry backoff.Delay
 			for {
-				select {
-				case <-ctx.Done():
+				if !retry.Wait(ctx) {
 					return
-				case <-time.After(time.Second):
 				}
 				w, err = watchDir(dir)
 				if err == nil {
 					break
 				}
 			}
-			previous, _ = os.Lstat(s.path)
+			previous, _ = os.Stat(s.path)
 			signal(signals)
 		}
 	}()
@@ -121,22 +134,49 @@ func watchDir(dir string) (*fsnotify.Watcher, error) {
 }
 
 func (s *Source) listen(ctx context.Context, w *fsnotify.Watcher, dir string, signals chan<- struct{}, previous fs.FileInfo) {
+	// Some directory backends coalesce an atomic symlink swap into no named
+	// event. Reconcile identity only for Kubernetes projected paths.
+	var ticker *time.Ticker
+	var check <-chan time.Time
+	enableCheck := func() {
+		if ticker == nil && projectedPath(s.path) {
+			ticker = time.NewTicker(time.Second)
+			check = ticker.C
+		}
+	}
+	enableCheck()
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-check:
+			current, _ := os.Stat(s.path)
+			if !sameEntry(previous, current) {
+				previous = current
+				signal(signals)
+			}
 		case <-w.Errors:
 			return
 		case event, ok := <-w.Events:
 			if !ok || event.Name == dir && (event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) {
 				return
 			}
-			current, _ := os.Lstat(s.path)
+			current, _ := os.Stat(s.path)
 			changed := event.Name == s.path || !sameEntry(previous, current)
+			if ticker == nil && (changed || filepath.Base(event.Name) == "..data") {
+				enableCheck()
+			}
+			if ticker != nil && filepath.Base(event.Name) == "..data" {
+				changed = true
+			}
 			if !changed && current != nil {
-				// Name lookup is volume-specific. Lstat preserves the identity
-				// of a symlink entry instead of following its target.
-				reported, _ := os.Lstat(event.Name)
+				// Follow links so a ConfigMap ..data swap changes file identity.
+				reported, _ := os.Stat(event.Name)
 				changed = os.SameFile(current, reported)
 			}
 			previous = current
@@ -144,6 +184,21 @@ func (s *Source) listen(ctx context.Context, w *fsnotify.Watcher, dir string, si
 				signal(signals)
 			}
 		}
+	}
+}
+
+// Kubernetes links each top-level entry to ..data/<entry>. The requested
+// file may also be inside one of these projected directories.
+func projectedPath(path string) bool {
+	for {
+		if target, err := os.Readlink(path); err == nil && strings.HasPrefix(filepath.ToSlash(target), "..data/") {
+			return true
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return false
+		}
+		path = parent
 	}
 }
 

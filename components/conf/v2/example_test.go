@@ -2,9 +2,7 @@ package conf_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"testing/fstest"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
@@ -42,15 +40,9 @@ func ExampleConfig_Reload() {
 	// Output: 9090 8080
 }
 
-func ExampleSourceFunc() {
+func ExampleOptional() {
 	src := file.FS(fstest.MapFS{}, "local.json", file.JSON)
-	optional := conf.SourceFunc(func(ctx context.Context) (map[string]any, error) {
-		layer, err := src.Load(ctx)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return layer, err
-	})
+	optional := conf.Optional(src)
 	cfg, err := conf.Open(context.Background(), struct{ Port int }{Port: 8080}, optional)
 	if err != nil {
 		panic(err)

@@ -358,3 +358,44 @@ func TestExpandedLimitRollbackAcrossSources(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type ValidatedService struct{ Port int }
+
+func (ValidatedService) Validate() error { return nil }
+
+func TestReloadMissingEmbeddedValidator(t *testing.T) {
+	type app struct{ *ValidatedService }
+	src := &fakeSource{data: map[string]any{"ValidatedService": map[string]any{"Port": 8080}}}
+	cfg, err := conf.Open(t.Context(), app{}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, changes, stop := cfg.SubscribeSnapshot("ValidatedService")
+	defer stop()
+
+	delete(src.data, "ValidatedService")
+	err = cfg.Reload(t.Context())
+	cause, ok := errors.AsType[*conf.Error](err)
+	if !ok || cause.Stage != conf.StageValidate {
+		t.Fatalf("reload with missing service: %v", err)
+	}
+	if cfg.Current() != initial.Value || cfg.Snapshot().Revision != initial.Revision || cfg.Current().Port != 8080 {
+		t.Fatal("failed validation changed the published snapshot")
+	}
+	select {
+	case <-changes:
+		t.Fatal("failed validation notified subscriber")
+	default:
+	}
+	if fresh, err := conf.Open(t.Context(), app{}, src); fresh != nil || err == nil {
+		t.Fatal("Open accepted missing service")
+	}
+
+	src.data["ValidatedService"] = map[string]any{"Port": 9090}
+	if err := cfg.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Current().Port != 9090 || cfg.Snapshot().Revision != initial.Revision+1 {
+		t.Fatal("restoring service did not publish a new snapshot")
+	}
+}

@@ -13,27 +13,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// consume can be used by the application with the channel from src.Watch(ctx).
-func consume(ctx context.Context, signals <-chan struct{}, reload func(context.Context) error, interval time.Duration) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case _, ok := <-signals:
-			if !ok {
-				return
-			}
-		}
-		for ctx.Err() == nil && reload(ctx) != nil {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(interval):
-			}
-		}
-	}
-}
-
 // exampleClient supplies a confirmation and fails exactly one Get.
 type exampleClient struct{ reads int }
 
@@ -63,17 +42,24 @@ func ExampleSource_Watch() {
 	if err != nil {
 		panic(err)
 	}
-	signals, err := src.Watch(ctx)
-	if err != nil {
+	changes, stop := cfg.Subscribe("Port")
+	defer stop()
+	go func() {
+		select {
+		case <-changes:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	err = conf.Run(ctx, cfg, conf.RunOptions{
+		Debounce: time.Millisecond, RetryInitial: time.Millisecond, RetryMax: time.Millisecond,
+		OnError: func(error) { fmt.Println("retry") },
+	}, src)
+	if !errors.Is(err, context.Canceled) {
 		panic(err)
 	}
-	consume(ctx, signals, func(ctx context.Context) error {
-		if err := cfg.Reload(ctx); err != nil {
-			return err
-		}
-		fmt.Println(cfg.Current().Port, client.reads)
-		cancel()
-		return nil
-	}, time.Millisecond)
-	// Output: 9090 3
+	fmt.Println(cfg.Current().Port, client.reads)
+	// Output:
+	// retry
+	// 9090 3
 }

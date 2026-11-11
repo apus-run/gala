@@ -1,9 +1,9 @@
 module github.com/apus-run/gala/components/conf/v2/sources/etcd
 
-go 1.27.4
+go 1.26.11
 
 require (
-	github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.1
+	github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.2
 	go.etcd.io/etcd/api/v3 v3.6.4
 	go.etcd.io/etcd/client/v3 v3.6.4
 	google.golang.org/grpc v1.83.1

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/apus-run/gala/components/conf/v2/internal/backoff"
 	"github.com/apus-run/gala/components/conf/v2/internal/remote"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -31,12 +32,15 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 	signals := make(chan struct{}, 1)
 	go func() {
 		defer close(signals)
+		var retry backoff.Delay
 		for ctx.Err() == nil {
 			streamCtx, cancel := context.WithCancel(clientv3.WithRequireLeader(ctx))
 			stream := client.Watch(streamCtx, s.key, opts...)
-			consume(ctx, stream, signals)
+			if consume(ctx, stream, signals) {
+				retry = 0
+			}
 			cancel()
-			if !remote.Retry(ctx) {
+			if !retry.Wait(ctx) {
 				return
 			}
 		}
@@ -44,7 +48,7 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 	return signals, nil
 }
 
-func consume(ctx context.Context, stream clientv3.WatchChan, signals chan<- struct{}) {
+func consume(ctx context.Context, stream clientv3.WatchChan, signals chan<- struct{}) (confirmed bool) {
 	if stream == nil {
 		return
 	}
@@ -57,6 +61,7 @@ func consume(ctx context.Context, stream clientv3.WatchChan, signals chan<- stru
 				return
 			}
 			if response.Created || len(response.Events) > 0 {
+				confirmed = true
 				remote.Signal(signals)
 			}
 		}

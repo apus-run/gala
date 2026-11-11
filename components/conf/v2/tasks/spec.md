@@ -1,8 +1,8 @@
 # Gala Conf v2 规格与开发计划
 
-**0.10.0 · 2026-11-11 · 实施基线 `e036ed1` · 状态：工作树已实现，本地验收通过**
+**0.11.0 · 2026-11-11 · 上一发布候选 v2.0.0-rc.1**
 
-模块路径为 `github.com/apus-run/gala/components/conf/v2`，下文路径均相对此模块。§1–§5 定义目标行为，§6 记录从当前 main 迁移时涉及的调用者和测试，§7 给出实施顺序。本次修订增加动态树、逐键订阅、临时编辑和可选解析策略，取代 0.9.5。
+模块路径为 `github.com/apus-run/gala/components/conf/v2`，下文路径均相对此模块。§1–§5 定义目标行为，§6 记录从当前 main 迁移时涉及的调用者和测试，§7 给出实施顺序。本次修订在 0.10.0 上增加显式热更新循环、投影卷恢复、文本绑定与安全诊断。§0、§6–§7 及 §9 保留历史迁移和验证记录。
 
 ## 0. 可复核的基线
 
@@ -32,10 +32,10 @@ Config 原子发布同版本的强类型值与解析后的配置树。写入者�
 | I1 | Open 首次加载失败返回 nil 和错误。失败的 Reload 丢弃自身候选，不发布、不修改已发布的快照。没有其他成功发布者时，调用前后 Current 指针相同；并发时 Current 可以指向另一调用成功发布的快照。 |
 | I2 | 成功发布一次完整、只读的快照；读者可跨 Reload 持有旧指针。 |
 | I3 | 每批从空对象和 Open 捕获的默认值重建。高优先级键消失后，低层值或默认值重新生效。 |
-| I4 | 发布值与来源的 map、slice 独立。调用者在 Open 后将传入的默认引用和 Current 返回的值视为只读。 |
+| I4 | 发布值与来源的 map、slice 独立。Open 复制可绑定的默认引用；忽略字段和私有状态及 Current 返回的值保持只读。 |
 | I5 | Reload 串行。等待时取消的调用读取零个来源；发布前再次检查取消。 |
 | I6 | 核心产生的诊断只展示固定原因和已知字段。动态键、配置值和控制字符不能通过核心生成的 Path 泄漏。StageValidate 只展示固定原因；业务错误仍可通过 errors.Is/As 检查。来源错误约定见 §3.4。 |
-| I7 | 核心不启动后台 goroutine，不使用进程级可变注册表或定时器。 |
+| I7 | Open 与 Config 无后台任务。显式 Run 的监视、定时器及转发 goroutine 绑定到传入的 ctx。 |
 | I8 | 每层显式 null 在合并时失败；强类型目标含未知键或类型不符时绑定失败；无 schema 的 Tree 可保存任意字符串键。 |
 
 ## 2. 目标公共接口
@@ -50,13 +50,21 @@ type Source interface {
 type SourceFunc func(context.Context) (map[string]any, error)
 func (f SourceFunc) Load(ctx context.Context) (map[string]any, error)
 
+func Optional(src Source) Source
+type Watcher interface { Watch(context.Context) (<-chan struct{}, error) }
+type RunOptions struct {
+    Debounce, RetryInitial, RetryMax time.Duration
+    OnError func(error)
+}
+func Run(ctx context.Context, cfg interface{ Reload(context.Context) error }, opts RunOptions, watchers ...Watcher) error
+
 type Config[T any] struct { /* private */ }
 func Open[T any](ctx context.Context, def T, sources ...Source) (*Config[T], error)
 func (c *Config[T]) Current() *T
 func (c *Config[T]) Reload(ctx context.Context) error
 
 type Tree struct { /* private */ }
-type Snapshot[T any] struct { Tree; Value *T }
+type Snapshot[T any] struct { Tree; Value *T; Revision uint64 }
 type Change struct { Before, After Tree }
 type Options struct {
     Merge func(dst, src map[string]any) error
@@ -108,6 +116,9 @@ func (e *Error) Unwrap() error
 func New(path string, dec func([]byte, any) error) *Source
 func FS(fsys fs.FS, name string, dec func([]byte, any) error) *Source
 func JSON(data []byte, v any) error
+func (s *Source) WithMaxBytes(n int64) *Source
+type SyntaxError struct { Line, Column int }
+var ErrTooLarge error
 
 // package sources/env
 func New(bindings map[string]string) *Source
@@ -124,11 +135,11 @@ func New(fs *flag.FlagSet) *Source
 
 ### 3.1 加载、取消与发布
 
-1. Open 在读取任何来源前校验目标类型、标签和来源列表。结构体目标至少提供一个来源；OpenTree 可从空对象开始。含类型的 nil（包括 nil SourceFunc）也算无效。复制来源切片，按值捕获 def，然后同步执行首次 Reload。
+1. Open 在读取任何来源前校验目标类型、标签和来源列表。结构体目标至少提供一个来源；OpenTree 可从空对象开始。含类型的 nil（包括 nil SourceFunc）也算无效。复制来源切片，复制 def 的可绑定集合、指针和导出字段，然后同步执行首次 Reload。
 2. Reload 获取实例级信号量；等待可被 ctx 取消。获得信号量后重新检查 ctx。按声明顺序在每次 Load 前后检查 ctx。若 ctx 已结束，优先返回 StageCanceled；来源错误链若含取消或超时哨兵，也归为 StageCanceled。失败即停止，后续来源调用数为零。
 3. 每个成功的 Load 立即将该层归一化、深拷贝并合并到本批私有对象。成功返回的 nil 根 map 代表空层。来源可以复用只读数据；在核心复制期间，来源或其他调用者并发写同一份 map/slice 会产生数据竞争，来源应返回独占副本或不可变数据。
-4. 从 def 的**浅拷贝**开始绑定。缺席字段保留，显式零值覆盖；嵌套结构体值按字段覆盖。出现的 map、slice 和指针总是全新分配、从零值绑定后整体替换，禁止向默认引用写入。失败的部分绑定只影响本批候选。未被覆盖的默认引用可由多个快照只读共享。
-5. 若 `*T` 实现 `Validate() error`，对候选调用一次；该方法须确定、只读、无副作用。若校验期间 ctx 结束，优先返回取消。通过校验并完成最后一次 ctx 检查后，原子存储包含 `*T` 与只读树的同一快照。取消与最终存储竞争时允许已成功的提交；返回取消错误的调用绝不能提交。Current 只做一次原子读取。
+4. 从私有默认值的浅拷贝开始绑定。缺席字段保留，显式零值覆盖；嵌套结构体值按字段覆盖。出现的 map、slice 和指针总是全新分配、从零值绑定后整体替换，禁止向默认引用写入。失败的部分绑定只影响本批候选。未被覆盖的默认引用可由多个快照只读共享。
+5. 若 `*T` 实现 `Validate() error`，对候选调用一次；该方法须确定、只读、无副作用。若校验期间 ctx 结束，优先返回取消。Validate 触发 panic（含嵌入指针为空导致的方法调用失败）时返回 StageValidate，错误链只保留固定原因。通过校验并完成最后一次 ctx 检查后，仅在解析树变化时发布包含 `*T` 与只读树的同一快照，Revision 自 1 递增；有效的来源列表及解析前数据每次提交。取消与最终存储竞争时允许已成功的提交；返回取消错误的调用绝不能提交。Current 只做一次原子读取。
 
 ### 3.2 合并与目标类型
 
@@ -136,7 +147,7 @@ func New(fs *flag.FlagSet) *Source
 - 接受字符串键 map（含命名字符串键），归一成 `map[string]any`；数组和 slice 归一成 `[]any`。保留字符串、布尔、整数、浮点及 `json.Number` 的标量类型。嵌套 nil、非字符串键、struct、指针、func、chan、complex、uintptr 和 unsafe.Pointer 报 StageMerge。
 - 来源值按当前祖先链检查 map/slice 的环。共享但无环的子树按每次出现分别复制并计数。根深度为 0，进入对象成员或列表元素加 1；深度 128 可用，129 报 StageMerge。合并阶段仅报告来源序号和固定原因，Path 为空。
 - 每次 Open 或 Reload 的合并阶段共用 **65,536 个展开节点**的额度。每个非 nil 层的根、每个对象成员值、每个列表元素各计一次；容器本身占一个节点，空容器也计数，map 键与 interface 解包不另计。nil 根表示空层，计零。即使被后层覆盖也计入本批，下次 Reload 重新计数。复制容器前先为其直接子节点预留额度，超限即在分配该容器前返回 StageMerge，原因固定为 `expanded node limit exceeded`。已预留的子节点进入遍历时只扣其后代额度，避免重复扣减。该上限约束合并阶段的展开量，来源读取和文档解码发生在计数前。
-- 强类型配置的 T 须为结构体值；Tree 是专用于动态模式的目标。可绑定字段支持 string、bool、有符号和无符号整数（不含 uintptr）、float32/64、time.Duration、结构体、slice、字符串键 map 和一层指针。拒绝 interface、complex、chan、func、数组、非字符串键 map、直接的双重指针、嵌入的可绑定字段、没有可绑定字段的结构体（含 time.Time）。
+- 强类型配置的 T 为结构体。字段支持字符串、布尔、整数（不含 uintptr）、浮点、time.Duration、结构体、定长数组、slice、字符串键 map 和一层指针。数组长度须匹配；导出的嵌入字段采用字段名或标签作为嵌套键。支持 map[string]any，裸 interface 字段、非字符串键 map 和连续指针仍无绑定规则。实现 encoding.TextUnmarshaler 的具体类型可从字符串绑定，返回错误或 panic 时只报告固定绑定原因；无可绑定字段的普通结构体拒绝绑定。
 - Open 的类型检查跟随可绑定字段、指针目标和容器元素。遇到当前祖先链中的类型，返回 StageConfig 和闭环字段的静态路径；检查通过的类型可在本次检查内复用。例：`Node.Next *Node`、`Node.Children []Node`、经 map 形成的相互递归均拒绝，两个兄弟字段复用同一结构体有效。忽略字段不参与遍历。此检查独立于来源**值**的深度与环检测。
 - 未导出字段和 `conf:"-"` 忽略。无标签或空标签取 Go 字段名，`conf:"name"` 按标签精确匹配。标签含逗号、控制字符或同级有效名重复均报 StageConfig；类型检查报错时只使用安全的静态字段。每个非忽略的键都必须匹配，区分大小写。
 
@@ -174,11 +185,11 @@ Open、Reload 的失败均返回 `*conf.Error`。Error() 依序展示阶段、�
 
 ### 3.5 动态树、编辑与订阅
 
-- Snapshot 一次读取两个视图。树保存来源合并、解析及临时编辑产生的显式键，零值和缺席可区分；类型化视图再应用结构体默认值。路径为字面字符串段序列，列表索引用规范十进制下标。Keys 返回指定对象的直接键并排序；Lookup、Decode 和自定义编码器取得独立数据。
+- Snapshot 一次读取两个视图。树保存来源合并、解析及临时编辑产生的显式键，零值和缺席可区分；类型化视图再应用结构体默认值。路径为字面字符串段序列，列表索引用规范十进制下标。Keys 返回指定对象的直接键并排序；Lookup、Decode 和自定义编码器取得独立数据。Tree、Snapshot、Change 作为独立日志参数时支持脱敏格式化；显式 Marshal 仍导出完整配置。
 - Set/Delete/MergeAt 与 Reload 串行。Set 可创建中间对象，列表索引必须已存在；Delete 删除列表项会使后续下标前移。空路径表示整个对象。编辑无需 I/O，按解析前的对象重新求值、绑定、校验，成功后才发布。成功 Reload 或追加来源的 Load 清除编辑；失败保留编辑、旧指针与原来源列表。
-- Subscribe 交付后续变化。需要初始状态时用 SubscribeSnapshot，在注册锁内同时捕获初始快照，交付事件严格晚于该快照。同类型 NaN 在标量、列表和对象中均视为相等。每次成功发布比较选定路径在两棵解析后树中的存在性和值。出现、修改、消失均通知，被覆盖的来源变化不通知。缓冲区满时以最新发布的前后快照替换待消费事件；幂等取消会关闭通道。
-- 自定义 Merge 接收本批独占对象，Resolve 在全部来源合并后运行，两者返回的候选均经过深拷贝与资源限制检查。Source.Load、Merge、Resolve、Validate 禁止同步重入同一实例的写操作；需要后续写入时，由订阅消费者在发布后发起。严格合并按重叠键的具体类型拒绝冲突。默认值为不启用解析、采用 §3.2 的递归覆盖。
-- Expand 中的引用使用点分路径，冒号后的默认值为字面字符串，只在引用缺席时采用。命名字符串同样支持直接与间接展开，json.Number 保留为数值。完整引用保持被引用值的标量类型，混合文本生成内建 string；引用容器、缺失且无默认值、非法表达式或循环均失败。引用深度按完整依赖链计算（含缓存后缀），最多 128，单次生成文本预算 16 MiB。
+- Subscribe 交付后续变化。需要初始状态时用 SubscribeSnapshot，在注册锁内同时捕获初始快照，交付事件严格晚于该快照。同类型 NaN 在标量、列表和对象中均视为相等；浮点正零和负零不同。每次成功发布比较选定路径在两棵解析后树中的存在性和值。出现、修改、消失均通知，被覆盖的来源变化不通知。缓冲区满时合并为最早未读 Before 与最新 After；幂等取消会关闭通道。
+- 自定义 Merge 接收本批独占对象，Resolve 在全部来源合并后运行，两者返回的候选均经过深拷贝与资源限制检查。Source.Load、Merge、Resolve、Validate 禁止同步重入同一实例的写操作；需要后续写入时，由订阅消费者在发布后发起。严格合并按重叠键的具体类型拒绝冲突。文件数值配合 env/flagset 的字符串覆盖应使用默认合并。默认值为不启用解析、采用 §3.2 的递归覆盖。
+- Expand 中的引用使用点分路径，`$${` 生成字面量 `${`，冒号后的默认值为字面字符串，只在引用缺席时采用。命名字符串同样支持直接与间接展开，json.Number 保留为数值。完整引用保持被引用值的标量类型，混合文本生成内建 string；引用容器、缺失且无默认值、非法表达式或循环均失败。引用深度按完整依赖链计算（含缓存后缀），最多 128，单次生成文本预算 16 MiB。
 
 ## 4. 本地来源
 
@@ -189,15 +200,15 @@ Open、Reload 的失败均返回 `*conf.Error`。Error() 依序展示阶段、�
 文件与两种远端文档来源共用 `internal/document` 的同一次判定：
 
 1. 纯空白或零字节返回 `empty document`。
-2. 定义 `var root any`，调用一次 `dec(raw, &root)`。decoder 须支持 `*any`，并把字符串键对象解为 `map[string]any`。decoder 返回错误统一为 `decode failed`。
+2. 定义 `var root any`，调用一次 `dec(raw, &root)`。decoder 须支持 `*any`，并把字符串键对象解为 `map[string]any`。解码器错误统一为 `decode failed`，仅允许 SyntaxError 携带正数行号和字节列号。
 3. 成功解码后，root 必须是非 nil 的 `map[string]any`。空对象有效，数组、标量、null 或其他根类型返回 `root is not an object`。嵌套 null 由核心合并阶段拒绝。
-4. `file.JSON` 使用 `json.Decoder.UseNumber`，读取一个 JSON 值后再次读取必须得到 EOF。多个文档或尾随垃圾均属于 `decode failed`。文件不存在和权限错误分别保留 fs.ErrNotExist、fs.ErrPermission，其他 I/O 错误统一为 `read failed`。
+4. `file.JSON` 使用 `json.Decoder.UseNumber`，读到一个值后仅允许 JSON 空白。语法错误、截断及多余内容返回首个错误位置。文件不存在和权限错误分别保留 fs.ErrNotExist、fs.ErrPermission，其他 I/O 错误统一为 `read failed`。
 
-可选文件在来源外用 SourceFunc 包装，只有 `errors.Is(err, fs.ErrNotExist)` 返回空层，其它错误向上传递。嵌入默认配置时，把 `file.FS(embedFS, name, dec)` 放在最低优先级。
+WithMaxBytes 返回限长读取的副本，正数上限在解码前执行，零为无限制，负数为无效配置。可选层使用 conf.Optional，只有缺失返回空层，混合错误、权限错误和取消向上传递。嵌入默认配置时，把 `file.FS(embedFS, name, dec)` 放在最低优先级。
 
 **本地文件监视。** 独立模块 `…/conf/v2/sources/filewatch` 提供 `New(path string, dec func([]byte, any) error) *Source`。该实例复用 file.Load 的行为，并提供 `Watch(ctx context.Context) (<-chan struct{}, error)`。构造时固定绝对路径，Watch 同步注册父目录，成功后发出首次失效信号。应用消费信号并全量 Reload，失败时按 §5.2 重试。
 
-按实际文件系统识别目标目录项。大小写不敏感卷上的不同拼写可以指向同一文件；大小写敏感卷上的不同文件独立监视。目标目录项的修改、原子替换、删除和重建都可触发信号，缓冲为 1。同目录其他文件的变更忽略。监视后端报错或父目录被移除时，通知一次并在 ctx 有效期间重试注册，恢复后补发信号。初始目录不存在、无权限或参数无效时同步返回安全错误；ctx 取消会关闭通道并释放监听器。观察范围是目标目录项，写入其他路径上的符号链接目标不在保证范围内。`fsnotify` 只进入 filewatch 模块的依赖图。
+按实际文件系统识别目标目录项。大小写不敏感卷上的不同拼写可以指向同一文件；大小写敏感卷上的不同文件独立监视。目标目录项的修改、原子替换、删除和重建都可触发信号，缓冲为 1。同目录其他文件的变更忽略。监视后端报错或父目录被移除时，通知一次并在 ctx 有效期间重试注册，恢复后补发信号。初始目录不存在、无权限或参数无效时同步返回安全错误；ctx 取消会关闭通道并释放监听器。Kubernetes 投影路径的 ..data 替换通过目标文件身份识别，并每秒核对身份以处理合并丢失的目录事件。其余路径的观察范围是目标目录项，写入其他路径上的符号链接目标不在保证范围内。`fsnotify` 只进入 filewatch 模块的依赖图。
 
 ### 4.2 环境与命令行
 
@@ -257,7 +268,7 @@ Watch 校验来源已有的客户端和目标。etcd 客户端只有 Get 时，L
 
 **启动时序。** Open 读到 A 后发生唯一一次写入 B，随后远端静默。若写入在订阅就绪前，首次确认信号触发的 Reload 会读到 B；若写入在就绪后，监视事件会触发 Reload。重连采用同一规则。成立条件是应用消费信号并重试失败的 Reload。分区节点失去 leader 时的订阅行为见 [etcd v3.6.4 Watcher](https://pkg.go.dev/go.etcd.io/etcd/client/v3@v3.6.4#Watcher)。起始 revision 和索引规则见 [etcd Watch API](https://etcd.io/docs/v3.6/learning/api/#watch-streams) 和 [Consul blocking queries](https://developer.hashicorp.com/consul/api-docs/features/blocking)。
 
-**应用如何消费信号。** 应用在一个循环里接收信号并同步调用 Reload。调用期间的新信号留在容量为 1 的通道中。若 Reload 失败，示例等待一个固定的非零间隔后重新调用 Reload，无需等待新信号。ctx 取消可中断等待；成功后继续接收，ctx 结束或通道关闭时退出。适配器负责恢复订阅，应用负责处理 Reload 的错误。文档提供一个可运行示例；手动重载直接调用 Reload。
+**信号消费。** conf.Run 注册一个或多个 Watcher。注册失败会取消已启动的监听。默认在信号静默 75ms 后全量 Reload；失败且设置 OnError 时先报告错误，随后按指数退避重试，即使没有新信号。初始等待上限 1 秒，最大 30 秒，每次取当前上限的一半到上限的随机值。未设置回调时返回首次失败。所有通道关闭后最多再处理一次待重载状态；ctx 取消可中断去抖和退避。手动 Reload 仍可独立调用。
 
 ## 6. 从 e036ed1 迁移
 
@@ -285,7 +296,7 @@ v2 的目标接口允许发布前调整。实施时按以下表处理现有调�
 2. **准备内部实现。** 在不切换公共调用前实现私有严格绑定器、类型预检和输入安全路径；复用 merge 的环和深度检查，在同一复制遍历中加入跨来源共享的节点额度。以现有绑定器和固定语料对照适用的输入，把预填默认值、数值、标签和路径的有意差异列为表驱动测试。把 internal/document 改为普通解码函数，迁移文件和两个远端调用者。过渡包装仅保留到下一步切换。
 3. **切换事务和来源。** 一次迁移 Open、标签、源错误、示例和 §6 所列旧契约。切换独立模块中的旧 SourceError 和 Watcher 引用；相应可用的触发实现及其安全性测试一起迁移。删除旧绑定器、诊断二次遍历、注册表、核心后台及 fsnotify 依赖。迁移后 tidy，并分别检查普通构建依赖和核心模块图（§8）。新增 env.Scan、flagset 可在独立提交交付。
 4. **远端适配与调度。** 按 §5 统一各适配器的前缀处理，将 Consul 前缀的 ACL 部署条件写入来源包文档，验证 Get/List 的一致读参数、过滤与缺头行为，以及 etcd 的 leader 要求，完成订阅状态机和 §8 验收。两套 SDK 无相互依赖，可分别交付。用 §5.2 的消费示例验证只有一次写入时，首次建立和断线恢复都能发布新值。
-5. **文档与发布。** README、包注释及可运行的 ExampleOpen、ExampleConfig_Reload、ExampleSourceFunc 更新至 §2；远端消费示例覆盖 §5.2 的失败重试。发布前，在临时模块代理或本地带 tag 的仓库做消费者构建；核心预发布 tag 如 `components/conf/v2.0.0-rc.1`。独立模块引用可获取的核心版本，发布清单移除本地 replace，消费者在 GOWORK=off 且无 replace 时构建。远端模块 tag 使用其实际目录前缀，例如 `components/conf/v2/sources/etcd/v0.1.0`。实际推送 tag 为单独发布操作。
+5. **文档与发布。** README、包注释及可运行的 ExampleOpen、ExampleConfig_Reload、ExampleOptional 更新至 §2；远端消费示例覆盖 §5.2 的失败重试。发布前，在临时模块代理或本地带 tag 的仓库做消费者构建；核心预发布 tag 如 `components/conf/v2.0.0-rc.1`。独立模块引用可获取的核心版本，发布清单移除本地 replace，消费者在 GOWORK=off 且无 replace 时构建。远端模块 tag 使用其实际目录前缀，例如 `components/conf/v2/sources/etcd/v0.1.0`。实际推送 tag 为单独发布操作。
 
 ## 8. 验收
 
@@ -305,12 +316,12 @@ v2 的目标接口允许发布前调整。实施时按以下表处理现有调�
 | 本地文件监视 | 真实临时目录验证首次补读、原地写入、原子替换、删除后保持旧快照、重新创建后恢复、父目录替换后补读、无关文件过滤和取消退出。高优先级来源继续覆盖文件值。 |
 | 树模式 | 目录前缀隔离、空段/叶子冲突、占位键、空值、无有效键、取消，多个叶子仍只一次 SDK 调用。对 app、app/、/app、/ 逐一断言两种 SDK 收到的读取与监视前缀、裁剪后的字段或零调用错误。Consul List 分别返回部分键、零键并置 ResultsFilteredByACLs；普通和可选来源均返回 StageLoad，可匹配 ErrPermission、不可匹配 ErrNotExist，旧指针不变。在 ACL 部署条件满足时验证完整空响应可由可选层跳过 |
 | Consul SDK 与发布 | 用 httptest 和锁定版本的真实 SDK 对照：部分键响应带过滤头时 SDK 将标志置真，适配器的 Load 返回权限错误；相同响应省略头时 SDK 得到 false，与完整响应不可区分。另测仅移除 X-Consul-LastContact：即使带有过滤头，v1.32.1 也会提前结束元数据解析，标志仍为 false。这两种情况都验证部署限制。对 Load 的 Get/List 及 Watch 基线、阻塞请求检查 HTTP 查询含 consistent、无 stale/cached，阻塞索引仍正确。另用可控 KV 让一次写入触发信号、首次一致读失败；在无其他发布者时旧指针保持，随后无新事件、无周期触发也重试成功并发布新值。 |
-| Watch 与调度 | 用可控假 watcher 在 Open 后、首次确认前只写一次，此后静默、无周期触发，最终 Current 为新值；断线期间同样只写一次，重连后读到新值；每次 etcd 订阅都携带 leader 要求，ErrNoLeader 后退避重建。Consul 的过滤响应不能作为成功基线，恢复完整响应后补发信号。覆盖 compaction 重建、同索引超时不触发、索引回退后一次基线读取、连续零索引退避且下一等待索引 ≥1。覆盖信号合并、Reload 首次失败后经过固定非零间隔且无新事件仍重试、取消能中断等待和阻塞请求。使用 testing/synctest 或可控通道 |
+| Watch 与调度 | 用可控假 watcher 在 Open 后、首次确认前只写一次，此后静默、无周期触发，最终 Current 为新值；断线期间同样只写一次，重连后读到新值；每次 etcd 订阅都携带 leader 要求，ErrNoLeader 后退避重建。Consul 的过滤响应不能作为成功基线，恢复完整响应后补发信号。覆盖 compaction 重建、同索引超时不触发、索引回退后一次基线读取、连续零索引退避且下一等待索引 ≥1。覆盖信号合并、Reload 首次失败后经过带抖动的非零间隔且无新事件仍重试、取消能中断等待和阻塞请求。使用 testing/synctest 或可控通道 |
 | 集成 | integration 标签下分别启动真实 etcd 和 Consul，对单键及前缀执行写入、读取、监视、更新、删除。删除必需文档或最后一个有效叶子后 Reload 失败且旧指针保持；删除部分叶子可成功发布其余配置。对三节点 etcd 隔离当前连接节点与多数派，向多数派仅写入一次；恢复可达性后，无周期触发也能读到该值 |
 
 **真实集群作业。** 从核心模块目录运行 `testdata/ci/integration.sh`。脚本启动临时三节点 etcd 和启用 ACL 的 Consul，在两个独立模块分别运行带 integration 标签的竞态测试。它检查 go test 的 JSON 事件，确认 Document、Prefix、LeaderRecovery（etcd）及 ACLFilteredPrefix（Consul）对应的六个用例全部执行，缺失或跳过均失败。退出后清理临时容器、凭据和网络。[集群验收脚本](../testdata/ci/integration.sh)
 
-**构建与依赖。** 最低工具链为 Go 1.27.4。在工作树中运行 `testdata/ci/check.sh`，脚本在适配器的临时副本中引用本地核心。发布候选在独立模块解析环境中对核心、sources/etcd、sources/consul 和 sources/filewatch 四个目录分别执行以下命令。后续新增独立 Go 模块时同样逐个执行。
+**构建与依赖。** 最低工具链为 Go 1.26.11。在工作树中运行 `testdata/ci/check.sh`，脚本在适配器的临时副本中引用本地核心。发布候选在独立模块解析环境中对核心、sources/etcd、sources/consul 和 sources/filewatch 四个目录分别执行以下命令。后续新增独立 Go 模块时同样逐个执行。
 
 ```sh
 export GOWORK=off
@@ -342,7 +353,7 @@ printf '%s\n' "$modules" | awk '
 两个 Fuzz 入口分别在 CI 运行 30s，合并前各 60s。FuzzBind 验证有效输入产生的候选和失败时的安全路径；FuzzMerge 验证有序逐层覆盖、输入独立性和错误回滚。基准在同一机器用 `go test -run '^$' -bench '^(BenchmarkCurrent|BenchmarkReloadTwoSources)$' -benchmem -count=3 .` 对照，ns/op 或 allocs/op 劣化超过 30% 时在 PR 解释。逐包对照 go doc、§2 和 §5 的导出面，运行带 Output 断言的 Example；在实际发布的模块包内确认 filehttp 测试数据可读。
 
 
-## 9. 实施验证记录
+## 9. 早期版本实施验证记录
 
 在 Go 1.27.0、darwin/arm64、Apple M4 上完成以下验收。实现和真实集群用例随工作树交付。
 

@@ -45,7 +45,7 @@ func checkMergeTypes(dst, src map[string]any) error {
 // ${a.b:fallback} against the merged configuration, including references in
 // lists. A whole reference keeps its scalar type. Missing references without
 // a fallback, non-scalars, malformed placeholders and cycles return fixed
-// errors. Fallbacks are literal strings. Expansion is bounded to 128 reference
+// errors. Use $${ for a literal ${. Fallbacks are literal strings. Expansion is bounded to 128 reference
 // levels and 16 MiB of generated text per call.
 func Expand(root map[string]any) error {
 	if len(root) == 0 {
@@ -56,12 +56,23 @@ func Expand(root map[string]any) error {
 		return err
 	}
 	normalized := owned.(map[string]any)
-	r := expander{tree: Tree{root: normalized}, active: make(map[string]bool), memo: make(map[string]expansion), remaining: 16 << 20}
-	result, err := r.walk(normalized)
-	if err != nil {
+	r := expander{tree: newTree(normalized), active: make(map[string]bool), memo: make(map[string]expansion), remaining: 16 << 20}
+	// Evaluate against the unchanged private tree first. Keeping only the
+	// replacements avoids cloning every collection again.
+	replacements := make(map[string]any)
+	if err := visitTemplates(normalized, func(value any, text string) (any, error) {
+		result, err := r.scalar(value)
+		if err == nil {
+			replacements[text] = result.value
+		}
+		return value, err
+	}); err != nil {
 		return err
 	}
-	for k, v := range result.(map[string]any) {
+	if err := visitTemplates(normalized, func(_ any, text string) (any, error) { return replacements[text], nil }); err != nil {
+		return err
+	}
+	for k, v := range normalized {
 		root[k] = v
 	}
 	return nil
@@ -80,32 +91,34 @@ type expansion struct {
 	depth int
 }
 
-func (r *expander) walk(data any) (any, error) {
-	switch v := data.(type) {
+func visitTemplates(node any, transform func(any, string) (any, error)) error {
+	switch v := node.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(v))
-		for k, child := range v {
-			next, err := r.walk(child)
-			if err != nil {
-				return nil, err
+		for k, item := range v {
+			if text, ok := expansionText(item); ok && strings.Contains(text, "${") {
+				next, err := transform(item, text)
+				if err != nil {
+					return err
+				}
+				v[k] = next
+			} else if err := visitTemplates(item, transform); err != nil {
+				return err
 			}
-			out[k] = next
 		}
-		return out, nil
 	case []any:
-		out := make([]any, len(v))
-		for i, child := range v {
-			next, err := r.walk(child)
-			if err != nil {
-				return nil, err
+		for i, item := range v {
+			if text, ok := expansionText(item); ok && strings.Contains(text, "${") {
+				next, err := transform(item, text)
+				if err != nil {
+					return err
+				}
+				v[i] = next
+			} else if err := visitTemplates(item, transform); err != nil {
+				return err
 			}
-			out[i] = next
 		}
-		return out, nil
-	default:
-		result, err := r.scalar(v)
-		return result.value, err
 	}
+	return nil
 }
 
 const maxReferenceDepth = 128
@@ -171,6 +184,17 @@ func (r *expander) scalar(value any) (expansion, error) {
 	var out strings.Builder
 	for {
 		literal, rest, found := strings.Cut(text, "${")
+		if found && strings.HasSuffix(literal, "$") {
+			if err := r.write(&out, strings.TrimSuffix(literal, "$")); err != nil {
+				return expansion{}, err
+			}
+			if err := r.write(&out, "${"); err != nil {
+				return expansion{}, err
+			}
+			whole = false
+			text = rest
+			continue
+		}
 		if err := r.write(&out, literal); err != nil {
 			return expansion{}, err
 		}

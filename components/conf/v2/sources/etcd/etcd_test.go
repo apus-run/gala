@@ -40,7 +40,7 @@ func TestLoadModes(t *testing.T) {
 		t.Fatal(ch, err)
 	}
 	r.pairs[0].Value = []byte("SECRET")
-	if _, err := doc.Load(t.Context()); err == nil || err.Error() != "decode failed" {
+	if _, err := doc.Load(t.Context()); err == nil || err.Error() != "decode failed at line 1, column 1" {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ prefix, key string }{{"app", "app/"}, {"app/", "app/"}, {"/app", "/app/"}, {"/", "/"}} {

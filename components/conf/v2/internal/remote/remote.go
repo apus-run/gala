@@ -6,7 +6,8 @@ import (
 	"errors"
 	"reflect"
 	"strings"
-	"time"
+
+	"github.com/apus-run/gala/components/conf/v2/internal/backoff"
 )
 
 // Directory returns a prefix ending in a slash. Empty signals invalid input.
@@ -59,12 +60,8 @@ func Signal(ch chan<- struct{}) {
 	}
 }
 
-// Retry waits before another watch request, interruptibly.
+// Retry waits for the first reconnect attempt. Kept for older adapter modules.
 func Retry(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(time.Second):
-		return ctx.Err() == nil
-	}
+	var delay backoff.Delay
+	return delay.Wait(ctx)
 }

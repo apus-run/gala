@@ -200,3 +200,59 @@ func TestJSONDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFileSizeLimit(t *testing.T) {
+	const body = `{"name":"value"}`
+	src := file.FS(fstest.MapFS{"config": {Data: []byte(body)}}, "config", file.JSON)
+	for _, tc := range []struct {
+		n        int64
+		tooLarge bool
+	}{{1, true}, {int64(len(body) - 1), true}, {int64(len(body)), false}, {int64(len(body) + 1), false}, {0, false}} {
+		_, err := src.WithMaxBytes(tc.n).Load(t.Context())
+		if tc.tooLarge && !errors.Is(err, file.ErrTooLarge) || !tc.tooLarge && err != nil {
+			t.Fatalf("limit %d: %v", tc.n, err)
+		}
+	}
+	if _, err := src.WithMaxBytes(-1).Load(t.Context()); err == nil {
+		t.Fatal("accepted negative limit")
+	}
+	if _, err := src.Load(t.Context()); err != nil {
+		t.Fatal("changed original source", err)
+	}
+	_, err := file.FS(fstest.MapFS{}, "missing", file.JSON).WithMaxBytes(1).Load(t.Context())
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
+func TestJSONSyntaxLocations(t *testing.T) {
+	for _, tc := range []struct {
+		body      string
+		line, col int
+	}{
+		{"{\n \"secret\": x}", 2, 12}, {"{\n", 2, 1}, {"{}\n {}", 2, 2}, {"{} trailing", 1, 4},
+	} {
+		src := file.FS(fstest.MapFS{"config": {Data: []byte(tc.body)}}, "config", file.JSON)
+		_, err := conf.OpenTree(t.Context(), src)
+		location, ok := errors.AsType[*file.SyntaxError](err)
+		if !ok || location.Line != tc.line || location.Column != tc.col || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("unexpected location: %v", err)
+		}
+	}
+}
+
+func TestOptionalFileMixedFailures(t *testing.T) {
+	for _, limit := range []int64{0, 512} {
+		for _, cause := range []error{fs.ErrPermission, context.Canceled, errors.New("private file detail")} {
+			fsys := openFunc(func(string) (fs.File, error) { return nil, errors.Join(fs.ErrNotExist, cause) })
+			src := file.FS(fsys, "local", file.JSON).WithMaxBytes(limit)
+			cfg, err := conf.OpenTree(t.Context(), conf.Optional(src))
+			if err == nil || cfg != nil || errors.Is(err, fs.ErrNotExist) || strings.Contains(err.Error(), "private file detail") {
+				t.Fatalf("limit %d: %v", limit, err)
+			}
+			if (cause == fs.ErrPermission || cause == context.Canceled) && !errors.Is(err, cause) {
+				t.Fatal(err)
+			}
+		}
+	}
+}

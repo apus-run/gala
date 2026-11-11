@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"maps"
 	"math"
 	"reflect"
@@ -15,13 +18,35 @@ import (
 // explicit keys, including zero values. Struct defaults belong to the typed
 // snapshot. A zero Tree is an empty object. Paths are literal segments;
 // no segments selects the root, and decimal indices select list elements.
-type Tree struct{ root map[string]any }
+type Tree struct{ data *treeData }
+
+// fmt bypasses custom formatters for invalid %p operands and walks their
+// fields. Keep the payload behind a pointer so that fallback sees an address.
+type treeData struct{ values map[string]any }
+
+func newTree(values map[string]any) Tree { return Tree{data: &treeData{values: values}} }
+
+func (t Tree) root() map[string]any {
+	if t.data == nil {
+		return nil
+	}
+	return t.data.values
+}
+
+// Format redacts diagnostic verbs handled by fmt.Formatter.
+func (t Tree) Format(state fmt.State, verb rune) { io.WriteString(state, t.String()) }
+
+// String and GoString redact diagnostic formatting. MarshalJSON and Marshal
+// deliberately export the complete data.
+func (Tree) String() string         { return "[redacted config]" }
+func (t Tree) GoString() string     { return t.String() }
+func (t Tree) LogValue() slog.Value { return slog.StringValue(t.String()) }
 
 // ErrNotFound reports a missing key, invalid list index or non-container parent.
 var ErrNotFound = errors.New("configuration path not found")
 
 func (t Tree) find(path []string) (any, bool) {
-	var value any = t.root
+	var value any = t.root()
 	for _, key := range path {
 		switch node := value.(type) {
 		case map[string]any:
@@ -81,7 +106,7 @@ func (t Tree) Cut(path ...string) (Tree, error) {
 	if !ok {
 		return Tree{}, errTypeMismatch
 	}
-	return Tree{root: m}, nil
+	return newTree(m), nil
 }
 
 // Decode binds a subtree into a non-nil pointer with the same conversion
@@ -100,7 +125,7 @@ func (t Tree) Decode(dst any, path ...string) error {
 		return err
 	}
 	next := reflect.New(typ).Elem()
-	if err := bindValue(v, next, fieldPath{}); err != nil {
+	if err := bindValue(v, next, fieldPath{}, true); err != nil {
 		return err
 	}
 	ptr.Elem().Set(next)
@@ -119,15 +144,15 @@ func (t Tree) Marshal(encode func(any) ([]byte, error)) ([]byte, error) {
 	if encode == nil {
 		return nil, errors.New("encoder is nil")
 	}
-	return encode(copyTreeValue(t.root))
+	return encode(copyTreeValue(t.root()))
 }
 
 // MarshalJSON encodes the root object, including any configured secrets.
 func (t Tree) MarshalJSON() ([]byte, error) {
-	if t.root == nil {
+	if t.root() == nil {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(t.root)
+	return json.Marshal(t.root())
 }
 
 // Snapshot pairs a typed value with the tree from the same publication.
@@ -135,6 +160,8 @@ func (t Tree) MarshalJSON() ([]byte, error) {
 type Snapshot[T any] struct {
 	Tree
 	Value *T
+	// Revision starts at one and changes only when published data changes.
+	Revision uint64
 }
 
 // All collections in a published tree have already been normalized, copied
@@ -158,8 +185,11 @@ func copyTreeValue(value any) any {
 	}
 }
 
-// Change is the preceding and current tree for one successful publication.
+// Change spans the publications coalesced since the last delivered event.
 type Change struct{ Before, After Tree }
+
+// LogValue prevents structured logging from invoking JSON export on the trees.
+func (Change) LogValue() slog.Value { return slog.StringValue("[redacted config change]") }
 
 type subscription struct {
 	path []string
@@ -211,7 +241,8 @@ func (s *subscription) notify(before, after Tree) {
 	default:
 	}
 	select {
-	case <-s.ch:
+	case pending := <-s.ch:
+		event.Before = pending.Before
 	default:
 	}
 	s.ch <- event
@@ -228,14 +259,15 @@ func equalTreeValues(a, b any) bool {
 		y, ok := b.([]any)
 		return ok && slices.EqualFunc(x, y, equalTreeValues)
 	}
-	if a == b {
-		return true
-	}
 	x, y := reflect.ValueOf(a), reflect.ValueOf(b)
-	if !x.IsValid() || !y.IsValid() || x.Type() != y.Type() {
-		return false
+	if x.IsValid() && (x.Kind() == reflect.Float32 || x.Kind() == reflect.Float64) {
+		if !y.IsValid() || x.Type() != y.Type() {
+			return false
+		}
+		left, right := x.Float(), y.Float()
+		return math.Float64bits(left) == math.Float64bits(right) || math.IsNaN(left) && math.IsNaN(right)
 	}
-	return (x.Kind() == reflect.Float32 || x.Kind() == reflect.Float64) && math.IsNaN(x.Float()) && math.IsNaN(y.Float())
+	return a == b
 }
 
 // Set replaces a value in the current version. Missing intermediate objects
@@ -267,7 +299,7 @@ func (c *Config[T]) MergeAt(ctx context.Context, tree Tree, path ...string) erro
 			dst = copyTreeValue(m).(map[string]any)
 		}
 		overlay := layerMerger{values: dst, merge: c.options.Merge}
-		if err := overlay.add(tree.root); err != nil {
+		if err := overlay.add(tree.root()); err != nil {
 			return nil, err
 		}
 		return overlay.values, nil

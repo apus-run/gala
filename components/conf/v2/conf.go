@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+
+	"github.com/apus-run/gala/components/conf/v2/internal/fileerr"
 )
 
 // Source provides one layer per load. Later sources have higher priority.
@@ -26,6 +28,27 @@ type SourceFunc func(context.Context) (map[string]any, error)
 // Load calls f with ctx.
 func (f SourceFunc) Load(ctx context.Context) (map[string]any, error) { return f(ctx) }
 
+// Optional wraps a missing layer as an empty layer. All other failures retain
+// their cause. Pass the original concrete source to Run if it also watches.
+func Optional(src Source) Source {
+	if isNil(src) {
+		return nil
+	}
+	return SourceFunc(func(ctx context.Context) (map[string]any, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		layer, err := src.Load(ctx)
+		if cause := ctx.Err(); cause != nil {
+			return nil, cause
+		}
+		if err != nil && fileerr.OnlyMissing(err) {
+			return nil, nil
+		}
+		return layer, err
+	})
+}
+
 // Config holds read-only snapshots. Create it with Open and do not copy it.
 type Config[T any] struct {
 	defaults    T
@@ -39,8 +62,8 @@ type Config[T any] struct {
 }
 
 // Open validates the struct type and synchronously publishes the first snapshot.
-// Missing fields retain defaults. Maps, slices and pointers in defaults may be
-// shared by snapshots and must remain read-only after Open. A Validate method
+// Missing fields retain defaults. Open copies bindable collections and pointers;
+// ignored fields and opaque private state must remain read-only. A Validate method
 // runs during publication and must not reenter the same Config's write methods.
 func Open[T any](ctx context.Context, defaults T, sources ...Source) (*Config[T], error) {
 	return OpenWith(ctx, defaults, Options{}, sources...)
@@ -74,9 +97,13 @@ func OpenWith[T any](ctx context.Context, defaults T, options Options, sources .
 		}
 	}
 	for i, s := range sources {
-		if isNilSource(s) {
+		if isNil(s) {
 			return nil, &Error{Stage: StageConfig, Source: i, Err: errors.New("source must not be nil")}
 		}
+	}
+	// Capture defaults before the first read, preserving aliases in the private copy.
+	if reflect.TypeFor[T]() != reflect.TypeFor[Tree]() {
+		defaults = cloneDefault(reflect.ValueOf(defaults), make(map[visit]reflect.Value)).Interface().(T)
 	}
 	c := &Config[T]{defaults: defaults, options: options, sources: slices.Clone(sources), sem: make(chan struct{}, 1)}
 	if err := c.Reload(ctx); err != nil {
@@ -137,15 +164,15 @@ func (c *Config[T]) reload(ctx context.Context, extra []Source) error {
 	sources := c.sources
 	if len(extra) > 0 {
 		for i, s := range extra {
-			if isNilSource(s) {
+			if isNil(s) {
 				return &Error{Stage: StageConfig, Source: len(sources) + i, Err: errors.New("source must not be nil")}
 			}
 		}
 		sources = slices.Concat(sources, extra)
 	}
 	layers := layerMerger{merge: c.options.Merge}
-	if base, ok := any(c.defaults).(Tree); ok && base.root != nil {
-		if err := layers.add(base.root); err != nil {
+	if base, ok := any(c.defaults).(Tree); ok && base.root() != nil {
+		if err := layers.add(base.root()); err != nil {
 			return &Error{Stage: StageMerge, Source: -1, Err: err}
 		}
 	}
@@ -190,7 +217,7 @@ func (c *Config[T]) publish(ctx context.Context, raw map[string]any) error {
 	if raw == nil {
 		raw = map[string]any{}
 	}
-	tree := Tree{root: raw}
+	tree := newTree(raw)
 	if resolve := c.options.Resolve; resolve != nil {
 		work := copyTreeValue(raw).(map[string]any)
 		if err := resolve(work); err != nil {
@@ -200,17 +227,17 @@ func (c *Config[T]) publish(ctx context.Context, raw map[string]any) error {
 		if err != nil {
 			return &Error{Stage: StageResolve, Source: -1, Err: err}
 		}
-		tree.root = owned.(map[string]any)
+		tree = newTree(owned.(map[string]any))
 	}
 	next := c.defaults
 	if dynamic, ok := any(&next).(*Tree); ok {
 		*dynamic = tree
-	} else if err := bindValue(tree.root, reflect.ValueOf(&next).Elem(), fieldPath{}); err != nil {
+	} else if err := bindValue(tree.root(), reflect.ValueOf(&next).Elem(), fieldPath{}, false); err != nil {
 		return err
 	}
 	var validation error
 	if v, ok := any(&next).(interface{ Validate() error }); ok {
-		validation = v.Validate()
+		validation = validate(v)
 	}
 	if err := ctx.Err(); err != nil {
 		return &Error{Stage: StageCanceled, Source: -1, Err: err}
@@ -223,8 +250,18 @@ func (c *Config[T]) publish(ctx context.Context, raw map[string]any) error {
 	if err := ctx.Err(); err != nil {
 		return &Error{Stage: StageCanceled, Source: -1, Err: err}
 	}
-	prev := c.cur.Swap(&Snapshot[T]{Tree: tree, Value: &next})
+	prev := c.cur.Load()
+	// A different expression can resolve to the same value. Future edits
+	// must still use the newly committed resolver input.
 	c.unresolved = raw
+	var revision uint64 = 1
+	if prev != nil {
+		if equalTreeValues(prev.root(), tree.root()) {
+			return nil
+		}
+		revision = prev.Revision + 1
+	}
+	c.cur.Store(&Snapshot[T]{Tree: tree, Value: &next, Revision: revision})
 	if prev != nil {
 		for sub := range c.observers {
 			sub.notify(prev.Tree, tree)
@@ -233,7 +270,16 @@ func (c *Config[T]) publish(ctx context.Context, raw map[string]any) error {
 	return nil
 }
 
-func isNilSource(s Source) bool {
+// A promoted Validate method may panic before entering its body if the
+// embedded pointer is nil. Preserve ordinary errors, but never retain a panic
+// payload. A panic interrupts the return assignment, leaving the safe cause.
+func validate(v interface{ Validate() error }) (err error) {
+	err = errValidatorPanic
+	defer func() { recover() }()
+	return v.Validate()
+}
+
+func isNil(s any) bool {
 	if s == nil {
 		return true
 	}
@@ -246,11 +292,12 @@ func isNilSource(s Source) bool {
 }
 
 var (
-	errNull       = errors.New("explicit null is not allowed")
-	errSourceType = errors.New("unsupported source value; use scalars and collections")
-	errCycle      = errors.New("cyclic source values are not allowed")
-	errDepth      = errors.New("source nesting exceeds 128 levels")
-	errNodeLimit  = errors.New("expanded node limit exceeded")
+	errValidatorPanic = errors.New("validator panicked")
+	errNull           = errors.New("explicit null is not allowed")
+	errSourceType     = errors.New("unsupported source value; use scalars and collections")
+	errCycle          = errors.New("cyclic source values are not allowed")
+	errDepth          = errors.New("source nesting exceeds 128 levels")
+	errNodeLimit      = errors.New("expanded node limit exceeded")
 )
 
 // visit tracks only ancestors, so shared but acyclic collections remain valid.

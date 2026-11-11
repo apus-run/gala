@@ -242,3 +242,45 @@ func TestWatchFilenameCase(t *testing.T) {
 		nextSignal(t, ch)
 	}
 }
+
+func TestConfigMapRotation(t *testing.T) {
+	dir := t.TempDir()
+	for _, version := range []string{"v1", "v2"} {
+		sub := filepath.Join(dir, version)
+		if err := os.Mkdir(sub, 0700); err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(sub, "app.json"), `{"Version":"`+version+`"}`)
+	}
+	if err := os.Symlink("v1", filepath.Join(dir, "..data")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	path := filepath.Join(dir, "app.json")
+	if err := os.Symlink(filepath.Join("..data", "app.json"), path); err != nil {
+		t.Fatal(err)
+	}
+	src := filewatch.New(path, file.JSON)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cfg, err := conf.Open(ctx, struct{ Version string }{}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := src.Watch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopWatch(t, cancel, ch)
+	nextSignal(t, ch)
+	old := cfg.Current()
+	if err := os.Symlink("v2", filepath.Join(dir, "..data_tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(dir, "..data_tmp"), filepath.Join(dir, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	nextSignal(t, ch)
+	if err := cfg.Reload(ctx); err != nil || cfg.Current().Version != "v2" || old.Version != "v1" {
+		t.Fatal(cfg.Current(), err)
+	}
+}

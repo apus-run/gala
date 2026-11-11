@@ -3,8 +3,8 @@ github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuy
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
 github.com/alecthomas/units v0.0.0-20190717042225-c3de453c63f4/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
-github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.1 h1:Kntj2d5IpWFQh/s7r5CTes87q2LMyx52Q4i49RXgktA=
-github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.1/go.mod h1:nlr6qBp9OI3OnDoq9ShPP6Lt9FRvVgpkV80Jjx9EVu4=
+github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.2 h1:mHNriT1bTJwCDnlG3BJDQeTcKQQDMlIs+0m4uFL2gpc=
+github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.2/go.mod h1:L3/PDSOigrGZuudcjnrZmKrv7LXbiiYpHTlPhRLRgus=
 github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e/go.mod h1:3U/XgcO3hCbHZ8TKRvWD2dDTCfh9M9ya+I9JpbB7O8o=
 github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da/go.mod h1:Q73ZrmVTwzkszR9V5SSuryQ31EELlFMUz1kKyl939pY=
 github.com/armon/go-metrics v0.4.1 h1:hR91U9KYmb6bLBYLQjyM+3j+rcd/UhE+G78SFnF8gJA=

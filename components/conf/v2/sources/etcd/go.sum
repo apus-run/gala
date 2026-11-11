@@ -1,5 +1,5 @@
-github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.1 h1:Kntj2d5IpWFQh/s7r5CTes87q2LMyx52Q4i49RXgktA=
-github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.1/go.mod h1:nlr6qBp9OI3OnDoq9ShPP6Lt9FRvVgpkV80Jjx9EVu4=
+github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.2 h1:mHNriT1bTJwCDnlG3BJDQeTcKQQDMlIs+0m4uFL2gpc=
+github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.2/go.mod h1:L3/PDSOigrGZuudcjnrZmKrv7LXbiiYpHTlPhRLRgus=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/coreos/go-semver v0.3.1 h1:yi21YpKnrx1gt5R+la8n5WgS0kCrsPp33dmEyHReZr4=

@@ -169,3 +169,21 @@ func TestSourceErrorsKeepOriginalCause(t *testing.T) {
 		t.Fatalf("wrong load error: %v", err)
 	}
 }
+
+type panickingValidator struct{ Message string }
+
+func (c *panickingValidator) Validate() error { panic(c.Message) }
+
+func TestValidationPanicHidesPayload(t *testing.T) {
+	const secret = "private validation input"
+	cfg, err := conf.Open(t.Context(), panickingValidator{Message: secret}, &fakeSource{})
+	cause, ok := errors.AsType[*conf.Error](err)
+	if cfg != nil || !ok || cause.Stage != conf.StageValidate || cause.Err == nil {
+		t.Fatalf("expected validation failure, got %v", err)
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if strings.Contains(e.Error(), secret) {
+			t.Fatal("panic payload escaped through error chain")
+		}
+	}
+}
