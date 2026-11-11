@@ -1,43 +1,19 @@
-package conf_test
+package config_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
+	"github.com/apus-run/gala/components/conf/v2/examples/filehttp/config"
 	"github.com/apus-run/gala/components/conf/v2/sources/env"
 	"github.com/apus-run/gala/components/conf/v2/sources/file"
 
-	// Codecs register on import; the composition root must import them.
-	// codec 在导入时注册；组合入口必须导入它们。
-	_ "github.com/apus-run/gala/pkg/encoding/yaml"
+	yaml "gopkg.in/yaml.v3"
 )
-
-// filehttpConfig mirrors the fields of filehttp's Config that the migration
-// binds. server.mode is intentionally absent: the spec removes it before
-// migration, so strict binding must reject it.
-// filehttpConfig 对应 filehttp 迁移需要绑定的字段。server.mode 有意缺席：
-// 规格要求迁移前删除它，因此严格绑定必须拒绝它。
-type filehttpConfig struct {
-	Server struct {
-		ListenAddr     string `mapstructure:"listen_addr"`
-		MaxUploadBytes int64  `mapstructure:"max_upload_bytes"`
-	} `mapstructure:"server"`
-	Database struct {
-		DSN string `mapstructure:"dsn"`
-	} `mapstructure:"database"`
-	Storage struct {
-		FSRoot         string `mapstructure:"fs_root"`
-		S3Bucket       string `mapstructure:"s3_bucket"`
-		S3Region       string `mapstructure:"s3_region"`
-		S3Endpoint     string `mapstructure:"s3_endpoint"`
-		S3Prefix       string `mapstructure:"s3_prefix"`
-		S3PathStyle    bool   `mapstructure:"s3_path_style"`
-		S3CreateBucket bool   `mapstructure:"s3_create_bucket"`
-	} `mapstructure:"storage"`
-}
 
 // filehttpEnv is the migration mapping from the spec. Legacy names come first
 // so the new names, listed second, win when both are set (C08).
@@ -97,13 +73,13 @@ func TestC08ServerModeIsRejectedUntilRemoved(t *testing.T) {
 	withMode := filepath.Join(dir, "with-mode.yaml")
 	writeFile(t, withMode, "server:\n  mode: \"prod\"\n"+strings.TrimPrefix(filehttpYAML, "server:\n"))
 
-	if _, err := conf.Open[filehttpConfig](t.Context(), conf.WithSources(file.New(withMode))); err == nil {
+	if _, err := conf.Open(t.Context(), config.Config{}, file.New(withMode, yaml.Unmarshal)); err == nil {
 		t.Fatal("server.mode present: want unknown-key error, got nil")
 	}
 
 	cleaned := filepath.Join(dir, "cleaned.yaml")
 	writeFile(t, cleaned, filehttpYAML)
-	c, err := conf.Open[filehttpConfig](t.Context(), conf.WithSources(file.New(cleaned)))
+	c, err := conf.Open(t.Context(), config.Config{}, file.New(cleaned, yaml.Unmarshal))
 	if err != nil {
 		t.Fatalf("server.mode removed: open: %v", err)
 	}
@@ -137,8 +113,8 @@ func TestC08BucketEnvPrecedence(t *testing.T) {
 			p := filepath.Join(dir, "config.yaml")
 			writeFile(t, p, filehttpYAML)
 
-			sources := append([]conf.Source{file.New(p)}, filehttpEnv()...)
-			c, err := conf.Open[filehttpConfig](t.Context(), conf.WithSources(sources...))
+			sources := append([]conf.Source{file.New(p, yaml.Unmarshal)}, filehttpEnv()...)
+			c, err := conf.Open(t.Context(), config.Config{}, sources...)
 			if err != nil {
 				t.Fatalf("open: %v", err)
 			}
@@ -162,9 +138,9 @@ func TestC08DSNNotLeaked(t *testing.T) {
 	// 列表不是字符串，绑定会失败。错误值来自高于文件的最后一层；ENV 层是字符串，
 	// 会覆盖文件值，因此由最后一层的对象提供列表。
 	bad := map[string]any{"database": map[string]any{"dsn": []any{dsn}}}
-	sources := append([]conf.Source{file.New(p)}, filehttpEnv()...)
-	sources = append(sources, &fakeSource{data: bad})
-	_, err := conf.Open[filehttpConfig](t.Context(), conf.WithSources(sources...))
+	sources := append([]conf.Source{file.New(p, yaml.Unmarshal)}, filehttpEnv()...)
+	sources = append(sources, conf.SourceFunc(func(context.Context) (map[string]any, error) { return bad, nil }))
+	_, err := conf.Open(t.Context(), config.Config{}, sources...)
 	if err == nil {
 		t.Fatal("want bind error")
 	}

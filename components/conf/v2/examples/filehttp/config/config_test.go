@@ -9,13 +9,10 @@ import (
 	"github.com/apus-run/gala/components/conf/v2/examples/filehttp/config"
 )
 
-// testdata is a copy of filehttp's real config.yaml with server.mode removed.
-// config.with-mode.yaml is the untouched original.
-// testdata 是 filehttp 真实 config.yaml 删除 server.mode 后的副本；
-// config.with-mode.yaml 是未改动的原件。
+// The fixtures differ only in the legacy server.mode field.
 const (
-	cleaned  = "../testdata/config.yaml"
-	original = "../testdata/config.with-mode.yaml"
+	cleaned  = "../testdata/config.json"
+	original = "../testdata/config.with-mode.json"
 )
 
 // clearEnv unsets every name the loader reads, so each test starts from the file.
@@ -100,9 +97,9 @@ func TestBucketEmptyNewNameFallsBackToLegacy(t *testing.T) {
 func TestBindErrorDoesNotEchoSecret(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()
-	p := filepath.Join(dir, "config.yaml")
+	p := filepath.Join(dir, "config.json")
 	const secret = "TESTPASS-7c1"
-	body := strings.Replace(mustRead(t, cleaned), `dsn: "./data/filehost.db"`, `dsn: ["`+secret+`"]`, 1)
+	body := strings.Replace(mustRead(t, cleaned), `"dsn": "./data/filehost.db"`, `"dsn": ["`+secret+`"]`, 1)
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +140,8 @@ func TestBucketBothMissingRetainFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body := strings.Replace(mustRead(t, cleaned), `s3_bucket: ""`, `s3_bucket: "file-bucket"`, 1)
-	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := strings.Replace(mustRead(t, cleaned), `"s3_bucket": ""`, `"s3_bucket": "file-bucket"`, 1)
+	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -2,25 +2,25 @@ package file_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	_ "github.com/apus-run/gala/pkg/encoding/json"
-	_ "github.com/apus-run/gala/pkg/encoding/yaml"
+	"testing/fstest"
 
 	conf "github.com/apus-run/gala/components/conf/v2"
 	"github.com/apus-run/gala/components/conf/v2/sources/file"
+	yaml "gopkg.in/yaml.v3"
 )
 
 type shape struct {
 	Server struct {
-		Port int `mapstructure:"port"`
-	} `mapstructure:"server"`
-	Name string `mapstructure:"name"`
+		Port int `conf:"port"`
+	} `conf:"server"`
+	Name string `conf:"name"`
 }
 
 // C07: .json, .yaml, and .yml with the same content produce the same config.
@@ -33,7 +33,11 @@ func TestC07FormatsAgree(t *testing.T) {
 
 	var got []shape
 	for _, name := range []string{"a.json", "a.yaml", "a.yml"} {
-		c, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(filepath.Join(dir, name))))
+		dec := yaml.Unmarshal
+		if name == "a.json" {
+			dec = file.JSON
+		}
+		c, err := conf.Open(t.Context(), shape{}, file.New(filepath.Join(dir, name), dec))
 		if err != nil {
 			t.Fatalf("%s: open: %v", name, err)
 		}
@@ -48,36 +52,38 @@ func TestC07FormatsAgree(t *testing.T) {
 	}
 }
 
-// C07: a missing file is reported as not-exist via errors.Is, and an
-// unknown extension is an explicit error.
-// C07：缺文件可用 errors.Is 判定为不存在；未知扩展名明确报错。
-func TestC07MissingFileAndUnknownExt(t *testing.T) {
-	dir := t.TempDir()
-
-	_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(filepath.Join(dir, "nope.yaml"))))
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("missing file: errors.Is(ErrNotExist) = false, err = %v", err)
-	}
-
-	write(t, filepath.Join(dir, "c.toml"), "name = \"x\"\n")
-	if _, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(filepath.Join(dir, "c.toml")))); err == nil {
-		t.Fatal("unknown extension: want error, got nil")
-	}
+// Count reads at the filesystem boundary, including when a read fails.
+type countingFS struct {
+	fstest.MapFS
+	reads int
+	err   error
 }
 
-// C07: one Open calls Load exactly once per source.
-// C07：一次 Open 对每个来源恰好调用一次 Load。
-func TestC07ReadsOnce(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "r.yaml")
-	write(t, p, "name: x\n")
-
-	counted := &countingSource{inner: file.New(p)}
-	if _, err := conf.Open[shape](t.Context(), conf.WithSources(counted)); err != nil {
-		t.Fatalf("open: %v", err)
+func (fsys *countingFS) ReadFile(name string) ([]byte, error) {
+	fsys.reads++
+	if fsys.err != nil {
+		return nil, fsys.err
 	}
-	if counted.calls != 1 {
-		t.Fatalf("Load calls = %d, want 1", counted.calls)
+	return fsys.MapFS.ReadFile(name)
+}
+
+func TestReadsOncePerLoad(t *testing.T) {
+	fsys := &countingFS{MapFS: fstest.MapFS{"config": {Data: []byte(`{"name":"first"}`)}}}
+	cfg, err := conf.Open(t.Context(), shape{}, file.FS(fsys, "config", file.JSON))
+	if err != nil || fsys.reads != 1 {
+		t.Fatalf("Open: reads=%d err=%v", fsys.reads, err)
+	}
+	old := cfg.Current()
+	fsys.err = &fs.PathError{Op: "open", Path: "SECRET", Err: fs.ErrPermission}
+	err = cfg.Reload(t.Context())
+	if !errors.Is(err, fs.ErrPermission) || fsys.reads != 2 || strings.Contains(err.Error(), "SECRET") || cfg.Current() != old {
+		t.Fatalf("failed reload: reads=%d err=%v", fsys.reads, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = file.FS(fsys, "config", file.JSON).Load(ctx)
+	if !errors.Is(err, context.Canceled) || fsys.reads != 2 {
+		t.Fatal(err, fsys.reads)
 	}
 }
 
@@ -88,7 +94,7 @@ func TestSafeErrorText(t *testing.T) {
 	p := filepath.Join(dir, "bad.yaml")
 	write(t, p, "server: [unclosed\n")
 
-	_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
+	_, err := conf.Open(t.Context(), shape{}, file.New(p, yaml.Unmarshal))
 	if err == nil {
 		t.Fatal("want decode error")
 	}
@@ -96,21 +102,9 @@ func TestSafeErrorText(t *testing.T) {
 		t.Fatalf("error exposes directory: %q", msg)
 	}
 	ce, ok := errors.AsType[*conf.Error](err)
-	if !ok || ce.Stage != conf.StageDecode {
-		t.Fatalf("stage = %v, want decode (err: %v)", ce, err)
+	if !ok || ce.Stage != conf.StageLoad {
+		t.Fatalf("stage = %v, want load (err: %v)", ce, err)
 	}
-}
-
-// countingSource counts Load calls on an inner source.
-// countingSource 统计内部来源的 Load 次数。
-type countingSource struct {
-	inner *file.Source
-	calls int
-}
-
-func (c *countingSource) Load(ctx context.Context) (map[string]any, error) {
-	c.calls++
-	return c.inner.Load(ctx)
 }
 
 func write(t *testing.T, path, content string) {
@@ -122,34 +116,87 @@ func write(t *testing.T, path, content string) {
 
 func TestFileErrorOmitsUntrustedName(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "missing.yaml")
-	_, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
+	_, err := conf.Open(t.Context(), shape{}, file.New(p, yaml.Unmarshal))
 	ce, ok := errors.AsType[*conf.Error](err)
-	if !ok || ce.Name != "" || ce.Source != 0 {
+	if !ok || !errors.Is(err, fs.ErrNotExist) || ce.Source != 0 {
 		t.Fatalf("file identity: %#v", err)
 	}
 }
 
-func TestActualCodecsIntegerPrecision(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		valid      bool
+type openFunc func(string) (fs.File, error)
+
+func (open openFunc) Open(name string) (fs.File, error) { return open(name) }
+
+func TestFSTypedNilOpener(t *testing.T) {
+	var open openFunc
+	if _, err := file.FS(open, "config", file.JSON).Load(t.Context()); err == nil {
+		t.Fatal("expected invalid file source")
+	}
+}
+
+// C08 (malformed input): a syntactically broken file that embeds a secret must
+// fail in the decode stage, and neither the message nor the unwrapped cause may
+// contain the secret. The codec's own error text often echoes input, so this
+// checks that it is dropped.
+// C08（畸形输入）：嵌入密钥的语法错误文件必须在 decode 阶段失败，错误消息与
+// Unwrap 得到的原因都不得含密钥。codec 自身的错误文本常回显输入，此处验证其被丢弃。
+func TestC08MalformedInputHidesSecret(t *testing.T) {
+	const secret = "TESTKEY-9f3a-yaml"
+	cases := map[string]struct {
+		name string
+		body string
 	}{
-		{"large.json", `{"server":{"port":9007199254740993}}`, false},
-		{"large.yaml", "server:\n  port: 9007199254740993\n", true},
-		{"empty.yaml", " \n", false},
-		{"list.yaml", "- value\n", false},
-		{"null.json", "null", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := filepath.Join(t.TempDir(), tc.name)
+		"yaml unclosed flow":   {"bad.yaml", "server: [" + secret + "\n"},
+		"yaml bad indentation": {"bad2.yaml", "server:\n port: 1\n  token: " + secret + "\n bad: [\n"},
+		"json truncated":       {"bad.json", `{"server":{"token":"` + secret},
+		"json bad syntax":      {"bad2.json", `{"token": ` + secret + `}`},
+	}
+	dir := t.TempDir()
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			p := filepath.Join(dir, tc.name)
 			write(t, p, tc.body)
-			c, err := conf.Open[shape](t.Context(), conf.WithSources(file.New(p)))
-			if (err == nil) != tc.valid {
-				t.Fatalf("valid=%v: %v", tc.valid, err)
+
+			dec := yaml.Unmarshal
+			if filepath.Ext(p) == ".json" {
+				dec = file.JSON
 			}
-			if tc.valid && c.Current().Server.Port != 9007199254740993 {
-				t.Fatal("precision lost")
+			_, err := conf.Open(t.Context(), shape{}, file.New(p, dec))
+			if err == nil {
+				t.Fatal("malformed input: want error, got nil")
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("message leaks secret: %q", err.Error())
+			}
+			if cause := errors.Unwrap(err); cause != nil && strings.Contains(cause.Error(), secret) {
+				t.Fatalf("unwrapped cause leaks secret: %q", cause.Error())
+			}
+			ce, ok := errors.AsType[*conf.Error](err)
+			if !ok || ce.Stage != conf.StageLoad {
+				t.Fatalf("stage != decode: %v", err)
 			}
 		})
+	}
+}
+
+func TestJSONDocument(t *testing.T) {
+	const number = "9007199254740993"
+	var v any
+	if err := file.JSON([]byte(number), &v); err != nil || v != json.Number(number) {
+		t.Fatal(v, err)
+	}
+	for _, raw := range []string{"1 2", "{} x"} {
+		if file.JSON([]byte(raw), &v) == nil {
+			t.Fatal(raw)
+		}
+	}
+	fsys := fstest.MapFS{"config": {Data: []byte(`{"N":9007199254740993}`)}}
+	cfg, err := conf.Open(t.Context(), struct{ N int64 }{}, file.FS(fsys, "config", file.JSON))
+	if err != nil || cfg.Current().N != 9007199254740993 {
+		t.Fatal(err)
+	}
+	_, err = file.FS(fsys, "missing", file.JSON).Load(t.Context())
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
 	}
 }

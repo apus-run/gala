@@ -1,17 +1,15 @@
 module github.com/apus-run/gala/components/conf/v2/sources/consul
 
-go 1.27
+go 1.27.4
 
 require (
-	github.com/apus-run/gala/components/conf/v2 v2.0.0
-	github.com/apus-run/gala/pkg/encoding v0.17.0
+	github.com/apus-run/gala/components/conf/v2 v2.0.0-rc.1
 	github.com/hashicorp/consul/api v1.32.1
 )
 
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/fatih/color v1.16.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
@@ -27,5 +25,3 @@ require (
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 )
-
-replace github.com/apus-run/gala/components/conf/v2 => ../..

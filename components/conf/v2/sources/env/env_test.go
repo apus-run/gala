@@ -1,8 +1,12 @@
 package env_test
 
 import (
+	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
+	conf "github.com/apus-run/gala/components/conf/v2"
 	"github.com/apus-run/gala/components/conf/v2/sources/env"
 )
 
@@ -96,5 +100,53 @@ func TestNewWithLookupNilReadsProcessEnv(t *testing.T) {
 	}
 	if out["k"] != "fallback" {
 		t.Fatalf("k = %#v, want fallback", out["k"])
+	}
+}
+
+func TestScan(t *testing.T) {
+	entries := []string{"APP_A__B=c=d", "UNRELATED=ignored"}
+	source := env.Scan(func() []string { return entries }, func(name string) (string, bool) {
+		s, ok := strings.CutPrefix(name, "APP_")
+		return strings.ReplaceAll(s, "__", "."), ok
+	})
+	read := func(want map[string]any) {
+		t.Helper()
+		got, err := source.Load(t.Context())
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatal(got, err)
+		}
+	}
+	read(map[string]any{"A": map[string]any{"B": "c=d"}})
+	entries = []string{"APP_A_B=next", "APP_X="}
+	read(map[string]any{"A_B": "next"})
+	entries = []string{"APP_A=", "APP_A__B=SECRET"}
+	_, first := source.Load(t.Context())
+	entries[0], entries[1] = entries[1], entries[0]
+	_, second := source.Load(t.Context())
+	if first == nil || second == nil || first.Error() != second.Error() || strings.Contains(first.Error(), "SECRET") {
+		t.Fatal(first, second)
+	}
+}
+
+type stageCfg struct {
+	Name string `conf:"name"`
+}
+
+// Invalid mappings fail inside the source.
+
+func TestInvalidMappingIsLoadStage(t *testing.T) {
+	_, err := conf.Open(t.Context(), stageCfg{}, env.New(map[string]string{
+		"A": "name",
+		"B": "name",
+	}))
+	if err == nil {
+		t.Fatal("duplicate mapping: want error")
+	}
+	ce, ok := errors.AsType[*conf.Error](err)
+	if !ok {
+		t.Fatalf("want *conf.Error, got %T: %v", err, err)
+	}
+	if ce.Stage != conf.StageLoad {
+		t.Fatalf("stage = %q, want %q", ce.Stage, conf.StageLoad)
 	}
 }

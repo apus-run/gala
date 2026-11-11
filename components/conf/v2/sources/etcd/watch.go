@@ -3,61 +3,62 @@ package etcd
 import (
 	"context"
 	"errors"
-	"reflect"
 
-	conf "github.com/apus-run/gala/components/conf/v2"
+	"github.com/apus-run/gala/components/conf/v2/internal/remote"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// Watch starts at the revision following a current read, so the watch setup
-// cannot miss a subsequent update. It never closes the borrowed etcd client.
-func (s *Source) Watch(ctx context.Context) (conf.Watcher, error) {
+// Watch signals after initial confirmation, every new subscription and data
+// changes. The channel closes on cancellation. A read-only client may Load
+// without supporting Watch.
+func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.client == nil || (reflect.ValueOf(s.client).Kind() == reflect.Pointer && reflect.ValueOf(s.client).IsNil()) || s.key == "" {
-		return nil, conf.SourceError(conf.StageConfig, "", "", nil)
+	if !s.valid() {
+		return nil, errors.New("invalid etcd source")
 	}
-
 	client, ok := s.client.(interface {
 		Watch(context.Context, string, ...clientv3.OpOption) clientv3.WatchChan
 	})
 	if !ok {
-		return nil, conf.ErrWatchUnsupported
+		return nil, errors.New("watch unsupported")
 	}
-	response, err := s.client.Get(ctx, s.key)
-	if err != nil {
-		return nil, err
+	opts := []clientv3.OpOption{clientv3.WithCreatedNotify()}
+	if s.prefix {
+		opts = append(opts, clientv3.WithPrefix())
 	}
-	if response == nil || response.Header == nil {
-		return nil, errors.New("missing etcd revision")
-	}
-	watchCtx, cancel := context.WithCancel(ctx)
-	ch := client.Watch(watchCtx, s.key, clientv3.WithRev(response.Header.Revision+1))
-	return &etcdWatcher{ch: ch, cancel: cancel}, nil
+	signals := make(chan struct{}, 1)
+	go func() {
+		defer close(signals)
+		for ctx.Err() == nil {
+			streamCtx, cancel := context.WithCancel(clientv3.WithRequireLeader(ctx))
+			stream := client.Watch(streamCtx, s.key, opts...)
+			consume(ctx, stream, signals)
+			cancel()
+			if !remote.Retry(ctx) {
+				return
+			}
+		}
+	}()
+	return signals, nil
 }
 
-type etcdWatcher struct {
-	ch     clientv3.WatchChan
-	cancel context.CancelFunc
-}
-
-func (w *etcdWatcher) Next(ctx context.Context) error {
+func consume(ctx context.Context, stream clientv3.WatchChan, signals chan<- struct{}) {
+	if stream == nil {
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case response, ok := <-w.ch:
-			if !ok {
-				return errors.New("etcd watch closed")
+			return
+		case response, ok := <-stream:
+			if !ok || response.Canceled || response.Err() != nil {
+				return
 			}
-			if err := response.Err(); err != nil {
-				return err
-			}
-			if len(response.Events) > 0 {
-				return nil
+			if response.Created || len(response.Events) > 0 {
+				remote.Signal(signals)
 			}
 		}
 	}
 }
-func (w *etcdWatcher) Close() error { w.cancel(); return nil }

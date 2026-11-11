@@ -1,0 +1,18 @@
+{
+  "server": {
+    "listen_addr": ":8080",
+    "max_upload_bytes": 524288000
+  },
+  "database": {
+    "dsn": "./data/filehost.db"
+  },
+  "storage": {
+    "fs_root": "./data",
+    "s3_bucket": "",
+    "s3_region": "us-east-1",
+    "s3_endpoint": "",
+    "s3_prefix": "",
+    "s3_path_style": true,
+    "s3_create_bucket": false
+  }
+}

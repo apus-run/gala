@@ -1,183 +1,91 @@
-# conf/v2
+# Gala Conf v2
 
-多来源、强类型配置。每批按顺序合并来源，严格绑定并调用业务校验；全部成功后原子发布，任何失败都保留上一份有效配置。
-
-## 加载与重载
+`conf.Open(ctx, defaults, sources...)` 同步加载按优先级排列的来源，返回一个持有只读快照的配置实例。后面的来源覆盖前面的来源。文件和命令行都缺席的键采用结构体默认值。
 
 ```go
-import (
-    "context"
-
-    conf "github.com/apus-run/gala/components/conf/v2"
-    "github.com/apus-run/gala/components/conf/v2/sources/env"
-    "github.com/apus-run/gala/components/conf/v2/sources/file"
-    _ "github.com/apus-run/gala/pkg/encoding/yaml"
-)
-
 type App struct {
-    Port int `mapstructure:"port"`
+    Port int `conf:"port"`
 }
 
-func Load(ctx context.Context) (*conf.Config[App], error) {
-    return conf.Open[App](ctx,
-        conf.WithSources(
-            file.New("config.yaml"),
-            env.New(map[string]string{"PORT": "port"}),
-        ),
-    )
-}
-```
-
-`Open` 同步完成首次加载，失败返回 nil 实例。默认不启动后台任务；调用方持有实例后可以 `defer cfg.Close()`。
-
-| 操作 | 读取与发布语义 |
-|---|---|
-| `Current()` | 无锁读取当前快照；不执行 I/O |
-| `Load(ctx, sources...)` | 读取新增来源，叠加到上次成功读取的各层快照之上；成功后注册新增来源，优先级最高 |
-| `Reload(ctx)` | 从空配置开始，重新读取全部已注册来源；覆盖值消失后，下层值重新显现 |
-| `Start(ctx)` | 启动来源监听和已配置的轮询；运行期间重复调用不会重复启动 |
-| `Close()` | 取消进行中的读取与监听，等待后台协程退出，关闭订阅；幂等 |
-
-Load 和 Reload 共用串行、可取消的执行入口。来源列表、各层缓存与最终配置一起提交。失败的 Load 不会留下来源、缓存或新增监听器。
-
-每个业务操作读取一次 `snapshot := cfg.Current()` 并沿用它。快照及其嵌套集合只读；重载后旧快照仍有效。Config 使用后不能复制。Close 后 Current 仍可读，新的 Load/Reload/Start 返回错误。
-
-## 自动更新与通知
-
-```go
-cfg, err := conf.Open[App](ctx,
-    conf.WithSources(file.New("config.yaml")),
-    conf.WithWatch(),
+cfg, err := conf.Open(ctx, App{Port: 8080},
+    file.New("app.json", file.JSON),
+    env.New(map[string]string{"APP_PORT": "port"}),
 )
 if err != nil {
     return err
 }
-defer cfg.Close()
+port := cfg.Current().Port
+```
 
-events, unsubscribe := cfg.Subscribe()
-defer unsubscribe()
-for event := range events {
-    if event.Err != nil {
-        // 记录已脱敏的 event.Err.Error()；Current 仍为有效配置。
-        continue
+`Current()` 可并发读取。读者可在重载之后继续使用手里的旧快照。传给 Open 的默认 map、slice、指针和所有已发布值均须视为只读。`Reload(ctx)` 从默认值和全部来源重新构建候选，等待重载锁时可以取消。失败的调用不会发布。业务类型可以实现只读的 `Validate() error`。Source.Load、Merge、Resolve 和 Validate 都在写事务内执行；这些回调可以读取上一版快照，禁止同步重入同一实例的 Reload、Load、Set、Delete 或 MergeAt。需要追加写入的业务逻辑应在发布后的订阅消费者中执行。
+
+字段名区分大小写，可通过 `conf:"name"` 映射或 `conf:"-"` 忽略。对象递归覆盖，列表整体替换。未知键、显式 null、不支持的字段类型和数值溢出会产生错误。来源输入限深 128，每批最多展开 65,536 个节点。文件 JSON 保留数字文本，绑定到 int64、uint64 时按位宽精确解析。浮点目标使用对应精度舍入。
+
+`*conf.Error` 提供 Stage、来源序号 Source、安全字段路径 Path 和可由 errors.Is/As 检查的 Err。自定义来源须返回可安全展示的错误文本。业务校验失败使用固定文案，原始业务原因可通过 Unwrap 取得。
+
+业务结构固定时读 `cfg.Current()`。同时需要动态查询时，先取一次 `s := cfg.Snapshot()`：`s.Value` 和 `s.Tree` 属于同一次发布。树保存解析后的显式键，结构体默认值只体现在 `s.Value`。例如缺席的端口可以让结构体取默认 8080，而 `s.Exists("server", "port")` 仍为 false。无预定义结构的程序可以直接用 `OpenTree`。
+
+```go
+cfg, err := conf.OpenTree(ctx, file.New("app.json", file.JSON))
+if err != nil {
+    return err
+}
+s := cfg.Snapshot()
+port, err := conf.Get[int](s.Tree, "server", "port")
+if err != nil {
+    return err // errors.Is(err, conf.ErrNotFound) 可区分缺席
+}
+fmt.Println(port, s.Keys("server"))
+```
+
+路径参数逐段传递。`Lookup("a.b")` 查询字面键名，`Lookup("a", "b")` 查询嵌套键，列表元素用 `"0"` 等下标。空路径选根对象。Lookup 返回私有副本；Cut 返回固定在该版本上的子树；Decode 可读结构体、切片、映射和标量，失败保留调用者的目标值。使用 `json.Marshal(s.Tree)` 或 `s.Marshal(yaml.Marshal)` 导出配置，导出内容可能含密钥。
+
+使用 `initial, changes, cancel := cfg.SubscribeSnapshot("server", "port")` 同时取得初始快照和订阅。先应用 initial，再消费 changes，事件总是晚于 initial。仅关心后续变化时使用 `cfg.Subscribe(...)`。业务代码在自己的 goroutine 中消费事件。`change.Before.Lookup(...)` 和 `change.After.Lookup(...)` 分别读取变化前后的值和存在性。订阅比较解析后的树值，同类型 NaN 视为相等（含嵌套集合）。被高层遮盖的配置变化和失败事务都不会发信号。慢消费者只收到最近一次待处理的变化。使用完毕调用取消函数。
+
+**运行时编辑只作用于当前版本。** `Set(ctx, value, path...)`、`Delete(ctx, path...)`、`MergeAt(ctx, subtree, path...)` 直接修改候选，重新解析、绑定、校验并发布。下一次成功的 Reload 或 Load 会从来源重建并清除临时编辑；失败时保留当前版本。Load 可以事务性追加高优先级来源。
+
+需要跨字段引用或自定义合并时，使用 `conf.OpenWith(ctx, defaults, conf.Options{Resolve: conf.Expand, Merge: conf.StrictMerge}, sources...)`。动态模式的 defaults 传 `conf.Tree{}`。Expand 支持 `${server.port}` 和 `${key:fallback}`，也解析底层类型为 string 的命名字符串（json.Number 保留为数值），对完整标量引用保留其类型，拼接文本时转换为字符串。StrictMerge 对同名键的类型冲突报错。两个选项可独立启用。[可运行示例](tree_test.go)
+
+| 来源 | 入口 | 行为 |
+|---|---|---|
+| 文件 | `file.New(path, dec)`、`file.FS(fsys, name, dec)` | 每批读一次；显式注入 file.JSON 或 yaml.Unmarshal 等解码函数 |
+| 本地文件监视 | 独立模块 `sources/filewatch` 的 `filewatch.New(path, dec)` | 读取同一文件；`src.Watch(ctx)` 发送需要重载的信号 |
+| 环境 | `env.New(bindings)`、`env.NewWithLookup(bindings, lookup)`、`env.Scan(environ, mapping)` | 显式映射点分路径，每次刷新，空串视为缺席 |
+| 命令行 | `flagset.New(flags)` | 只读取 Parse 后显式设置的 flag |
+| etcd、Consul | `New(client, key, dec)`、`NewPrefix(client, prefix)` | 分别在独立 Go 模块中提供单键文档和目录树来源 |
+
+本地文件需要热更新时，用 `filewatch.New` 创建来源。在 Open 和 Watch 中使用同一实例：
+
+```go
+src := filewatch.New("app.json", file.JSON)
+cfg, err := conf.Open(ctx, App{Port: 8080}, src, env.New(bindings))
+if err != nil {
+    return err
+}
+changes, err := src.Watch(ctx)
+if err != nil {
+    return err
+}
+for range changes {
+    for ctx.Err() == nil {
+        if err := cfg.Reload(ctx); err == nil {
+            break
+        }
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case <-time.After(time.Second):
+        }
     }
-    apply(event.Current)
 }
+return ctx.Err()
 ```
 
-只有 `WithWatch()` 或显式 Start 才启动后台任务。启动失败会清理已经打开的监听器。文件监听父目录，支持原子替换；etcd 使用 revision watch；Consul 使用 blocking query。它们仅报告变化，由核心重新读取全部来源，确保声明顺序持续决定优先级。
+父目录须在注册时存在，目标文件可以暂时缺失。注册成功后会先发一次信号，覆盖 Open 与 Watch 之间的更新。按所在文件系统的名称查找规则识别目标文件，直接写入、原子替换、删除和重建均会触发信号；运行中替换父目录后，重新注册成功也会补发。监听针对这条目录项，其他路径上的符号链接目标发生变化时需由应用另行触发。ctx 取消后监听器释放系统资源并关闭通道。
 
-符号链接路径额外每秒补偿一次完整重载，覆盖操作系统遗漏的链接切换事件及链接目标目录之外的更新。复用现有监听协程，不增加协程；配置内容未变时不发送变化通知。普通路径仍由原生事件驱动；`WithPollInterval` 可额外指定周期轮询。
+远端来源的 `src.Watch(ctx)` 在订阅就绪、恢复和内容变化时发送可合并的信号。应用收到信号后调用 Reload，失败时经过可取消的固定等待再重试。ctx 管理订阅生命周期，SDK 客户端由应用关闭。Consul 使用一致读；启用 ACL 的前缀读取要求服务端支持过滤响应头、有效非匿名 token，并完整透传查询元数据。已标记过滤的结果返回权限错误。
 
-Watcher 失败会发出固定错误通知，每秒尝试重新建立监听；恢复后完整重载，补齐断连期间的变化。文件所在目录被重命名或删除也会触发重新建立监听。自动重载失败时保留旧值，每秒重试，成功后停止补偿重试，避免一次临时读取失败吞掉唯一的变更事件。持续无效的配置也会持续重试；通知仍只保留最新一条。
+从选项版迁移时，用结构体默认值及来源列表调用 Open，字段标签改为 conf。应用持有监视 context 和重试循环，文件解码函数通过构造参数传入。详细契约、迁移表和验收条件见[规格](tasks/spec.md)。可运行的本地配方见[示例](example_test.go)，远端信号消费见[重试示例](sources/etcd/example_test.go)。
 
-监听 ENV、内存 FS、自定义静态来源时，可添加 `WithPollInterval(time.Second)`。这种周期轮询默认关闭，配置成功后仍会持续执行；它与原生事件可以同时启用。
 
-Start 的 ctx 取消只停止该轮监听，之后可以再次 Start。WithWatch 使用 Open 的 ctx 作为监听生命周期。Close 则关闭整个实例；它不会关闭借用的 etcd/Consul 客户端。Source.Load、Watcher.Next 与 Resolver 必须遵守 ctx；不响应取消的用户代码无法被强制终止。
-
-Source.Load、Watch、Watcher.Next/Close、Merge、Resolver、Validate 等用户实现不得重入同一个 Config 的 Load/Reload/Start/Close；可以读取 Current。Observe 的选择器必须只读且及时返回。库不增加重入检测或强制终止机制。
-
-`Subscribe` 不启动额外协程。成功且配置内容改变时发出快照事件，自动更新失败时发出错误事件；手动 Load/Reload 的错误由返回值交付。每个订阅只保留最新待处理事件，慢订阅者不会阻塞重载。这是状态通知，不是逐次可靠事件日志；错误事件也携带当前有效快照。
-
-按字段观察使用类型安全的选择器：
-
-```go
-changes, stop := conf.Observe(ctx, cfg, func(app *App) int { return app.Port })
-defer stop()
-for change := range changes {
-    updatePort(change.Current)
-}
-```
-
-Observe 只在选中值改变时通知，并正确处理合并通知后的最终状态。选择器必须只读、及时返回；stop 等待该观察协程退出。
-
-## 来源与格式组合
-
-核心只要求 `Source.Load(context.Context) (map[string]any, error)`。可使用 `conf.SourceFunc` 适配函数；来源无须实现 Watch 或 Close。来源实现统一位于 `sources/`，它是组织目录，不是注册中心。
-
-- `file.New(path)`：显式 OS 路径，按扩展名选择已注册 codec；`.yml` 等同 `.yaml`。
-- `file.NewFS(fsys, name)`：指定 io/fs 文件；name 须满足 fs.ValidPath 且不是 `.`。
-- `env.New(bindings)`：显式“变量名 → 点分字段路径”；未设置、空串不覆盖下层。NewWithLookup 可注入取值函数。
-- 独立 `sources/etcd`：`etcd.New(client, key, "yaml")`。
-- 独立 `sources/consul`：`consul.New(client.KV(), key, "toml")`。
-- codec 分别导入 `pkg/encoding/json`、`yaml`、`toml`；核心不自动导入格式实现。
-
-需要实例级解码器或自定义来源时，使用 `sources/document`：
-
-```go
-source := document.New(
-    document.ReaderFunc(func(ctx context.Context) ([]byte, error) {
-        return fetchDocument(ctx)
-    }),
-    myCodec, // 实现 encoding.Codec，不需要全局注册。
-)
-cfg, err := conf.Open[App](ctx, conf.WithSources(source))
-```
-
-文件与远端来源也实现 ReadBytes：`document.New(file.New("config.data"), myCodec)` 可以显式指定格式；远端可用 `etcd.NewReader(client, key)` 或 `consul.NewReader(client.KV(), key)`。document 会转发读取器的可选监听能力。
-
-自定义监听来源额外实现 `Watch(ctx) (conf.Watcher, error)`；Watcher 只有 Next(ctx) 和 Close。包装器可返回 ErrWatchUnsupported 表示当前读取器不支持监听。
-
-## 合并与解析扩展
-
-默认对象递归合并、列表整体替换；后声明的来源优先。若业务确实需要不同策略，可使用：
-
-```go
-conf.WithMerge(func(dst, src map[string]any) error {
-    // 将 src 合并进 dst，例如按业务规则合并特定列表。
-    return nil
-})
-conf.WithResolver(func(ctx context.Context, candidate map[string]any) error {
-    // 在全部来源合并后处理占位符、迁移字段等。
-    return ctx.Err()
-})
-```
-
-两个扩展均在候选副本上运行，不得在返回后并发改写候选。输入对象统一为 `map[string]any`，列表和数组统一为 `[]any`，标量保留其值与类型；扩展无需按来源区分集合类型。来源输入先校验复制，扩展完成后再次检查并复制，随后严格绑定与 Validate。扩展失败整体回滚，错误文本不直接回显扩展返回的消息。没有扩展时沿用默认规则，不需要创建策略对象。
-
-## 数据边界与诊断
-
-目标类型须为结构体值。未知键报错，字段名区分大小写；支持字符串、有符号整数、布尔值及带单位的 time.Duration 字符串。浮点数、无符号数和 interface 字段暂不支持实际绑定值。
-
-来源只接受标量、字符串键 map、slice 和 array；禁止结构体值、指针、显式 null 和循环引用。字符串键包含命名字符串类型，进入核心时统一转成普通字符串键，所有对象遵循相同的递归合并规则。从根对象到叶子的集合边数最多 128。业务结构体使用嵌套 map 表示；TOML 原生日期时间等 codec 返回的结构体值也会被拒绝，可使用带引号的字符串。来源不得在库复制期间并发改写返回数据；跨多个 Config 共用来源时自行保证线程安全。
-
-若 `*App` 实现 Validate() error，绑定后、发布前调用一次。校验只读，不得保留候选引用供后续改写。
-
-Open/Load/Reload/Start 返回的错误均为 `*conf.Error`。固定原因示例：
-
-```text
-conf: decode failed (source 0): codec not registered
-conf: decode failed (source 0): document is empty
-conf: bind failed at server.port: value out of range
-conf: resolve failed: resolver failed
-```
-
-绑定路径只来自已匹配的可信 schema 字段。未知键、动态集合元素、squash/remain 和含控制字符的标签省略路径。业务校验错误链保留供 errors.Is/As 判定，不能将其展开文本视作已脱敏。借入 SDK、codec、合并与解析扩展的原始错误消息均不展示。
-
-## 本地验证
-
-核心、`sources/etcd`、`sources/consul`、`integration`、`pkg/encoding/toml` 有独立 go.mod，须分别执行适用检查：
-
-```sh
-GOTOOLCHAIN=go1.27.2 GOWORK=off go build ./...
-GOTOOLCHAIN=go1.27.2 GOWORK=off go vet ./...
-GOTOOLCHAIN=go1.27.2 GOWORK=off go test -race ./...
-```
-
-真实后端使用专用临时 key，测试结束后删除：
-
-```sh
-cd integration
-docker compose up -d
-# 等待两个后端就绪。
-CONF_TEST_ETCD=http://127.0.0.1:52379 \
-CONF_TEST_CONSUL=127.0.0.1:58500 \
-GOTOOLCHAIN=go1.27.2 GOWORK=off go test -race -v ./...
-docker compose down -v
-```
-
-未设置测试地址时，真实后端用例显式跳过。独立消费者还验证最小 JSON 文件配置不引入远端 SDK 或 YAML/TOML 实现。
-
-v2 尚未发布：旧的 `Open(ctx, source...)` 调用迁移为 `Open(ctx, WithSources(source...))`。本地 replace 仅供候选开发；发布仍需独立模块版本、无 replace 代理消费者及模块 zip 验收。
-
-对抗性审查与核心机制消融实验见 [AUDIT.md](AUDIT.md)。可在本目录运行 `python3 scripts/ablate.py --output /tmp/conf-ablation.json` 复现；实验使用 Go overlay，不修改源码或暂存区。
+构建工具链最低版本为 Go 1.27.4。发布候选先发布核心 `components/conf/v2.0.0-rc.1`，再发布 etcd、Consul 和 filewatch 适配器。适配器的 go.mod 引用该核心版本。发布前可从核心目录运行 `testdata/ci/check.sh` 和 `testdata/ci/integration.sh` 验证同一工作树；脚本在临时目录中测试适配器与当前核心。对外安装验收使用独立消费者、公共 Go 代理和 `GOWORK=off`。

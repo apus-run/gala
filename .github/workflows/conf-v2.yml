@@ -1,0 +1,31 @@
+name: Conf v2
+on:
+  push:
+    paths: ['components/conf/v2/**', '.github/workflows/conf-v2.yml']
+  pull_request:
+    paths: ['components/conf/v2/**', '.github/workflows/conf-v2.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: components/conf/v2
+    env:
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: components/conf/v2/go.mod
+          cache-dependency-path: components/conf/v2/**/go.sum
+      - name: Scan reachable vulnerabilities
+        run: |
+          GOBIN="$RUNNER_TEMP" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$RUNNER_TEMP/govulncheck" ./...
+          for adapter in etcd consul filewatch; do
+            testdata/ci/adapter.sh "$adapter" "$RUNNER_TEMP/govulncheck" ./...
+          done
+      - run: testdata/ci/check.sh
+      - run: go test -run '^$' -fuzz '^FuzzBind$' -fuzztime=30s .
+      - run: go test -run '^$' -fuzz '^FuzzMerge$' -fuzztime=30s .
+      - run: testdata/ci/integration.sh

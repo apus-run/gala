@@ -1,128 +1,120 @@
-// Package env provides a conf.Source that maps explicitly named environment
-// variables onto configuration paths. Nothing is inferred from variable names.
-//
-// Package env 提供把显式命名的环境变量映射到配置路径的 conf.Source。
-// 不从变量名推断字段。
+// Package env maps environment variable names to dotted configuration paths.
 package env
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 
-	"github.com/apus-run/gala/components/conf/v2"
+	"github.com/apus-run/gala/components/conf/v2/internal/keypath"
 )
 
-// Source maps variable name to a dotted field path, e.g.
-// {"SERVER_PORT": "server.port"}.
-//
-// Source 把变量名映射到点分字段路径，例如 {"SERVER_PORT": "server.port"}。
+// Source loads a fresh configuration layer. Its zero value yields an empty layer.
 type Source struct {
-	bindings map[string]string
-	lookup   func(string) (string, bool)
+	load func(context.Context) (map[string]any, error)
 }
 
-// New returns a Source for the given bindings, reading from the process
-// environment.
-//
-// New 返回按给定映射读取进程环境的来源。
-func New(bindings map[string]string) *Source {
-	return NewWithLookup(bindings, os.LookupEnv)
+type binding struct {
+	name string
+	path string
 }
 
-// NewWithLookup is New with a custom value lookup matching os.LookupEnv's
-// signature. A nil lookup falls back to the process environment. Absorbed
-// from koanf v2.4.1's env Opt.EnvironFunc: callers can supply values without
-// touching the process environment, so tests need no t.Setenv (which forbids
-// parallel tests) and fakes stay local.
-//
-// NewWithLookup 与 New 相同，但用自定义取值函数（签名同 os.LookupEnv）。
-// lookup 为 nil 时回退进程环境。吸收自 koanf v2.4.1 env 包的
-// Opt.EnvironFunc：调用方可以不碰进程环境地提供值，测试无需 t.Setenv
-// （它会禁止并行），伪造值也保持局部。
-func NewWithLookup(bindings map[string]string, lookup func(name string) (string, bool)) *Source {
+// New captures bindings and reads the process environment on each Load.
+func New(bindings map[string]string) *Source { return NewWithLookup(bindings, os.LookupEnv) }
+
+// NewWithLookup captures the bindings in name order. Load reports invalid
+// paths before calling lookup. A nil lookup uses os.LookupEnv.
+func NewWithLookup(bindings map[string]string, lookup func(string) (string, bool)) *Source {
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
-	return &Source{bindings: maps.Clone(bindings), lookup: lookup}
+	ordered, err := prepareBindings(bindings)
+	return &Source{load: func(ctx context.Context) (map[string]any, error) {
+		if err != nil {
+			return nil, err
+		}
+		return readBindings(ctx, ordered, lookup)
+	}}
 }
 
-// Load builds a nested map from the bindings. An unset variable and a
-// variable set to "" are both absent, so they never override a lower layer.
-// Duplicate target paths and parent/child path conflicts are rejected before
-// any value is read, so the result does not depend on map iteration order.
-//
-// Load 从映射构造嵌套 map。未设置与设为空串都视为缺席，不覆盖下层。
-// 重复路径与父子路径冲突在读取值之前即报错，结果不依赖 map 遍历顺序。
+// Scan calls environ on every load and lets mapping select variables and
+// their paths. Both callbacks are required and must be safe if shared.
+func Scan(environ func() []string, mapping func(string) (string, bool)) *Source {
+	return &Source{load: func(ctx context.Context) (map[string]any, error) {
+		if environ == nil || mapping == nil {
+			return nil, errors.New("invalid scan callbacks")
+		}
+		bindings := make(map[string]string)
+		values := make(map[string]string)
+		for _, entry := range environ() {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			name, value, ok := strings.Cut(entry, "=")
+			if !ok {
+				continue
+			}
+			if path, use := mapping(name); use {
+				if _, dup := bindings[name]; dup {
+					return nil, errors.New("duplicate environment variable")
+				}
+				bindings[name], values[name] = path, value
+			}
+		}
+		ordered, err := prepareBindings(bindings)
+		if err != nil {
+			return nil, err
+		}
+		return readBindings(ctx, ordered, func(name string) (string, bool) {
+			value, ok := values[name]
+			return value, ok
+		})
+	}}
+}
+
+// Load returns a private tree. Missing and empty values are absent.
 func (s *Source) Load(ctx context.Context) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := checkPaths(s.bindings); err != nil {
-		return nil, err
+	if s.load == nil {
+		return map[string]any{}, nil
 	}
-
-	// Iterate in sorted order so errors are deterministic.
-	// 按排序遍历，使错误可重现。
-	out := map[string]any{}
-	for _, name := range slices.Sorted(maps.Keys(s.bindings)) {
-		val, ok := s.lookup(name)
-		if !ok || val == "" {
-			continue
-		}
-		setPath(out, s.bindings[name], val)
-	}
-	return out, nil
+	return s.load(ctx)
 }
 
-// checkPaths rejects empty segments, duplicate paths, and a path that is a
-// prefix of another (a leaf cannot also be a parent).
-// checkPaths 拒绝空段、重复路径，以及互为前缀的路径（叶子不能同时是父节点）。
-func checkPaths(bindings map[string]string) error {
-	seen := map[string]string{}
-	paths := make([]string, 0, len(bindings))
+func prepareBindings(bindings map[string]string) ([]binding, error) {
+	ordered := make([]binding, 0, len(bindings))
+	tree := make(map[string]any)
 	for _, name := range slices.Sorted(maps.Keys(bindings)) {
 		path := bindings[name]
-		if path == "" {
-			return conf.SourceError(conf.StageConfig, name, "", nil)
-		}
-		for seg := range strings.SplitSeq(path, ".") {
-			if seg == "" {
-				return conf.SourceError(conf.StageConfig, name, path, nil)
+		if err := keypath.Put(tree, path, ".", ""); err != nil {
+			if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+				return nil, err
 			}
+			return nil, fmt.Errorf("environment variable %s: %w", name, err)
 		}
-		if _, dup := seen[path]; dup {
-			return conf.SourceError(conf.StageConfig, name, path, nil)
-		}
-		seen[path] = name
-		paths = append(paths, path)
+		ordered = append(ordered, binding{name: name, path: path})
 	}
-	slices.Sort(paths)
-	for i := range paths {
-		for j := range paths {
-			if i != j && strings.HasPrefix(paths[j], paths[i]+".") {
-				return conf.SourceError(conf.StageConfig, seen[paths[j]], paths[j], nil)
-			}
-		}
-	}
-	return nil
+	return ordered, nil
 }
 
-// setPath writes val at the dotted path inside out, creating intermediate
-// maps. checkPaths has already ruled out conflicts.
-// setPath 在 out 的点分路径处写入 val，并创建中间 map。冲突已由 checkPaths 排除。
-func setPath(out map[string]any, path, val string) {
-	segs := strings.Split(path, ".")
-	cur := out
-	for _, seg := range segs[:len(segs)-1] {
-		next, ok := cur[seg].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			cur[seg] = next
+func readBindings(ctx context.Context, bindings []binding, lookup func(string) (string, bool)) (map[string]any, error) {
+	tree := make(map[string]any)
+	for _, b := range bindings {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		cur = next
+		if value, ok := lookup(b.name); ok && value != "" {
+			if err := keypath.Put(tree, b.path, ".", value); err != nil {
+				return nil, err
+			}
+		}
 	}
-	cur[segs[len(segs)-1]] = val
+	return tree, nil
 }

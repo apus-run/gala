@@ -1,26 +1,27 @@
-// Package document shares object decoding between document sources.
+// Package document decodes one configuration document without exposing input.
 package document
 
 import (
 	"bytes"
-
-	conf "github.com/apus-run/gala/components/conf/v2"
-	"github.com/apus-run/gala/components/conf/v2/internal/diagnostic"
-	"github.com/apus-run/gala/pkg/encoding"
+	"errors"
 )
 
-// Decode rejects empty documents and non-object roots without exposing input.
-func Decode(codec encoding.Codec, raw []byte) (map[string]any, error) {
+// Decode reads one nonempty object using dec. Decoder diagnostics may contain
+// secrets, so failures are replaced with fixed errors.
+func Decode(raw []byte, dec func([]byte, any) error) (map[string]any, error) {
+	if dec == nil {
+		return nil, errors.New("decoder is nil")
+	}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, conf.SourceError(conf.StageDecode, "", "", diagnostic.EmptyDocument)
+		return nil, errors.New("empty document")
 	}
-	var value any
-	if err := codec.Unmarshal(raw, &value); err != nil {
-		return nil, conf.SourceError(conf.StageDecode, "", "", diagnostic.InvalidDocument)
+	var root any
+	if err := dec(raw, &root); err != nil {
+		return nil, errors.New("decode failed")
 	}
-	root, ok := value.(map[string]any)
-	if !ok || root == nil {
-		return nil, conf.SourceError(conf.StageDecode, "", "", diagnostic.NonObject)
+	m, ok := root.(map[string]any)
+	if !ok || m == nil {
+		return nil, errors.New("root is not an object")
 	}
-	return root, nil
+	return m, nil
 }

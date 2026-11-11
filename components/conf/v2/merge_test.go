@@ -30,7 +30,7 @@ func TestCopySourceValueBoundaries(t *testing.T) {
 		{"nil slice", []int(nil), errNull},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := copyValue(reflect.ValueOf(tc.value))
+			out, err := new(layerMerger).copyValue(tc.value)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("error=%v want=%v", err, tc.want)
 			}
@@ -39,7 +39,7 @@ func TestCopySourceValueBoundaries(t *testing.T) {
 			}
 		})
 	}
-	out, err := copyValue(reflect.ValueOf([]any{shared, shared}))
+	out, err := new(layerMerger).copyValue([]any{shared, shared})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestCopyDepthBoundary(t *testing.T) {
 		for range depth {
 			value = map[string]any{"child": value}
 		}
-		_, err := copyValue(reflect.ValueOf(value))
+		_, err := new(layerMerger).copyValue(value)
 		if depth == 128 && err != nil {
 			t.Fatal(err)
 		}
@@ -73,17 +73,17 @@ func TestCopyDepthBoundary(t *testing.T) {
 func TestMergeCopiesAndReplaces(t *testing.T) {
 	base := map[string]any{"object": map[string]any{"keep": 1, "replace": []int{1, 2}}}
 	layer := map[string]any{"object": map[string]any{"replace": []int{3}}}
-	dst := map[string]any{}
-	if err := mergeInto(dst, base); err != nil {
+	var layers layerMerger
+	if err := layers.add(base); err != nil {
 		t.Fatal(err)
 	}
-	if err := mergeInto(dst, layer); err != nil {
+	if err := layers.add(layer); err != nil {
 		t.Fatal(err)
 	}
 	layer["object"].(map[string]any)["replace"].([]int)[0] = 9
-	object := dst["object"].(map[string]any)
+	object := layers.values["object"].(map[string]any)
 	if object["keep"] != 1 || !reflect.DeepEqual(object["replace"], []any{3}) {
-		t.Fatalf("merge=%v", dst)
+		t.Fatalf("merge=%v", layers.values)
 	}
 	if !reflect.DeepEqual(base["object"].(map[string]any)["replace"], []int{1, 2}) {
 		t.Fatal("modified base")
@@ -106,7 +106,7 @@ func FuzzCopyValue(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		copied, copyErr := copyValue(reflect.ValueOf(value))
+		copied, copyErr := new(layerMerger).copyValue(value)
 		after, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -153,4 +153,85 @@ func sameJSON(a, b any) bool {
 	}
 	right, err := json.Marshal(b)
 	return err == nil && string(left) == string(right)
+}
+
+func TestExpandedNodeBudget(t *testing.T) {
+	var layers layerMerger
+	// Root + slice + 65,534 string elements consumes the entire budget.
+	if err := layers.add(map[string]any{"items": make([]string, maxExpandedNodes-2)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := layers.add(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := layers.add(map[string]any{}); err != errNodeLimit {
+		t.Fatalf("extra root: %v", err)
+	}
+
+	shared := map[string]any{"port": 1}
+	for range 30 {
+		shared = map[string]any{"left": shared, "right": shared}
+	}
+	for _, layer := range []map[string]any{shared, {"items": make([]int, maxExpandedNodes)}} {
+		var layers layerMerger
+		if err := layers.add(map[string]any{"keep": 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := layers.add(layer); err != errNodeLimit || !reflect.DeepEqual(layers.values, map[string]any{"keep": 1}) {
+			t.Fatalf("partial merge or wrong error: %v", err)
+		}
+	}
+}
+
+// FuzzMerge starts with an independently copied lower layer, then applies an
+// object or scalar override. A failed overlay must leave that layer intact.
+func FuzzMerge(f *testing.F) {
+	f.Add(`{"leaf":[1],"keep":"yes"}`, `{"leaf":[2]}`)
+	f.Add(`{"leaf":1}`, `[null]`)
+	f.Add(`{"keep":"old"}`, `false`)
+	f.Add(`false`, `{"enabled":true}`)
+	f.Fuzz(func(t *testing.T, lower, higher string) {
+		if len(lower)+len(higher) > 65536 {
+			t.Skip()
+		}
+		var low, high any
+		if json.Unmarshal([]byte(lower), &low) != nil || json.Unmarshal([]byte(higher), &high) != nil {
+			return
+		}
+		var layers layerMerger
+		if layers.add(map[string]any{"root": low}) != nil {
+			return
+		}
+		before, _ := json.Marshal(layers.values)
+		err := layers.add(map[string]any{"root": high})
+		if err != nil {
+			after, _ := json.Marshal(layers.values)
+			if string(after) != string(before) {
+				t.Fatal("partial overlay")
+			}
+			return
+		}
+		want := overlayValue(low, high)
+		if !reflect.DeepEqual(layers.values["root"], want) {
+			t.Fatal("incorrect precedence")
+		}
+		expected, _ := json.Marshal(layers.values)
+		mutateCollections(low)
+		mutateCollections(high)
+		got, _ := json.Marshal(layers.values)
+		if string(expected) != string(got) {
+			t.Fatal("aliased source")
+		}
+	})
+}
+func overlayValue(low, high any) any {
+	a, ok := low.(map[string]any)
+	b, object := high.(map[string]any)
+	if !ok || !object {
+		return high
+	}
+	for k, v := range b {
+		a[k] = overlayValue(a[k], v)
+	}
+	return a
 }
