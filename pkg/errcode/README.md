@@ -60,7 +60,7 @@ func main() {
 
 ## 业务实战：买家取消订单
 
-买家在订单页点击“取消”时，支付回调可能刚把订单改为已支付。此时前端要刷新订单并展示退款入口。如果取消已经成功，只是第一次响应丢失，买家重试应当看到成功。这个例子取自 go-mall 的取消订单场景，下面用 Gala 演示接口如何区分这些结果。
+买家在订单页点击“取消”时，支付回调可能刚把订单改为已支付。此时前端要刷新订单并展示退款入口。如果取消已经成功，只是第一次响应丢失，买家重试应当看到成功。
 
 接口为 `POST /orders/{id}/cancel`。示例使用 SQLite，`orders` 表包含主键 `id`、买家标识 `buyer_id` 和 `status`，状态限定为 `pending`、`paid`、`cancelled`。买家身份取自认证中间件写入的请求上下文。
 
@@ -149,9 +149,9 @@ func cancelHandler(db *sql.DB, currentBuyer func(context.Context) (string, bool)
 
 ## Gin 实战：封装订单列表响应
 
-go-mall 的 `common/app/response.go` 让控制器通过 `NewResponse(c)` 返回成功、分页或错误。下面沿用这套调用方式，把包装器放在 Gin 应用自己的 `app/response.go`。Gin 依赖由应用模块管理。示例使用 Gin v1.12.0。[Gin 渲染与绑定文档](https://github.com/gin-gonic/gin/blob/v1.12.0/docs/doc.md)
+在 Gin 应用的 `app/response.go` 中定义响应包装器，控制器通过 `NewResponse(c)` 写入响应。示例使用 Gin v1.12.0。[Gin 渲染与绑定文档](https://github.com/gin-gonic/gin/blob/v1.12.0/docs/doc.md)
 
-这组路由统一返回 `application/json`。成功时 `code` 为 0，失败时 `code` 取实际 HTTP 状态，客户端按 `reason` 区分业务错误。这个约定适用于新接口；已有客户端若依赖 go-mall 的数字业务码，迁移时需在应用层保留原有码值。
+这组路由统一返回 `application/json`。成功时 `code` 为 0，失败时 `code` 取实际 HTTP 状态，客户端按 `reason` 区分业务错误。
 
 ```go
 package app
@@ -170,36 +170,39 @@ type Pagination struct {
 	TotalRows int64 `json:"total_rows"`
 }
 
-type envelope struct {
+// Result 是 Gin 接口返回给客户端的 JSON 响应体。
+type Result struct {
 	Code       int               `json:"code"`
 	Msg        string            `json:"msg"`
 	RequestID  string            `json:"request_id"`
-	Data       any               `json:"data,omitempty"`
+	Data       any               `json:"data"`
 	Pagination *Pagination       `json:"pagination,omitempty"`
 	Reason     string            `json:"reason,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 type Response struct {
-	ctx        *gin.Context
-	pagination *Pagination
+	ctx *gin.Context
 }
 
 func NewResponse(c *gin.Context) *Response { return &Response{ctx: c} }
 
-func (r *Response) SetPagination(p *Pagination) *Response {
-	r.pagination = p
-	return r
+func (r *Response) Success(data any) {
+	r.writeSuccess(data, nil)
 }
 
-func (r *Response) Success(data any) {
-	r.ctx.JSON(http.StatusOK, envelope{
+func (r *Response) SuccessPage(data any, page Pagination) {
+	r.writeSuccess(data, &page)
+}
+
+func (r *Response) writeSuccess(data any, page *Pagination) {
+	r.ctx.JSON(http.StatusOK, Result{
 		Msg: "success", RequestID: r.ctx.GetString("traceid"),
-		Data: data, Pagination: r.pagination,
+		Data: data, Pagination: page,
 	})
 }
 
-func (r *Response) SuccessOk() { r.Success("") }
+func (r *Response) SuccessOk() { r.Success(nil) }
 
 func (r *Response) Error(err error) {
 	e := errcode.Normalize(err)
@@ -209,14 +212,16 @@ func (r *Response) Error(err error) {
 	id := r.ctx.GetString("traceid")
 	slog.ErrorContext(r.ctx.Request.Context(), "request failed", "request_id", id, "err", e)
 	status, body := errcode.Respond(e)
-	r.ctx.AbortWithStatusJSON(status, envelope{
+	r.ctx.AbortWithStatusJSON(status, Result{
 		Code: status, Msg: body.Detail, RequestID: id,
 		Reason: body.Reason, Metadata: body.Metadata,
 	})
 }
 ```
 
-每次请求创建一个 `Response`。请求 ID 中间件用 `c.Set("traceid", id)` 放入字符串，日志和响应就能用同一 ID 关联。错误出口从 `Respond` 取公开文案，底层原因随 `AppError` 写入日志。无返回数据的成功操作可以用 `SuccessOk()`，它与 go-mall 一样返回 HTTP 200 和空字符串 `data`。
+每次请求创建一个 `Response`。详情接口调用 `Success(order)`，分页接口调用 `SuccessPage(orders, page)`，将列表和本次查询的分页信息一起写入响应。请求 ID 中间件用 `c.Set("traceid", id)` 放入字符串，日志和响应就能用同一 ID 关联。错误出口从 `Respond` 取公开文案，底层原因随 `AppError` 写入日志。
+
+响应始终包含 `data` 字段。`SuccessOk()` 返回 HTTP 200 和 `"data": null`，失败响应同样使用 `null`。列表查询成功且没有记录时返回 `"data": []`。
 
 **控制器示例。** 在同一应用包的 `app/orders.go` 中，用 `router.GET("/orders", ListOrders(service.ListOrders))` 注册路由。认证中间件将当前买家 ID 存入 `buyer_id`。服务方法按该买家查询，返回当前页订单和匹配的总条数。
 
@@ -258,7 +263,7 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 		if items == nil {
 			items = []Order{}
 		}
-		resp.SetPagination(&Pagination{Page: q.Page, PageSize: q.Size, TotalRows: total}).Success(items)
+		resp.SuccessPage(items, Pagination{Page: q.Page, PageSize: q.Size, TotalRows: total})
 	}
 }
 ```
@@ -272,7 +277,7 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 同一买家传入 `page_size=101` 时返回 HTTP 400，服务层不会收到查询：
 
 ```json
-{"code":400,"msg":"分页参数无效","request_id":"req-43","reason":"InvalidArgument"}
+{"code":400,"msg":"分页参数无效","request_id":"req-43","data":null,"reason":"InvalidArgument"}
 ```
 
 ## 定义业务错误
