@@ -37,7 +37,8 @@ func TestAppHandler_Error(t *testing.T) {
 	})
 	res := httptest.NewRecorder()
 	h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/users/7", nil))
-	if res.Code != http.StatusNotFound || res.Header().Get("Content-Type") != ContentType {
+	if res.Code != http.StatusNotFound || res.Header().Get("Content-Type") != ContentType ||
+		res.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status = %d, headers = %v", res.Code, res.Header())
 	}
 	var body Body
@@ -101,6 +102,11 @@ func TestRespond(t *testing.T) {
 	// 最自然的组合：先归一化（日志要用），再生成响应。成功请求不能被当成失败。
 	if code, b = Respond(Normalize(nil)); code != 200 || b.Reason != "" || b.Detail != "" {
 		t.Fatalf("Respond(Normalize(nil)) => %d %+v", code, b)
+	}
+
+	// 零值 AppError 回填 ErrInternal 的公开字段，客户端仍可按 reason 分支。
+	if code, b = Respond(&AppError{}); code != 500 || b.Status != 500 || b.Reason != ErrInternal.Reason() || b.Detail != ErrInternal.Message() {
+		t.Fatalf("zero value => %d %+v", code, b)
 	}
 
 	// 不符合本包错误响应约定的状态回退为 500，包括 1xx、2xx 和 3xx。

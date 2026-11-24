@@ -16,7 +16,7 @@ type Mapper func(err error) *AppError
 // 分类按以下优先级进行：
 //  1. 用 [errors.As] 查找第一个 *AppError。如果匹配的是 nil 指针，使用 [ErrInternal]。
 //  2. 按传入顺序调用非 nil 的 Mapper，采用第一个非 nil 结果。
-//  3. [context.DeadlineExceeded]、[os.ErrDeadlineExceeded]，或首个 Timeout() bool 实现返回 true，使用 [ErrTimeout]。
+//  3. [context.DeadlineExceeded]、[os.ErrDeadlineExceeded]，或错误链中第一个实现 Timeout() bool 的错误，且其 Timeout() 返回 true，使用 [ErrTimeout]。
 //  4. [context.Canceled] 使用 [ErrCanceled]，其余错误使用 [ErrInternal]。
 //
 // 直接传入有效的 *AppError 会得到同一指针。对于包装或 [errors.Join] 的输入，

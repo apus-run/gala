@@ -92,6 +92,7 @@ func TestError_CarriesCauseForLogsButNotForJSON(t *testing.T) {
 		t.Fatal("Error() should carry cause for logging")
 	}
 	// 字段不导出：即便有人直接 json.Marshal(err)，也不会把 cause 序列化出去.
+	//nolint:staticcheck // SA9005：无导出字段正是本断言要验证的行为
 	if b, _ := json.Marshal(e); string(b) != "{}" {
 		t.Fatalf("json.Marshal(e) = %s", b)
 	}

@@ -32,21 +32,25 @@ func (e *AppError) HTTPStatus() int {
 }
 
 // Respond 返回 [AppError.HTTPStatus] 和公开响应体。nil 输入返回 200 和 Body{}。
-// 当前错误与 [ErrInternal] 同类时，Detail 使用预定义文案。Metadata 是可独立修改的副本。
+// 当前错误与 [ErrInternal] 同类时，Detail 使用预定义文案；零值错误回填 [ErrInternal] 的 Reason 和 Detail。
+// Metadata 是可独立修改的副本。
 func Respond(e *AppError) (int, Body) {
 	status := e.HTTPStatus()
 	if e == nil {
 		return status, Body{}
 	}
-	detail := e.Message()
+	reason, detail := e.Reason(), e.Message()
 	if e.Is(ErrInternal) {
 		detail = ErrInternal.Message()
+	} else if reason == "" && detail == "" {
+		// 零值 AppError：回填公开字段，客户端才能按 reason 分支。
+		reason, detail = ErrInternal.Reason(), ErrInternal.Message()
 	}
 	return status, Body{
 		Title:    http.StatusText(status),
 		Status:   status,
 		Detail:   detail,
-		Reason:   e.Reason(),
+		Reason:   reason,
 		Metadata: e.Metadata(),
 	}
 }
@@ -56,6 +60,7 @@ func Respond(e *AppError) (int, Body) {
 type AppHandler func(http.ResponseWriter, *http.Request) *AppError
 
 // ServeHTTP 将返回的业务错误写入请求日志，并用 [Respond] 生成 problem+json 响应。HEAD 请求只发送响应头。
+// 响应带 Cache-Control: no-store，避免中间缓存复用携带每请求数据的错误。
 //
 // 日志级别随响应状态区分：5xx 是服务端故障，记为 Error；其余是客户端可预期的失败，记为 Warn，
 // 避免大量 404、400 淹没真正的故障。OpenTelemetry 的 HTTP 语义约定同样不把服务端 4xx 视为错误。
@@ -78,6 +83,7 @@ func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	header.Del("Content-Length")
 	header.Set("Content-Type", ContentType)
 	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if r.Method == http.MethodHead {
 		return

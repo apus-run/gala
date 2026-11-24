@@ -15,7 +15,7 @@ import (
 // 预定义错误可跨请求共享。WithMessage、KV 和 Wrap 均返回副本，Metadata 返回可独立修改的 map。
 // 调用方应避免覆写共享实例或重新赋值预定义变量。底层原因的并发安全由其实现负责。
 //
-// 成功时返回 nil。AppError 的零值按内部服务错误（HTTP 500）响应。
+// 成功时返回 nil。AppError 的零值按内部服务错误（HTTP 500）响应，公开字段回填 [ErrInternal]。
 type AppError struct {
 	code     int               // HTTP 状态码；在响应边界校验。
 	reason   string            // 稳定的机器可读标识，如 "NotFound.User"。
