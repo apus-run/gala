@@ -171,3 +171,9 @@ func TestWithStackAndWrapNil(t *testing.T) {
 		t.Fatalf("Wrap(nil) must not capture a stack: %v", got.Stack())
 	}
 }
+
+func TestCaptureStack_NoFrames(t *testing.T) {
+	if got := captureStack(1 << 10); got != nil {
+		t.Fatalf("an impossible skip must yield no frames: %v", got)
+	}
+}

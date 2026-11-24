@@ -296,6 +296,18 @@ func TestAppHandler_IgnoresResponseWriteFailure(t *testing.T) {
 	}
 }
 
+// 503 是标准状态码，且不属于 ErrInternal 类别，保留自己的文案。
+func TestErrServiceUnavailable(t *testing.T) {
+	status, body := Respond(ErrServiceUnavailable.Wrap(errors.New("upstream down")))
+	if status != http.StatusServiceUnavailable || body.Title != "Service Unavailable" ||
+		body.Reason != "ServiceUnavailable" || body.Detail != "Service unavailable." {
+		t.Fatalf("got %d %+v", status, body)
+	}
+	if strings.Contains(body.Detail, "upstream") {
+		t.Fatal("the cause must not reach the response")
+	}
+}
+
 // 405 的 Allow 头由适配器负责；预定义错误的消息风格与其他预定义错误一致。
 func TestErrMethodNotAllowed(t *testing.T) {
 	status, body := Respond(ErrMethodNotAllowed)

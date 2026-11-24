@@ -126,7 +126,7 @@ func (e *AppError) Wrap(cause error) *AppError {
 	c := *e
 	c.cause = cause
 	if cause != nil && c.stack == nil {
-		c.stack = captureStack()
+		c.stack = captureStack(3)
 	}
 	return &c
 }
@@ -137,7 +137,7 @@ func (e *AppError) WithStack() *AppError {
 		return e
 	}
 	c := *e
-	c.stack = captureStack()
+	c.stack = captureStack(3)
 	return &c
 }
 
@@ -154,10 +154,11 @@ func (e *AppError) withCause(cause error) *AppError {
 // stackDepth 是每次捕获的调用栈层数。
 const stackDepth = 5
 
-// captureStack 记录调用点向上的调用栈。
-func captureStack() []string {
+// captureStack 记录调用点向上的调用栈；skip 按 runtime.Callers 的约定传入，
+// Wrap 和 WithStack 传 3，跳过 Callers、本函数和它们自身。
+func captureStack(skip int) []string {
 	pcs := make([]uintptr, stackDepth)
-	n := runtime.Callers(3, pcs) // 跳过 Callers、本函数和 Wrap/WithStack
+	n := runtime.Callers(skip, pcs)
 	if n == 0 {
 		return nil
 	}

@@ -312,6 +312,7 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `ErrTooManyRequests` | 429 | `TooManyRequests` |
 | `ErrCanceled` | 499 | `Canceled` |
 | `ErrInternal` | 500 | `InternalError` |
+| `ErrServiceUnavailable` | 503 | `ServiceUnavailable` |
 | `ErrTimeout` | 504 | `DeadlineExceeded` |
 
 ## 保留原因、识别错误与归一化
