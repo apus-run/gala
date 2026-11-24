@@ -137,11 +137,11 @@ func TestPredefinedErrors(t *testing.T) {
 		{ErrInvalidArgument, 400, "InvalidArgument"},
 		{ErrUnauthenticated, 401, "Unauthenticated"},
 		{ErrPermissionDenied, 403, "PermissionDenied"},
+		{ErrCanceled, 408, "Canceled"},
 		{ErrNotFound, 404, "NotFound"},
 		{ErrMethodNotAllowed, 405, "MethodNotAllowed"},
 		{ErrConflict, 409, "Conflict"},
 		{ErrTooManyRequests, 429, "TooManyRequests"},
-		{ErrCanceled, 499, "Canceled"},
 		{ErrInternal, 500, "InternalError"},
 		{ErrTimeout, 504, "DeadlineExceeded"},
 	}

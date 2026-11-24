@@ -213,7 +213,7 @@ func TestBody_JSONShape(t *testing.T) {
 	}
 
 	// 非标准状态码没有标准短语：title 省略而不是输出空串。
-	_, b = Respond(ErrCanceled)
+	_, b = Respond(New(499, "Custom.Canceled", "request canceled"))
 	raw, _ = json.Marshal(b)
 	if strings.Contains(string(raw), `"title"`) || b.Status != 499 {
 		t.Errorf("499 body = %s", raw)
