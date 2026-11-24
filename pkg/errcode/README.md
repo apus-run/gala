@@ -210,8 +210,12 @@ func (r *Response) Error(err error) {
 		return
 	}
 	id := r.ctx.GetString("traceid")
-	slog.ErrorContext(r.ctx.Request.Context(), "request failed", "request_id", id, "err", e)
 	status, body := errcode.Respond(e)
+	level := slog.LevelWarn // 4xx 是客户端可预期的失败，只有 5xx 记为 Error
+	if status >= http.StatusInternalServerError {
+		level = slog.LevelError
+	}
+	slog.Log(r.ctx.Request.Context(), level, "request failed", "request_id", id, "err", e)
 	r.ctx.AbortWithStatusJSON(status, Result{
 		Code: status, Msg: body.Detail, RequestID: id,
 		Reason: body.Reason, Metadata: body.Metadata,
@@ -345,11 +349,15 @@ func mapUserLookup(err error) *errcode.AppError {
 
 `AppHandler` 通过 `slog` 记录请求错误，再用 `Respond` 生成响应。HEAD 请求只发送响应头。使用其他 HTTP 适配器时，先调用 `Normalize`，在结果非 nil 时记录日志，再用 `status, body := errcode.Respond(e)` 获取状态与正文，并在写入前将 `Content-Type` 设置为 `errcode.ContentType`。
 
+**日志级别。** 响应状态为 5xx 时记为 `Error`，其余记为 `Warn`。5xx 是服务端故障，4xx 是客户端可预期的失败，不应与故障混在同一级别触发告警；OpenTelemetry 的 [HTTP 语义约定](https://opentelemetry.io/docs/specs/semconv/http/http-spans/)同样规定服务端 span 遇到 4xx 不置为错误。`AppHandler` 的日志包含请求方法和路径，不含查询串，其中可能带有凭证。响应写入失败只可能是连接已断开，`AppHandler` 与 `http.Error` 一样忽略。
+
+**405 与 Allow 头。** RFC 9110 要求 405 响应必须带 `Allow` 头，列出资源当前支持的方法。`ErrMethodNotAllowed` 只表达分类，`Respond` 不生成该头，需要适配器在写响应前自行设置。
+
 **客户端字段。** `Body` 使用 Problem Details 的 `title`、`status`、`detail`，并用 `reason`、`metadata` 承载业务信息。空字段在 JSON 中省略，例如 499 没有标准状态短语，响应会省略 `title`。`Respond(nil)` 返回 200 和 `Body{}`。协议格式见 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)。
 
 **内部故障。** 数据库或上游服务故障可通过 `errcode.ErrInternal.Wrap(err)` 返回。当前错误与 `ErrInternal` 的声明状态和 Reason 均相同时，响应的 `detail` 固定为 `Internal server error.`。即使通过 `WithMessage` 加入了诊断信息，这条规则也适用。独立定义的其他 500 类业务错误使用各自的文案。所有错误的 `KV` 元数据都可能返回客户端，只应放入可公开的值。
 
-**日志字段。** `slog.ErrorContext(ctx, "request failed", "err", e)` 会通过 `LogValue()` 输出 `code`、`reason`、`message` 以及可选的 `metadata`、`cause`。其中 `code` 为声明状态，`cause` 保留底层错误文本。`Error()` 也包含诊断细节，生成 HTTP 响应时应使用 `Respond` 返回的 `Body`。
+**日志字段。** `slog.Log(ctx, level, "request failed", "err", e)` 会通过 `LogValue()` 输出 `code`、`reason`、`message` 以及可选的 `metadata`、`cause`。其中 `code` 为声明状态，`cause` 保留底层错误文本。`Error()` 也包含诊断细节，生成 HTTP 响应时应使用 `Respond` 返回的 `Body`。
 
 ## 本地验证
 

@@ -18,7 +18,9 @@ var (
 	ErrNotFound = New(http.StatusNotFound, "NotFound", "Resource not found.")
 
 	// ErrMethodNotAllowed 表示资源不支持请求使用的 HTTP 方法。
-	ErrMethodNotAllowed = New(http.StatusMethodNotAllowed, "MethodNotAllowed", "Method Not Allowed")
+	// RFC 9110 要求 405 响应必须带 Allow 头，列出资源当前支持的方法。
+	// [Respond] 不生成该头，适配器应在写响应前自行设置。
+	ErrMethodNotAllowed = New(http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed.")
 
 	// ErrConflict 表示操作与资源当前状态冲突。
 	ErrConflict = New(http.StatusConflict, "Conflict", "Resource conflict.")

@@ -220,3 +220,80 @@ func TestContentType(t *testing.T) {
 		t.Fatalf("ContentType = %q", ContentType)
 	}
 }
+
+// captureLogs 把默认 slog 暂时指向缓冲区。
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	return &logs
+}
+
+// 5xx 是服务端故障，记 Error；其余是客户端可预期的失败，记 Warn。
+// 日志带请求方法和路径，不带查询串。
+func TestAppHandler_LogLevelAndRequestFields(t *testing.T) {
+	logs := captureLogs(t)
+	tests := []struct {
+		name  string
+		err   *AppError
+		level string
+	}{
+		{"client error", ErrNotFound, "WARN"},
+		{"canceled", ErrCanceled, "WARN"},
+		{"server error", ErrInternal.Wrap(errors.New("boom")), "ERROR"},
+		{"timeout", ErrTimeout, "ERROR"},
+		{"invalid declared status is served as 500", &AppError{}, "ERROR"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs.Reset()
+			h := AppHandler(func(http.ResponseWriter, *http.Request) *AppError { return tt.err })
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/7?token=secret", nil))
+
+			var entry struct{ Level, Method, Path string }
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+				t.Fatalf("decoding log %q: %v", logs.String(), err)
+			}
+			if entry.Level != tt.level || entry.Method != http.MethodGet || entry.Path != "/users/7" {
+				t.Fatalf("log = %s", logs.String())
+			}
+			if strings.Contains(logs.String(), "secret") {
+				t.Fatalf("query string must not be logged: %s", logs.String())
+			}
+		})
+	}
+}
+
+type brokenWriter struct {
+	header http.Header
+	status int
+}
+
+func (w *brokenWriter) Header() http.Header       { return w.header }
+func (w *brokenWriter) WriteHeader(code int)      { w.status = code }
+func (w *brokenWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// 写响应失败只可能是连接已断开：不再额外记一条日志（http.Error 同样忽略）。
+func TestAppHandler_IgnoresResponseWriteFailure(t *testing.T) {
+	logs := captureLogs(t)
+	w := &brokenWriter{header: http.Header{}}
+	h := AppHandler(func(http.ResponseWriter, *http.Request) *AppError { return ErrNotFound })
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if w.status != http.StatusNotFound {
+		t.Fatalf("status = %d", w.status)
+	}
+	if n := strings.Count(logs.String(), "\n"); n != 1 || strings.Contains(logs.String(), "broken pipe") {
+		t.Fatalf("want only the request-failed entry, got %d lines: %s", n, logs.String())
+	}
+}
+
+// 405 的 Allow 头由适配器负责；预定义错误的消息风格与其他预定义错误一致。
+func TestErrMethodNotAllowed(t *testing.T) {
+	status, body := Respond(ErrMethodNotAllowed)
+	if status != http.StatusMethodNotAllowed || body.Reason != "MethodNotAllowed" || body.Detail != "Method not allowed." || body.Title != "Method Not Allowed" {
+		t.Fatalf("got %d %+v", status, body)
+	}
+}

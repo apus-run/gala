@@ -56,14 +56,24 @@ func Respond(e *AppError) (int, Body) {
 type AppHandler func(http.ResponseWriter, *http.Request) *AppError
 
 // ServeHTTP 将返回的业务错误写入请求日志，并用 [Respond] 生成 problem+json 响应。HEAD 请求只发送响应头。
+//
+// 日志级别随响应状态区分：5xx 是服务端故障，记为 Error；其余是客户端可预期的失败，记为 Warn，
+// 避免大量 404、400 淹没真正的故障。OpenTelemetry 的 HTTP 语义约定同样不把服务端 4xx 视为错误。
+// 日志包含请求方法和路径，不含查询串，其中可能带有凭证。
+//
+// 响应写入失败只可能是连接已断开，没有可以报告的对象，与 [http.Error] 一样忽略。
 func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	appErr := fn(w, r)
 	if appErr == nil {
 		return
 	}
-	ctx := r.Context()
-	slog.ErrorContext(ctx, "request failed", "err", appErr)
 	status, body := Respond(appErr)
+	level := slog.LevelWarn
+	if status >= http.StatusInternalServerError {
+		level = slog.LevelError
+	}
+	slog.Log(r.Context(), level, "request failed", "method", r.Method, "path", r.URL.Path, "err", appErr)
+
 	header := w.Header()
 	header.Del("Content-Length")
 	header.Set("Content-Type", ContentType)
@@ -72,7 +82,5 @@ func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		slog.ErrorContext(ctx, "write error response", "err", err)
-	}
+	_ = json.NewEncoder(w).Encode(body)
 }
