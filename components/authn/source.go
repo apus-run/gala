@@ -62,6 +62,21 @@ func TokenFromQuery(name string) TokenSource {
 	}
 }
 
+// TokenFromNamedHeader reads a plain token from the named request header — the
+// read side of HeaderCarrier.Inject. Unlike TokenFromHeader it does not parse
+// the Bearer scheme: the header value is the token itself.
+// TokenFromNamedHeader 从同名请求头读取裸令牌，是 HeaderCarrier.Inject 的读取端。
+// 它不解析 Bearer 前缀：头的值就是令牌本身。
+func TokenFromNamedHeader(name string) TokenSource {
+	return func(r *http.Request) (string, bool) {
+		if r == nil {
+			return "", false
+		}
+		tok := strings.TrimSpace(r.Header.Get(name))
+		return tok, tok != ""
+	}
+}
+
 // firstToken returns the token of the first source that has one
 // | firstToken 返回第一个持有令牌的 source 的令牌.
 func firstToken(r *http.Request, sources []TokenSource) (string, bool) {

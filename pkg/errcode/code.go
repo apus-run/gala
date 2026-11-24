@@ -36,6 +36,6 @@ var (
 	// ErrTimeout 是 [Normalize] 对超时错误的默认分类，使用 HTTP 504。
 	ErrTimeout = New(http.StatusGatewayTimeout, "DeadlineExceeded", "The operation timed out.")
 
-	// ErrCanceled 是 [Normalize] 对取消错误的默认分类，使用 HTTP 408。
-	ErrCanceled = New(http.StatusRequestTimeout, "Canceled", "Request canceled.")
+	// ErrCanceled 是 [Normalize] 对 context.Canceled 的默认分类，使用非标准状态码 499。
+	ErrCanceled = New(499, "Canceled", "Request canceled.")
 )

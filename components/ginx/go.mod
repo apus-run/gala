@@ -8,6 +8,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/apus-run/gala/components/authn v0.17.0
 	github.com/apus-run/gala/components/ecache v0.17.0
+	github.com/apus-run/gala/components/sse v0.17.0
 	github.com/apus-run/gala/pkg/errorsx v0.17.0
 	github.com/apus-run/gala/pkg/lang v0.17.0
 	github.com/gavv/httpexpect/v2 v2.17.0
@@ -95,7 +96,7 @@ require (
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251020155222-88f65dc88635 // indirect
 	google.golang.org/grpc v1.76.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
@@ -106,3 +107,5 @@ require (
 replace github.com/apus-run/gala/components/ginx => ../ginx
 
 replace github.com/apus-run/gala/components/authn => ../authn
+
+replace github.com/apus-run/gala/components/sse => ../sse

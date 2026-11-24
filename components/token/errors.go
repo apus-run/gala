@@ -9,6 +9,9 @@ var (
 	ErrEmptyToken = errors.New("token is empty")
 	// ErrEmptyJWTSecret means the jwt secret key is empty | JWT 密钥为空.
 	ErrEmptyJWTSecret = errors.New("jwt secret key is empty")
+	// ErrWeakJWTSecret means the HMAC secret is shorter than the hash output
+	// that RFC 7518 §3.2 requires | 密钥短于 RFC 7518 §3.2 要求的哈希输出长度.
+	ErrWeakJWTSecret = errors.New("jwt secret key is too short")
 	// ErrInvalidToken means the token is invalid | 令牌无效.
 	ErrInvalidToken = errors.New("invalid token")
 	// ErrUnsupportedTokenStyle means the token style is not supported | 不支持的令牌风格.

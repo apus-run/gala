@@ -4,11 +4,11 @@
 //
 // The root package only wraps gin: W, B, WC and BC turn business functions
 // returning (Result, error) into gin.HandlerFunc and map errors to HTTP status
-// via HTTPStatus() or the errorsx code; routing and middlewares live in the
+// via HTTPStatus(); routing and middlewares live in the
 // middlewares subpackages and the application. Claims are passed through
 // SetClaims/GetClaims; the token itself is never parsed here.
 // 根包只做包装：W、B、WC、BC 把返回 (Result, error) 的业务函数转换成
-// gin.HandlerFunc，并按 HTTPStatus() 或 errorsx Code 映射状态码；路由与
+// gin.HandlerFunc，并按 HTTPStatus() 映射状态码；路由与
 // 中间件在 middlewares 子包和应用侧。Claims 经 SetClaims/GetClaims 传递，
 // 本包不解析 token。
 //
@@ -18,6 +18,7 @@
 // - WC/BC: claim-aware variants behind SetClaims | 基于 SetClaims 的 claims 变体
 // - ErrNoResponse and ErrUnauthorized sentinel handling | ErrNoResponse/ErrUnauthorized 哨兵处理
 // - Context wraps gin.Context with typed accessors | Context 提供类型化取参助手
+// - Context.EventStream bridges components/sse for event streams | Context.EventStream 用 components/sse 提供事件流
 // - Reverse-proxy and static/embed asset helpers | 反向代理与静态资源辅助
 //
 // # Example | 示例
@@ -31,7 +32,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/apus-run/gala/pkg/errorsx"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -219,13 +219,6 @@ func httpStatusFromError(err error) int {
 		if code >= 100 && code <= 599 {
 			return code
 		}
-	}
-	// Published errorsx v0.8.1 exposes Code but does not yet implement
-	// HTTPStatus. Preserve its status when this module is used without go.work.
-	// 已发布的 errorsx v0.8.1 暴露 Code 但尚未实现 HTTPStatus；
-	// 在不使用 go.work 时保留其状态码。
-	if legacyErr, ok := errors.AsType[*errorsx.Error](err); ok && legacyErr != nil && legacyErr.Code >= 100 && legacyErr.Code <= 599 {
-		return legacyErr.Code
 	}
 	return http.StatusInternalServerError
 }

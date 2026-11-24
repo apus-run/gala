@@ -19,7 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/apus-run/gala/components/authn"
-	"github.com/apus-run/gala/components/authn/store"
+	redistore "github.com/apus-run/gala/components/authn/store/redis"
 	"github.com/apus-run/gala/components/token"
 	"github.com/apus-run/gala/pkg/option"
 )
@@ -59,7 +59,7 @@ func run(ctx context.Context) error {
 	// NewRegisteredClaims 给每个令牌一个唯一的 jti。没有它，同一秒签出的两个令牌
 	// 会逐字节相同，吊销其中一个会连带吊销另一个。
 	manager := token.NewJwtManager[struct{}](jwtOpts...)
-	auth := authn.NewJwtAuth(store.NewStore(client, "revoked:"),
+	auth := authn.NewJwtAuth(redistore.NewStore(client, "revoked:"),
 		authn.WithClaims(func() jwt.Claims {
 			registered, err := manager.NewRegisteredClaims("billing-service", time.Now())
 			if err != nil {

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apus-run/gala/components/authn/store"
+	redistore "github.com/apus-run/gala/components/authn/store/redis"
 	"github.com/apus-run/gala/components/token"
 	"github.com/apus-run/gala/pkg/jwtx"
 )
@@ -220,7 +220,7 @@ func TestEncryptCompare(t *testing.T) {
 
 // 真实 store（redis）与 authn 接得上：构造 + 签发不碰存储
 func TestNewJwtAuthWithStore(t *testing.T) {
-	j := NewJwtAuth(store.NewStore(nil, "authn"),
+	j := NewJwtAuth(redistore.NewStore(nil, "authn"),
 		WithClaims(claimsWith(time.Now().Add(time.Hour))),
 		WithJWTOptions(token.WithSecretKey(testSecret)))
 	tok, err := j.Sign(context.Background())

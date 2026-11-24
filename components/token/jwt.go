@@ -154,7 +154,28 @@ func (jm *JwtManager[T]) signingConfig() ([]byte, jwt.SigningMethod, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// RFC 7518 §3.2: an HMAC key must be at least the size of the hash output.
+	// A short secret silently weakens every token, so it is rejected instead
+	// of being accepted with a warning nobody reads.
+	// RFC 7518 §3.2：HMAC 密钥不得短于哈希输出长度。密钥过短会静默削弱所有
+	// 令牌，所以直接拒绝，而不是发一条没人看的警告。
+	if minLen := minSecretLen(method); len(secret) < minLen {
+		return nil, nil, fmt.Errorf("%w: %s requires at least %d bytes", ErrWeakJWTSecret, method.Alg(), minLen)
+	}
 	return []byte(secret), method, nil
+}
+
+// minSecretLen is the RFC 7518 §3.2 minimum HMAC key size for the method.
+// minSecretLen 返回该方法在 RFC 7518 §3.2 下的最小 HMAC 密钥长度。
+func minSecretLen(method jwt.SigningMethod) int {
+	switch method.Alg() {
+	case "HS384":
+		return 48
+	case "HS512":
+		return 64
+	default:
+		return 32
+	}
 }
 
 // GenerateJWTSecret returns a random secret as hex; length is in bytes | GenerateJWTSecret 生成随机密钥的十六进制串，length 为字节数.

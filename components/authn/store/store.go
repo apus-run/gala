@@ -1,79 +1,75 @@
-// Package store defines the token-storage contract for authn and ships a
-// Redis implementation | 定义 authn 的令牌存储契约，并附带 Redis 实现.
+// Package store defines the token and session storage contracts for authn.
+// Implementations live in subpackages — store/redis, store/postgres,
+// store/mysql and store/memory — and any other backend only needs to satisfy
+// the four SessionStorer methods. Run store/storetest against a custom
+// implementation to prove it honours the rules SessionAuth depends on.
+// Package store 定义 authn 的令牌与会话存储契约。实现位于子包 store/redis、
+// store/postgres、store/mysql 与 store/memory；其他后端只需实现 SessionStorer
+// 的四个方法。自定义实现应运行 store/storetest，证明其满足 SessionAuth 依赖的规则。
 //
 // # Notes | 说明
 //
-// [Storer] covers access-token KV operations (Set / Delete / Check);
-// [SessionStorer] keeps a session's current generation. RotateSession must
-// never resurrect a deleted session and must be atomic against concurrent
-// rotations — the Redis Store implements it with a compare-and-set Lua
-// script, and CreateSession with SetNX.
-// [Storer] 覆盖访问令牌的 KV 操作（Set / Delete / Check）；[SessionStorer]
-// 保存会话的当前代次。RotateSession 绝不能复活已删除的会话，且相对并发轮换
-// 必须原子——Redis 的 Store 用比较并换值的 Lua 脚本实现，CreateSession 用 SetNX。
+// [Storer] covers access-token KV operations (Set / Delete / Check).
+// [SessionStorer] keeps a session's current generation. CreateSession must be
+// compare-and-set, and RotateSession must be atomic with respect to concurrent
+// rotations and deletion and must never resurrect a missing or expired session.
+// [Storer] 覆盖访问令牌的 KV 操作（Set / Delete / Check）。
+// [SessionStorer] 保存会话的当前代次。CreateSession 必须是比较并写入；
+// RotateSession 相对并发轮换与删除必须原子，且绝不能复活不存在或已过期的会话。
 //
 // # Example | 示例
 //
-//	st := store.NewStore(rdb, "authn:")
-//	_ = st.Set(ctx, token, claims, time.Hour)
+//	// st is any store.SessionStorer, e.g. redisstore.NewStore(client, "authn:").
 //	ok, err := st.RotateSession(ctx, id, old, next, time.Hour)
 package store
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
-// Store is the Redis-backed token storage | 基于 Redis 的令牌存储.
-type Store struct {
-	cli *redis.Client
+// ErrInvalidTTL means CreateSession received a non-positive TTL. Every backend
+// returns it wrapped or bare, and storetest asserts it, so callers can rely on
+// errors.Is instead of matching message text.
+// ErrInvalidTTL 表示 CreateSession 收到了非正的 TTL。所有后端都返回它（可能被包装），
+// storetest 也这样断言，所以调用方可以依赖 errors.Is，不必匹配错误文本。
+var ErrInvalidTTL = errors.New("session TTL must be positive")
 
-	prefix string
+// ErrTTLTooSmall means RotateSession received a TTL below one millisecond.
+// ErrTTLTooSmall 表示 RotateSession 收到了小于一毫秒的 TTL。
+var ErrTTLTooSmall = errors.New("session TTL must be at least one millisecond")
+
+// Storer is the token-revocation storage interface | 令牌吊销存储接口.
+type Storer interface {
+	// Set stores token data with an expiration time | Set 存储令牌数据并指定过期时间.
+	Set(ctx context.Context, accessToken string, val any, expiration time.Duration) error
+
+	// Delete removes the token data from storage | Delete 从存储中删除令牌数据.
+	Delete(ctx context.Context, accessToken string) (bool, error)
+
+	// Check reports whether the token exists | Check 判断令牌是否存在.
+	Check(ctx context.Context, accessToken string) (bool, error)
+
+	// Close closes the storage connection | Close 关闭存储连接.
+	Close() error
 }
 
-// NewStore creates a *Store to handle token storage, deletion and checking
-// | NewStore 创建 *Store 实例，负责令牌的存储、删除与检查.
-func NewStore(client *redis.Client, prefix string) *Store {
-	return &Store{cli: client, prefix: prefix}
-}
-
-// Set calls the Redis client to set a key-value pair with an expiration time;
-// the key name format is <prefix><accessToken>.
-// Set 调用 Redis 客户端写入带过期时间的键值对，
-// 键名格式为 <prefix><accessToken>。
-func (s *Store) Set(ctx context.Context, accessToken string, val any, expiration time.Duration) error {
-	cmd := s.cli.Set(ctx, s.key(accessToken), val, expiration)
-	return cmd.Err()
-}
-
-// Delete removes the specified JWT token from Redis | Delete 删除 Redis 中指定的 JWT 令牌.
-func (s *Store) Delete(ctx context.Context, accessToken string) (bool, error) {
-	cmd := s.cli.Del(ctx, s.key(accessToken))
-	if err := cmd.Err(); err != nil {
-		return false, err
-	}
-	return cmd.Val() > 0, nil
-}
-
-// Check reports whether the specified JWT token exists in Redis
-// | Check 判断指定的 JWT 令牌在 Redis 中是否存在.
-func (s *Store) Check(ctx context.Context, accessToken string) (bool, error) {
-	cmd := s.cli.Exists(ctx, s.key(accessToken))
-	if err := cmd.Err(); err != nil {
-		return false, err
-	}
-	return cmd.Val() > 0, nil
-}
-
-// Close closes the underlying Redis connection | Close 关闭底层的 Redis 连接.
-func (s *Store) Close() error {
-	return s.cli.Close()
-}
-
-// key builds the key name in Redis | key 用于构造 Redis 中的键名.
-func (s *Store) key(key string) string {
-	return fmt.Sprintf("%s%s", s.prefix, key)
+// SessionStorer stores the current generation of a session. Missing sessions
+// must never be recreated by RotateSession. Implementations must make rotation
+// atomic with respect to other rotations and deletion.
+// SessionStorer 存储会话的当前代次。已不存在的会话绝不能被 RotateSession
+// 重新创建。实现必须让轮换相对其他轮换与删除是原子的。
+type SessionStorer interface {
+	// CreateSession creates a session when absent; false means it already exists
+	// | CreateSession 在会话不存在时创建；返回 false 表示已存在.
+	CreateSession(context.Context, string, string, time.Duration) (bool, error)
+	// MatchSession reports whether the generation still matches the stored one
+	// | MatchSession 判断代次是否与存储的一致.
+	MatchSession(context.Context, string, string) (bool, error)
+	// RotateSession swaps the generation only when old matches; false means lost the race
+	// | RotateSession 仅在 old 匹配时换代；返回 false 表示没抢到.
+	RotateSession(context.Context, string, string, string, time.Duration) (bool, error)
+	// DeleteSession removes the whole session | DeleteSession 删除整个会话.
+	DeleteSession(context.Context, string) error
 }

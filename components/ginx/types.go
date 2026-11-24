@@ -3,7 +3,6 @@ package ginx
 import (
 	"context"
 	"errors"
-	"net/http/httputil"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -32,19 +31,6 @@ type Handler interface {
 	PrivateRoutes(r gin.IRoutes)
 	PublicRoutes(r gin.IRoutes)
 }
-
-// Context a wrapper of gin.Context | Context 是 gin.Context 的包装。
-type Context struct {
-	*gin.Context
-}
-
-// HandlerFunc defines the handler to wrap gin.Context
-// HandlerFunc 定义包装 gin.Context 的处理函数。
-type HandlerFunc func(*Context)
-
-// ProxyHandlerFunc represents the reverse proxy handler function
-// ProxyHandlerFunc 表示反向代理处理函数。
-type ProxyHandlerFunc func(*Context) (*httputil.ReverseProxy, error)
 
 // Result defines HTTP JSON response | Result 定义 HTTP JSON 响应结构。
 type Result struct {

@@ -26,6 +26,7 @@ type (
 	// Options is the authn configuration | authn 的配置项.
 	Options struct {
 		accessTTL, refreshTTL time.Duration
+		absoluteTTL           time.Duration
 		claims                func() jwt.Claims
 		jwtOpts               []option.Option[token.JwtConfig]
 	}
@@ -56,6 +57,9 @@ func NewOptions(opts ...Option) *Options {
 func (o *Options) Validate() error {
 	if o.accessTTL < time.Second || o.refreshTTL < o.accessTTL {
 		return errors.New("session TTLs must satisfy 1s <= access <= refresh")
+	}
+	if o.absoluteTTL != 0 && o.absoluteTTL < time.Second {
+		return errors.New("absolute session TTL must be 0 (disabled) or at least 1s")
 	}
 	return nil
 }
@@ -112,4 +116,20 @@ func WithJWTOptions(opts ...option.Option[token.JwtConfig]) Option {
 // 不影响旧版 JwtAuth 和 components/token 的配置。
 func WithSessionTTL(access, refresh time.Duration) Option {
 	return OptionFunc(func(o *Options) { o.accessTTL, o.refreshTTL = access, refresh })
+}
+
+// WithAbsoluteTTL caps the whole login session: the clock starts at Issue,
+// rides along every rotation in the login_at claim, and caps both tokens'
+// exp and the session key TTL. Once it passes, Refresh returns
+// ErrSessionInvalid and the user must log in again. 0 (the default) disables
+// the cap. Enabling it invalidates tokens minted before: they carry no
+// login_at and are rejected, so existing sessions need one re-login. Only
+// SessionAuth uses this value.
+// WithAbsoluteTTL 给整个登录会话设上限：起算点是 Issue，通过 login_at 声明跨每次
+// 轮换保持不变，并同时封顶两个令牌的 exp 与会话键 TTL。超过上限后 Refresh 返回
+// ErrSessionInvalid，必须重新登录。0（默认）表示不设上限。开启后旧版本签发、
+// 没有 login_at 的令牌会被拒绝，存量会话需要一次性重新登录。
+// 只有 SessionAuth 使用该值。
+func WithAbsoluteTTL(ttl time.Duration) Option {
+	return OptionFunc(func(o *Options) { o.absoluteTTL = ttl })
 }

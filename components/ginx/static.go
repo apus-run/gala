@@ -1,7 +1,6 @@
 package ginx
 
 import (
-	"log"
 	"net/http"
 	"os"
 	"path"
@@ -30,12 +29,14 @@ func SetupEmbedAssets(rg *gin.RouterGroup, fs http.FileSystem, relativePaths ...
 }
 
 // SetupStaticAssets walks dir and registers its top-level subdirectories as
-// static routes, plus index.html as the root file | SetupStaticAssets 遍历
-// dir，把顶层子目录注册为静态路由，并把 index.html 注册为根文件。
-func SetupStaticAssets(rg *gin.RouterGroup, dir string) {
+// static routes, plus index.html as the root file. A walk error is returned
+// instead of exiting the process, so the caller decides how to react.
+// SetupStaticAssets 遍历 dir，把顶层子目录注册为静态路由，并把 index.html
+// 注册为根文件。遍历错误作为返回值交给调用方决定如何处理，不再直接退出进程。
+func SetupStaticAssets(rg *gin.RouterGroup, dir string) error {
 	_, rootDirName := filepath.Split(dir)
 	staticLoader := func(path string, info os.FileInfo, err error) error {
-		if info == nil {
+		if err != nil {
 			return err
 		}
 
@@ -51,7 +52,5 @@ func SetupStaticAssets(rg *gin.RouterGroup, dir string) {
 		return nil
 	}
 
-	if err := filepath.Walk(dir, staticLoader); err != nil {
-		log.Fatalln(err)
-	}
+	return filepath.Walk(dir, staticLoader)
 }

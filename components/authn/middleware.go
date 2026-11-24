@@ -16,12 +16,14 @@ type AuthFunc[T any] func(ctx context.Context, r *http.Request) (T, error)
 // identity in the request context for downstream handlers.
 // Middleware 用 AuthFunc 认证请求，并把得到的身份存进请求 context 供下游 handler 使用。
 type Middleware[T any] struct {
-	auth    AuthFunc[T]
-	onError func(http.ResponseWriter, *http.Request, error)
+	auth        AuthFunc[T]
+	onError     func(http.ResponseWriter, *http.Request, error)
+	onAuthError func(context.Context, *http.Request, error)
 }
 
 type middlewareOptions struct {
-	onError func(http.ResponseWriter, *http.Request, error)
+	onError     func(http.ResponseWriter, *http.Request, error)
+	onAuthError func(context.Context, *http.Request, error)
 }
 
 // MiddlewareOption customizes Middleware behavior | MiddlewareOption 自定义 Middleware 行为.
@@ -45,13 +47,26 @@ func WithErrorHandler(fn func(http.ResponseWriter, *http.Request, error)) Middle
 	return MiddlewareOptionFunc(func(o *middlewareOptions) { o.onError = fn })
 }
 
+// WithAuthErrorHook observes every authentication failure before the error
+// response is written. It does not replace the response — use WithErrorHandler
+// for that — so logging, metrics and alerting can be added without changing
+// the client-visible behavior. The context carries whatever the caller put
+// there (request id, trace), and the error still classifies through StatusOf.
+// WithAuthErrorHook 在写入错误响应前观察每一次认证失败。它不替换响应
+// （替换用 WithErrorHandler），因此可以在不改变客户端可见行为的前提下接入
+// 日志、指标和告警。context 携带调用方放入的内容（请求 id、trace），
+// 错误仍可用 StatusOf 分类。
+func WithAuthErrorHook(fn func(context.Context, *http.Request, error)) MiddlewareOption {
+	return MiddlewareOptionFunc(func(o *middlewareOptions) { o.onAuthError = fn })
+}
+
 // NewMiddleware creates an authentication middleware | NewMiddleware 创建一个认证中间件.
 func NewMiddleware[T any](auth AuthFunc[T], opts ...MiddlewareOption) *Middleware[T] {
 	o := middlewareOptions{onError: defaultAuthError}
 	for _, opt := range opts {
 		opt.apply(&o)
 	}
-	return &Middleware[T]{auth: auth, onError: o.onError}
+	return &Middleware[T]{auth: auth, onError: o.onError, onAuthError: o.onAuthError}
 }
 
 // Wrap returns an http.Handler that authenticates before calling next
@@ -60,6 +75,9 @@ func (m *Middleware[T]) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := m.auth(r.Context(), r)
 		if err != nil {
+			if m.onAuthError != nil {
+				m.onAuthError(r.Context(), r, err)
+			}
 			m.onError(w, r, err)
 			return
 		}

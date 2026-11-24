@@ -163,7 +163,7 @@ func TestJwtManagerRejectsBadInput(t *testing.T) {
 		t.Fatalf("want ErrEmptyJWTSecret, got %v", err)
 	}
 
-	manager := token.NewJwtManager[payload](token.WithSecretKey("k"))
+	manager := token.NewJwtManager[payload](token.WithSecretKey(strings.Repeat("s", 32)))
 	if _, err := manager.GenerateToken("  ", payload{}); !errors.Is(err, token.ErrEmptyUserID) {
 		t.Fatalf("want ErrEmptyUserID, got %v", err)
 	}
@@ -172,6 +172,46 @@ func TestJwtManagerRejectsBadInput(t *testing.T) {
 	}
 	if _, err := manager.ParseToken("bad.bad.bad"); !errors.Is(err, jwtx.ErrTokenInvalid) {
 		t.Fatalf("want jwtx.ErrTokenInvalid, got %v", err)
+	}
+}
+
+// RFC 7518 §3.2：HMAC 密钥不得短于哈希输出长度，签发和解析都必须失败关闭。
+func TestJwtManagerRejectsWeakSecret(t *testing.T) {
+	t.Parallel()
+	type payload struct{}
+
+	tests := []struct {
+		name    string
+		secret  string
+		alg     string
+		wantErr error
+	}{
+		{name: "HS256 default too short", secret: strings.Repeat("s", 31), wantErr: token.ErrWeakJWTSecret},
+		{name: "HS256 at minimum", secret: strings.Repeat("s", 32)},
+		{name: "HS384 too short", secret: strings.Repeat("s", 47), alg: "HS384", wantErr: token.ErrWeakJWTSecret},
+		{name: "HS384 at minimum", secret: strings.Repeat("s", 48), alg: "HS384"},
+		{name: "HS512 too short", secret: strings.Repeat("s", 63), alg: "HS512", wantErr: token.ErrWeakJWTSecret},
+		{name: "HS512 at minimum", secret: strings.Repeat("s", 64), alg: "HS512"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := token.NewJwtManager[payload](
+				token.WithSecretKey(tt.secret), token.WithAlgorithm(tt.alg))
+			_, err := manager.GenerateToken("user-1", payload{})
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("sign: want %v, got %v", tt.wantErr, err)
+			}
+			// Parsing must fail closed for the same reason, not accept the key.
+			if _, err := manager.ParseToken("a.b.c"); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("parse: want %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -191,7 +231,7 @@ func TestGenerateClaimsRequiresExpiration(t *testing.T) {
 func TestJwtManagerTokenHeaderAndRegisteredClaims(t *testing.T) {
 	t.Parallel()
 	manager := token.NewJwtManager[Payload](
-		token.WithSecretKey(strings.Repeat("s", 32)),
+		token.WithSecretKey(strings.Repeat("s", 64)),
 		token.WithIssuer("gala"),
 		token.WithAlgorithm("HS512"),
 		token.WithTokenHeader(map[string]any{"kid": "8b5228a5-b3d2-4165-aaac-58a052629846"}),
@@ -305,7 +345,8 @@ func TestJwtManagerParseFailures(t *testing.T) {
 func TestJwtManagerSigningMethodRoundTrip(t *testing.T) {
 	t.Parallel()
 	type payload struct{}
-	secret := strings.Repeat("s", 32)
+	// HS512 requires a 64-byte key (RFC 7518 §3.2); HS256 accepts it too.
+	secret := strings.Repeat("s", 64)
 
 	hs512 := token.NewJwtManager[payload](token.WithSecretKey(secret), token.WithAlgorithm("HS512"))
 	raw, err := hs512.GenerateToken("user-1", payload{})

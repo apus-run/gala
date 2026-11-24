@@ -4,8 +4,9 @@
 // # Notes | 说明
 //
 // The current design is stateless: JwtManager signs HS256/384/512 JWTs with a
-// shared secret (asymmetric algorithms are rejected early) and ParseClaims
-// checks signature, algorithm, and the configured issuer/audience. There is
+// shared secret (asymmetric algorithms are rejected early, and secrets shorter
+// than the hash output are rejected per RFC 7518 §3.2) and ParseClaims checks
+// signature, algorithm, and the configured issuer/audience. There is
 // no server-side session store, so tokens cannot be revoked — Reset only
 // clears the cookies and a leaked token stays valid until expiry. Set
 // delivers an HttpOnly token cookie plus a readable XSRF cookie (double-
@@ -22,6 +23,7 @@
 // # Features | 功能
 //
 // - JwtManager issues, parses and verifies typed Claims[T] | JwtManager 签发/解析/校验泛型 Claims[T]
+// - HMAC secrets below the RFC 7518 minimum are rejected | 低于 RFC 7518 下限的 HMAC 密钥被拒绝
 // - HTTP helpers Set / Get / Reset with XSRF double-submit | Set / Get / Reset 与 XSRF 双提交
 // - TokenGenerator: simple / uuid / timestamp / hash / tiktok / jwt | 六种风格的 TokenGenerator
 // - Hash gives a SHA-256 hex digest for storage | Hash 生成 SHA-256 摘要用于存储比对

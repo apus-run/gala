@@ -22,7 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/apus-run/gala/components/authn"
-	"github.com/apus-run/gala/components/authn/store"
+	redistore "github.com/apus-run/gala/components/authn/store/redis"
 	"github.com/apus-run/gala/components/token"
 )
 
@@ -41,7 +41,7 @@ func run(ctx context.Context) error {
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	defer client.Close()
 
-	auth, err := authn.NewSessionAuth(store.NewStore(client, "session:"),
+	auth, err := authn.NewSessionAuth(redistore.NewStore(client, "session:"),
 		authn.WithJWTOptions(
 			token.WithSecretKey("replace-with-a-32-byte-or-longer-secret"),
 			token.WithIssuer("orders-api"),

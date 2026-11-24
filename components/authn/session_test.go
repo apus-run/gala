@@ -9,9 +9,14 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/apus-run/gala/components/authn/store"
+	"github.com/apus-run/gala/components/authn/store/memory"
+	redistore "github.com/apus-run/gala/components/authn/store/redis"
 	"github.com/apus-run/gala/components/token"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,6 +112,203 @@ func TestSessionLifecycle(t *testing.T) {
 	_, err = s.ParseAccess(ctx, other.AccessToken)
 	require.NoError(t, err)
 }
+func TestAbsoluteTTLCapsBothTokens(t *testing.T) {
+	auth, err := NewSessionAuth(memory.NewStore(),
+		WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithSessionTTL(15*time.Minute, 7*24*time.Hour),
+		WithAbsoluteTTL(30*time.Minute))
+	require.NoError(t, err)
+
+	pair, err := auth.Issue(context.Background(), "42")
+	require.NoError(t, err)
+	claims, err := auth.parse(pair.AccessToken, "access")
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Minute, claims.ExpiresAt.Sub(claims.IssuedAt.Time), "access stays at its own TTL")
+
+	refreshClaims, err := auth.parse(pair.RefreshToken, "refresh")
+	require.NoError(t, err)
+	// The deadline derives from login_at, captured just before IssuedAt, so
+	// leave one second of rounding slack.
+	require.InDelta(t, (30 * time.Minute).Seconds(), refreshClaims.ExpiresAt.Sub(refreshClaims.IssuedAt.Time).Seconds(), 1,
+		"refresh is capped by the absolute deadline")
+	require.Equal(t, claims.LoginAt, refreshClaims.LoginAt)
+	require.Positive(t, claims.LoginAt)
+}
+
+func TestAbsoluteTTLCapsAccessWhenShorter(t *testing.T) {
+	auth, err := NewSessionAuth(memory.NewStore(),
+		WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithSessionTTL(15*time.Minute, time.Hour),
+		WithAbsoluteTTL(5*time.Minute))
+	require.NoError(t, err)
+
+	pair, err := auth.Issue(context.Background(), "42")
+	require.NoError(t, err)
+	require.InDelta(t, 300, pair.ExpiresIn, 1)
+
+	claims, err := auth.parse(pair.AccessToken, "access")
+	require.NoError(t, err)
+	require.InDelta(t, (5 * time.Minute).Seconds(), claims.ExpiresAt.Sub(claims.IssuedAt.Time).Seconds(), 1)
+}
+
+func TestAbsoluteTTLCarriesAcrossRefresh(t *testing.T) {
+	auth, err := NewSessionAuth(memory.NewStore(),
+		WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithSessionTTL(time.Second, time.Hour),
+		WithAbsoluteTTL(2*time.Second))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	pair, err := auth.Issue(ctx, "42")
+	require.NoError(t, err)
+	first, err := auth.parse(pair.RefreshToken, "refresh")
+	require.NoError(t, err)
+
+	next, err := auth.Refresh(ctx, pair.RefreshToken)
+	require.NoError(t, err)
+	second, err := auth.parse(next.RefreshToken, "refresh")
+	require.NoError(t, err)
+	require.Equal(t, first.LoginAt, second.LoginAt, "the login clock must not reset on rotation")
+	require.True(t, second.ExpiresAt.Time.Equal(first.ExpiresAt.Time), "the absolute deadline must not move on rotation")
+}
+
+func TestAbsoluteTTLRejectsTokensWithoutLoginAt(t *testing.T) {
+	s := &sessionMemory{entries: map[string]sessionEntry{}}
+	capped, err := NewSessionAuth(s, WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithAbsoluteTTL(time.Hour))
+	require.NoError(t, err)
+
+	now := time.Now()
+	registered, err := capped.manager.NewRegisteredClaims("42", now)
+	require.NoError(t, err)
+	registered.ExpiresAt = jwt.NewNumericDate(now.Add(time.Minute))
+	raw, err := capped.manager.GenerateClaims(&SessionClaims{
+		RegisteredClaims: registered,
+		SessionID:        "sid",
+		Generation:       "gen",
+		TokenUse:         "access",
+	})
+	require.NoError(t, err)
+
+	_, err = capped.ParseAccess(context.Background(), raw)
+	require.ErrorIs(t, err, ErrTokenInvalid, "tokens without login_at are unbounded and must be rejected")
+}
+
+func TestAbsoluteTTLDisabledIgnoresLoginAt(t *testing.T) {
+	s, _ := newSessionTest(t)
+	pair, err := s.Issue(context.Background(), "42")
+	require.NoError(t, err)
+	claims, err := s.parse(pair.AccessToken, "access")
+	require.NoError(t, err)
+	// login_at is always stamped, so enabling the cap later covers sessions
+	// created from now on instead of forcing a re-login for all of them.
+	require.Positive(t, claims.LoginAt)
+
+	claims.LoginAt = 1 // 1970
+	raw, err := s.manager.GenerateClaims(claims)
+	require.NoError(t, err)
+	_, err = s.parse(raw, "access")
+	require.NoError(t, err, "with the cap disabled, login_at is ignored")
+}
+
+func TestAbsoluteTTLRejectsPastDeadline(t *testing.T) {
+	auth, err := NewSessionAuth(memory.NewStore(),
+		WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithSessionTTL(15*time.Minute, time.Hour),
+		WithAbsoluteTTL(10*time.Minute))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	pair, err := auth.Issue(ctx, "42")
+	require.NoError(t, err)
+
+	// A session that started 9 minutes ago is still inside the 10 minute cap.
+	claims, err := auth.parse(pair.AccessToken, "access")
+	require.NoError(t, err)
+	claims.LoginAt = time.Now().Add(-9 * time.Minute).UnixMilli()
+	raw, err := auth.manager.GenerateClaims(claims)
+	require.NoError(t, err)
+	_, err = auth.ParseAccess(ctx, raw)
+	require.NoError(t, err)
+
+	// Started 11 minutes ago: exp is still valid, so only the absolute check
+	// can reject.
+	claims.LoginAt = time.Now().Add(-11 * time.Minute).UnixMilli()
+	raw, err = auth.manager.GenerateClaims(claims)
+	require.NoError(t, err)
+	_, err = auth.ParseAccess(ctx, raw)
+	require.ErrorIs(t, err, ErrSessionInvalid)
+
+	// Signing repeats the guard, closing the race between the check and the
+	// rotation.
+	_, _, err = auth.signPair("42", "sid", "gen", time.Now().Add(-11*time.Minute))
+	require.ErrorIs(t, err, ErrSessionInvalid)
+}
+
+func TestAbsoluteTTLCapsSessionKeyTTL(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	auth, err := NewSessionAuth(redistore.NewStore(client, "auth:ttl:"),
+		WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithSessionTTL(time.Minute, time.Hour),
+		WithAbsoluteTTL(30*time.Second))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	pair, err := auth.Issue(ctx, "42")
+	require.NoError(t, err)
+	claims, err := auth.ParseAccess(ctx, pair.AccessToken)
+	require.NoError(t, err)
+
+	key := "auth:ttl:session:" + claims.SessionID
+	ttl, err := client.PTTL(ctx, key).Result()
+	require.NoError(t, err)
+	require.Positive(t, ttl, "the session key must exist")
+	// The refresh TTL is an hour, so only the 30s absolute cap explains this.
+	assert.LessOrEqual(t, ttl, 30*time.Second)
+	assert.Greater(t, ttl, 29*time.Second)
+
+	_, err = auth.Refresh(ctx, pair.RefreshToken)
+	require.NoError(t, err)
+	after, err := client.PTTL(ctx, key).Result()
+	require.NoError(t, err)
+	require.Positive(t, after)
+	assert.LessOrEqual(t, after, ttl, "rotation must not extend the absolute deadline")
+}
+
+func TestAbsoluteTTLExpiresSessionKey(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	auth, err := NewSessionAuth(redistore.NewStore(client, "auth:ttl:"),
+		WithJWTOptions(token.WithSecretKey(testSecret)),
+		WithSessionTTL(time.Minute, time.Hour),
+		WithAbsoluteTTL(30*time.Second))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	pair, err := auth.Issue(ctx, "42")
+	require.NoError(t, err)
+	claims, err := auth.ParseAccess(ctx, pair.AccessToken)
+	require.NoError(t, err)
+
+	// Redis expires the key at the absolute deadline. Real time does not move,
+	// so both JWTs are still inside their own exp and the parse-level absolute
+	// check has not fired — the rejection below can only come from the store.
+	// Redis 在绝对截止时间删掉会话键。真实时间没有前进，两枚 JWT 都还在自己的
+	// exp 内、parse 的绝对检查也没触发——下面的拒绝只可能来自存储。
+	server.FastForward(31 * time.Second)
+	exists, err := client.Exists(ctx, "auth:ttl:session:"+claims.SessionID).Result()
+	require.NoError(t, err)
+	assert.Zero(t, exists)
+
+	_, err = auth.ParseAccess(ctx, pair.AccessToken)
+	assert.ErrorIs(t, err, ErrSessionInvalid)
+	_, err = auth.Refresh(ctx, pair.RefreshToken)
+	assert.ErrorIs(t, err, ErrSessionInvalid)
+}
+
 func TestSessionConcurrentRefresh(t *testing.T) {
 	s, _ := newSessionTest(t)
 	ctx := context.Background()
@@ -190,7 +392,7 @@ func TestSessionLogoutRacesRefresh(t *testing.T) {
 			server := miniredis.RunT(t)
 			client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 			t.Cleanup(func() { _ = client.Close() })
-			return store.NewStore(client, "auth:race:")
+			return redistore.NewStore(client, "auth:race:")
 		},
 	}
 	for backend, newStore := range backends {

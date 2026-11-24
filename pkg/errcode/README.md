@@ -298,6 +298,15 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 
 `WithMessage`、`KV` 和 `Wrap` 都返回副本。请求可以从同一个预定义错误派生出各自的实例，并发复用时应避免重新赋值共享变量。
 
+### Reason 是对外契约
+
+客户端按 `reason` 分支，所以它一旦发布就不能随意改动。
+
+- **不改名，不换含义。** `Message` 随时可以润色，`Reason` 和状态码改动会破坏已发布的客户端。需要废弃时，新增错误并保留旧错误一段时间。
+- **（状态码，Reason）共同决定类别。** 两个包里定义了相同的一对值，`errors.Is` 会认为它们是同一类错误，所以同一服务内要保持唯一。相同 Reason 配不同状态码则是不同类别。
+- **格式。** 用点号连接的大驼峰 ASCII 片段，如 `InvalidArgument`、`Order.AlreadyPaid`、`Auth.TokenExpired`。不要放空格或随请求变化的内容。
+- **变化的内容放进 `KV`。** 订单号、字段名等用 `KV("order_id", id)` 返回，`Reason` 保持静态。这也是 Google [AIP-193](https://google.aip.dev/193) 的做法。
+
 ### 预定义错误速查
 
 | 错误 | HTTP | 客户端 reason |
@@ -305,11 +314,11 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `ErrInvalidArgument` | 400 | `InvalidArgument` |
 | `ErrUnauthenticated` | 401 | `Unauthenticated` |
 | `ErrPermissionDenied` | 403 | `PermissionDenied` |
-| `ErrCanceled` | 408 | `Canceled` |
 | `ErrNotFound` | 404 | `NotFound` |
 | `ErrMethodNotAllowed` | 405 | `MethodNotAllowed` |
 | `ErrConflict` | 409 | `Conflict` |
 | `ErrTooManyRequests` | 429 | `TooManyRequests` |
+| `ErrCanceled` | 499 | `Canceled` |
 | `ErrInternal` | 500 | `InternalError` |
 | `ErrTimeout` | 504 | `DeadlineExceeded` |
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,9 @@ func TestLogValue(t *testing.T) {
 	}
 }
 
+// reasonFormat 是 README“Reason 是对外契约”一节描述的格式：点号连接的大驼峰 ASCII 片段。
+var reasonFormat = regexp.MustCompile(`^[A-Z][A-Za-z0-9]*(\.[A-Z][A-Za-z0-9]*)*$`)
+
 // 与 README 的“预定义错误速查”一致；改动状态码或 Reason 会破坏已发布客户端，必须同时更新文档。
 func TestPredefinedErrors(t *testing.T) {
 	tests := []struct {
@@ -137,16 +141,19 @@ func TestPredefinedErrors(t *testing.T) {
 		{ErrInvalidArgument, 400, "InvalidArgument"},
 		{ErrUnauthenticated, 401, "Unauthenticated"},
 		{ErrPermissionDenied, 403, "PermissionDenied"},
-		{ErrCanceled, 408, "Canceled"},
 		{ErrNotFound, 404, "NotFound"},
 		{ErrMethodNotAllowed, 405, "MethodNotAllowed"},
 		{ErrConflict, 409, "Conflict"},
 		{ErrTooManyRequests, 429, "TooManyRequests"},
+		{ErrCanceled, 499, "Canceled"},
 		{ErrInternal, 500, "InternalError"},
 		{ErrTimeout, 504, "DeadlineExceeded"},
 	}
 	seen := map[string]bool{}
 	for _, tt := range tests {
+		if !reasonFormat.MatchString(tt.reason) {
+			t.Errorf("reason %q does not match the documented format", tt.reason)
+		}
 		if tt.err.Code() != tt.status || tt.err.HTTPStatus() != tt.status || tt.err.Reason() != tt.reason {
 			t.Errorf("%s: got %d/%s, want %d/%s", tt.reason, tt.err.Code(), tt.err.Reason(), tt.status, tt.reason)
 		}
@@ -154,5 +161,18 @@ func TestPredefinedErrors(t *testing.T) {
 			t.Errorf("%s: message must be set and reason unique", tt.reason)
 		}
 		seen[tt.reason] = true
+	}
+}
+
+func TestReasonFormat(t *testing.T) {
+	for _, ok := range []string{"InvalidArgument", "NotFound.User", "Order.AlreadyPaid", "Auth.TokenExpired"} {
+		if !reasonFormat.MatchString(ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", "notFound", "NOT_FOUND", "Order.", ".Order", "Order..Paid", "Order Paid", "订单.不存在"} {
+		if reasonFormat.MatchString(bad) {
+			t.Errorf("%q should be rejected", bad)
+		}
 	}
 }

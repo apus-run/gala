@@ -36,6 +36,11 @@ type SessionClaims struct {
 	Generation string `json:"generation"`
 	// TokenUse is the token purpose: "access" or "refresh" | 令牌用途："access" 或 "refresh".
 	TokenUse string `json:"token_use"`
+	// LoginAt is the unix millisecond the session started. Rotations carry it
+	// unchanged so an absolute session cap survives refresh.
+	// LoginAt 是会话开始的 unix 毫秒。轮换时原样传递，让绝对会话上限在刷新后
+	// 依然有效。
+	LoginAt int64 `json:"login_at"`
 }
 
 // TokenPair is the token pair issued to one login session | 一次登录会话签发出的令牌对.
@@ -59,6 +64,7 @@ type SessionAuth struct {
 	manager               *token.JwtManager[struct{}]
 	store                 store.SessionStorer
 	accessTTL, refreshTTL time.Duration
+	absoluteTTL           time.Duration
 }
 
 // NewSessionAuth builds a SessionAuth over a mandatory session store. A nil
@@ -76,14 +82,20 @@ func NewSessionAuth(s store.SessionStorer, opts ...Option) (*SessionAuth, error)
 	if err := o.Validate(); err != nil {
 		return nil, err
 	}
-	return &SessionAuth{manager: token.NewJwtManager[struct{}](o.jwtOpts...), store: s, accessTTL: o.accessTTL, refreshTTL: o.refreshTTL}, nil
+	return &SessionAuth{
+		manager:     token.NewJwtManager[struct{}](o.jwtOpts...),
+		store:       s,
+		accessTTL:   o.accessTTL,
+		refreshTTL:  o.refreshTTL,
+		absoluteTTL: o.absoluteTTL,
+	}, nil
 }
 
 // Issue creates an independent login session. Authenticate the user before calling.
 // Issue 创建一个独立的登录会话。调用前请先完成用户认证。
 func (s *SessionAuth) Issue(ctx context.Context, subject string) (*TokenPair, error) {
 	id, generation := rand.Text(), rand.Text()
-	pair, expiry, err := s.signPair(subject, id, generation)
+	pair, expiry, err := s.signPair(subject, id, generation, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +121,7 @@ func (s *SessionAuth) Refresh(ctx context.Context, raw string) (*TokenPair, erro
 		return nil, err
 	}
 	next := rand.Text()
-	pair, expiry, err := s.signPair(claims.Subject, claims.SessionID, next)
+	pair, expiry, err := s.signPair(claims.Subject, claims.SessionID, next, time.UnixMilli(claims.LoginAt))
 	if err != nil {
 		return nil, err
 	}
@@ -170,32 +182,74 @@ func (s *SessionAuth) parse(raw, use string) (*SessionClaims, error) {
 		(claims.TokenUse != "access" && claims.TokenUse != "refresh") || (use != "" && claims.TokenUse != use) {
 		return nil, ErrTokenInvalid
 	}
+	now := time.Now()
+	// With an absolute cap on, tokens minted before it was enabled carry no
+	// login_at and cannot be bounded, so they are rejected outright. The exp
+	// fields are already capped at signing time; this check is defense in depth.
+	// 开启绝对上限后，之前签发、没有 login_at 的令牌无法界定寿命，直接拒绝。
+	// exp 在签发时已被封顶，这里再做一次防御性检查。
+	if s.absoluteTTL > 0 {
+		if claims.LoginAt <= 0 {
+			return nil, ErrTokenInvalid
+		}
+		if !now.Before(time.UnixMilli(claims.LoginAt).Add(s.absoluteTTL)) {
+			return nil, ErrSessionInvalid
+		}
+	}
 	// Session lifetime is strict even when JWT parser leeway is configured.
 	// 即使配置了 JWT 解析器的 leeway，会话寿命仍然从严判断。
-	if claims.ExpiresAt == nil || !claims.ExpiresAt.After(time.Now()) {
+	if claims.ExpiresAt == nil || !claims.ExpiresAt.After(now) {
 		return nil, ErrTokenInvalid
 	}
 	return claims, nil
 }
 
-func (s *SessionAuth) signPair(subject, id, generation string) (*TokenPair, time.Time, error) {
+func (s *SessionAuth) signPair(subject, id, generation string, loginAt time.Time) (*TokenPair, time.Time, error) {
 	now := time.Now()
-	expiry := now.Add(s.refreshTTL).Truncate(time.Second)
+	accessExpiry := now.Add(s.accessTTL)
+	refreshExpiry := now.Add(s.refreshTTL).Truncate(time.Second)
+	if s.absoluteTTL > 0 {
+		deadline := loginAt.Add(s.absoluteTTL)
+		if !now.Before(deadline) {
+			return nil, time.Time{}, ErrSessionInvalid
+		}
+		// Both tokens are capped by the login deadline, so exp alone enforces
+		// the absolute limit without relying on the store.
+		// 两个令牌都被登录截止时间封顶，仅凭 exp 就落实绝对上限，不依赖存储。
+		if deadline.Before(accessExpiry) {
+			accessExpiry = deadline
+		}
+		if deadline.Before(refreshExpiry) {
+			refreshExpiry = deadline
+		}
+	}
+	loginAtMilli := loginAt.UnixMilli()
 	sign := func(use string, expires time.Time) (string, error) {
 		registered, err := s.manager.NewRegisteredClaims(subject, now)
 		if err != nil {
 			return "", err
 		}
 		registered.ExpiresAt = jwt.NewNumericDate(expires)
-		return s.manager.GenerateClaims(&SessionClaims{RegisteredClaims: registered, SessionID: id, Generation: generation, TokenUse: use})
+		return s.manager.GenerateClaims(&SessionClaims{
+			RegisteredClaims: registered,
+			SessionID:        id,
+			Generation:       generation,
+			TokenUse:         use,
+			LoginAt:          loginAtMilli,
+		})
 	}
-	access, err := sign("access", now.Add(s.accessTTL))
+	access, err := sign("access", accessExpiry)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	refresh, err := sign("refresh", expiry)
+	refresh, err := sign("refresh", refreshExpiry)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	return &TokenPair{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: int64(s.accessTTL.Seconds())}, expiry, nil
+	return &TokenPair{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(accessExpiry.Sub(now).Seconds()),
+	}, refreshExpiry, nil
 }

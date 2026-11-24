@@ -78,6 +78,8 @@ func TestStatusOf(t *testing.T) {
 		{name: "invalid token", err: ErrTokenInvalid, code: http.StatusUnauthorized, challenge: `Bearer error="invalid_token"`},
 		{name: "invalid token wrapped", err: fmt.Errorf("wrapped: %w", ErrTokenInvalid), code: http.StatusUnauthorized, challenge: `Bearer error="invalid_token"`},
 		{name: "invalid session", err: ErrSessionInvalid, code: http.StatusUnauthorized, challenge: `Bearer error="invalid_token"`},
+		{name: "csrf mismatch", err: ErrCSRFMismatch, code: http.StatusForbidden},
+		{name: "wrapped csrf mismatch", err: fmt.Errorf("wrapped: %w", ErrCSRFMismatch), code: http.StatusForbidden},
 		{name: "storage failure", err: storageErr, code: http.StatusServiceUnavailable},
 		{name: "wrapped storage failure", err: fmt.Errorf("wrapped: %w", storageErr), code: http.StatusServiceUnavailable},
 	}
@@ -220,6 +222,31 @@ func TestMiddlewareCustomErrorHandler(t *testing.T) {
 	})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	assert.True(t, called)
 	assert.Equal(t, http.StatusTeapot, w.Code)
+}
+
+func TestMiddlewareAuthErrorHook(t *testing.T) {
+	var seen []error
+	authFn := func(context.Context, *http.Request) (string, error) {
+		return "", ErrTokenInvalid
+	}
+	mw := NewMiddleware(authFn, WithAuthErrorHook(func(_ context.Context, _ *http.Request, err error) {
+		seen = append(seen, err)
+	}))
+
+	w := httptest.NewRecorder()
+	mw.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.ErrorIs(t, seen[0], ErrTokenInvalid)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "the hook must not change the response")
+
+	// Success must not call the hook.
+	t.Run("success", func(t *testing.T) {
+		seen = nil
+		ok := NewMiddleware(func(context.Context, *http.Request) (string, error) { return "42", nil },
+			WithAuthErrorHook(func(context.Context, *http.Request, error) { seen = append(seen, nil) }))
+		ok.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(
+			httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		assert.Empty(t, seen)
+	})
 }
 
 func TestMiddlewareConcurrentIdentities(t *testing.T) {

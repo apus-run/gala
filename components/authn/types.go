@@ -18,7 +18,12 @@
 //
 // - JwtAuth with pluggable claims and an optional revocation store | JwtAuth：可插拔 claims、可选吊销存储
 // - SessionAuth with one-time refresh rotation | SessionAuth：刷新令牌一次性轮换
+// - Optional absolute session cap that survives refresh | 可选的绝对会话上限，刷新不重置
 // - Generic net/http middleware plus Bearer/cookie/query token sources | 通用 net/http 中间件与 Bearer/Cookie/Query 令牌来源
+// - Header and cookie carriers delivering the issued pair | 令牌交付器：Header 与 Cookie 两种方式
+// - Cookie delivery with XSRF double-submit protection | Cookie 交付附带 XSRF 双提交防护
+// - OriginGuard for login/logout cross-site protection | OriginGuard 保护登录/登出
+// - WithAuthErrorHook for logging and metrics | WithAuthErrorHook 接入日志与指标
 // - StatusOf maps auth errors to HTTP statuses and challenges | StatusOf 把认证错误映射为 HTTP 状态码与质询
 //
 // # Example | 示例
