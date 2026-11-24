@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"runtime"
+	"slices"
 )
 
 // AppError 用 HTTP 状态码和稳定的 Reason 标识业务错误。消息和元数据可以公开，底层原因供日志和错误链检查使用。
 //
-// 预定义错误可跨请求共享。WithMessage、KV 和 Wrap 均返回副本，Metadata 返回可独立修改的 map。
+// 预定义错误可跨请求共享。WithMessage、KV 和 Wrap 均返回副本，Metadata 返回可独立修改的 map；
+// Wrap 和 WithStack 在首次派生的副本上捕获调用栈，栈只用于日志诊断，不进入响应。
 // 调用方应避免覆写共享实例或重新赋值预定义变量。底层原因的并发安全由其实现负责。
 //
 // 成功时返回 nil。AppError 的零值按内部服务错误（HTTP 500）响应，公开字段回填 [ErrInternal]。
@@ -22,6 +25,7 @@ type AppError struct {
 	message  string            // 可公开的消息，不用于判断错误类别。
 	metadata map[string]string // 可公开的补充信息；只通过复制后写入修改。
 	cause    error             // 原始原因，不进入 Body。
+	stack    []string          // 派生点捕获的调用栈；只进入日志。
 }
 
 // New 用声明的 HTTP 状态码、稳定的业务标识和公开文案创建错误。
@@ -76,6 +80,9 @@ func (e *AppError) LogValue() slog.Value {
 	if e.cause != nil {
 		attrs = append(attrs, slog.String("cause", fmt.Sprint(e.cause)))
 	}
+	if len(e.stack) > 0 {
+		attrs = append(attrs, slog.Any("stack", e.Stack()))
+	}
 	return slog.GroupValue(attrs...)
 }
 
@@ -113,10 +120,55 @@ func (e *AppError) KV(key, value string) *AppError {
 	return &c
 }
 
-// Wrap 返回将底层原因替换为 cause 的副本，保留公开字段。
+// Wrap 返回将底层原因替换为 cause 的副本，保留公开字段。附加非 nil 原因时，若副本还没有栈，捕获当前调用栈。
 // cause 为 nil 时清除已有原因。
 func (e *AppError) Wrap(cause error) *AppError {
 	c := *e
 	c.cause = cause
+	if cause != nil && c.stack == nil {
+		c.stack = captureStack()
+	}
 	return &c
+}
+
+// WithStack 返回捕获了当前调用栈的副本；副本已有栈时原样返回，不覆盖。
+func (e *AppError) WithStack() *AppError {
+	if e.stack != nil {
+		return e
+	}
+	c := *e
+	c.stack = captureStack()
+	return &c
+}
+
+// Stack 返回捕获的调用栈副本；没有捕获时返回 nil。
+func (e *AppError) Stack() []string { return slices.Clone(e.stack) }
+
+// withCause 复制错误并替换原因，不捕获调用栈；供 HTTP 出口归一化使用。
+func (e *AppError) withCause(cause error) *AppError {
+	c := *e
+	c.cause = cause
+	return &c
+}
+
+// stackDepth 是每次捕获的调用栈层数。
+const stackDepth = 5
+
+// captureStack 记录调用点向上的调用栈。
+func captureStack() []string {
+	pcs := make([]uintptr, stackDepth)
+	n := runtime.Callers(3, pcs) // 跳过 Callers、本函数和 Wrap/WithStack
+	if n == 0 {
+		return nil
+	}
+	frames := runtime.CallersFrames(pcs[:n])
+	stack := make([]string, 0, n)
+	for {
+		frame, more := frames.Next()
+		stack = append(stack, fmt.Sprintf("%s:%d %s", frame.File, frame.Line, frame.Function))
+		if !more {
+			break
+		}
+	}
+	return stack
 }

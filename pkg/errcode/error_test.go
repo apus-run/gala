@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -111,6 +112,7 @@ func TestLogValue(t *testing.T) {
 			Message  string
 			Metadata map[string]string
 			Cause    string
+			Stack    []string
 		}
 	}
 	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
@@ -123,7 +125,49 @@ func TestLogValue(t *testing.T) {
 	if !strings.Contains(got.Cause, "load user:") || !strings.Contains(got.Cause, cause.Error()) {
 		t.Fatalf("unexpected log cause: %q", got.Cause)
 	}
+	if !strings.Contains(strings.Join(got.Stack, "\n"), "TestLogValue") {
+		t.Fatalf("unexpected log stack: %v", got.Stack)
+	}
 	if got := (*AppError)(nil).LogValue(); got.Kind() != slog.KindString || got.String() != "<nil>" {
 		t.Fatalf("typed nil logged as %v", got)
+	}
+}
+
+func TestStackCapture(t *testing.T) {
+	if got := ErrNotFound.Stack(); got != nil {
+		t.Fatal("predefined errors must not capture an init-time stack")
+	}
+
+	e := ErrConflict.Wrap(errors.New("boom"))
+	st := e.Stack()
+	if !strings.Contains(strings.Join(st, "\n"), "TestStackCapture") {
+		t.Fatalf("Wrap stack = %v", st)
+	}
+	if ErrConflict.Stack() != nil {
+		t.Fatal("Wrap must not attach a stack to the shared predefined error")
+	}
+
+	// 已有栈时保留先捕获的那次，不被后续派生覆盖。
+	if got := e.Wrap(errors.New("other")); !slices.Equal(got.Stack(), st) {
+		t.Fatalf("Wrap overwrote the first stack: %v", got.Stack())
+	}
+	if got := e.WithStack(); !slices.Equal(got.Stack(), st) {
+		t.Fatalf("WithStack overwrote the first stack: %v", got.Stack())
+	}
+
+	// Stack 返回副本，调用方修改不影响错误。
+	st[0] = "mutated"
+	if e.Stack()[0] == "mutated" {
+		t.Fatal("Stack() must return a copy")
+	}
+}
+
+func TestWithStackAndWrapNil(t *testing.T) {
+	e := New(500, "Manual.Failure", "failed").WithStack()
+	if !strings.Contains(strings.Join(e.Stack(), "\n"), "TestWithStackAndWrapNil") {
+		t.Fatalf("WithStack stack = %v", e.Stack())
+	}
+	if got := ErrNotFound.Wrap(nil); got.Stack() != nil {
+		t.Fatalf("Wrap(nil) must not capture a stack: %v", got.Stack())
 	}
 }

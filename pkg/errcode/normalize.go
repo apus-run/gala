@@ -14,13 +14,14 @@ type Mapper func(err error) *AppError
 // Normalize 为 HTTP 出口确定错误分类。nil 输入返回 nil，其他输入均返回非 nil 的 *AppError。
 //
 // 分类按以下优先级进行：
-//  1. 用 [errors.As] 查找第一个 *AppError。如果匹配的是 nil 指针，使用 [ErrInternal]。
+//  1. 用 [errors.AsType] 查找第一个 *AppError。如果匹配的是 nil 指针，使用 [ErrInternal]。
 //  2. 按传入顺序调用非 nil 的 Mapper，采用第一个非 nil 结果。
 //  3. [context.DeadlineExceeded]、[os.ErrDeadlineExceeded]，或错误链中第一个实现 Timeout() bool 的错误，且其 Timeout() 返回 true，使用 [ErrTimeout]。
 //  4. [context.Canceled] 使用 [ErrCanceled]，其余错误使用 [ErrInternal]。
 //
 // 直接传入有效的 *AppError 会得到同一指针。对于包装或 [errors.Join] 的输入，
 // 结果保留完整输入作为底层原因，供日志、[errors.Is] 和 [errors.As] 访问外层上下文及其他分支。
+// 归一化在 HTTP 出口运行，不捕获调用栈；栈由业务侧的 [AppError.Wrap] 或 [AppError.WithStack] 记录，已有栈原样保留。
 //
 // 返回类型为 error 的业务函数应在成功时直接返回 nil。将 Normalize(nil) 转为 error 会得到含 nil 指针的非 nil 接口。
 func Normalize(err error, mappers ...Mapper) *AppError {
@@ -28,15 +29,14 @@ func Normalize(err error, mappers ...Mapper) *AppError {
 		return nil
 	}
 
-	var e *AppError
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*AppError](err); ok {
 		if e == nil {
-			return ErrInternal.Wrap(err)
+			return ErrInternal.withCause(err)
 		}
 		if err == e {
 			return e
 		}
-		return e.Wrap(err)
+		return e.withCause(err)
 	}
 
 	for _, mapper := range mappers {
@@ -44,20 +44,20 @@ func Normalize(err error, mappers ...Mapper) *AppError {
 			continue
 		}
 		if mapped := mapper(err); mapped != nil {
-			return mapped.Wrap(err)
+			return mapped.withCause(err)
 		}
 	}
 
 	// 先识别标准库超时原因，避免外层 Timeout() == false 将其遮蔽。
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
-		return ErrTimeout.Wrap(err)
+		return ErrTimeout.withCause(err)
 	}
 	var timeout interface{ Timeout() bool }
 	if errors.As(err, &timeout) && timeout.Timeout() {
-		return ErrTimeout.Wrap(err)
+		return ErrTimeout.withCause(err)
 	}
 	if errors.Is(err, context.Canceled) {
-		return ErrCanceled.Wrap(err)
+		return ErrCanceled.withCause(err)
 	}
-	return ErrInternal.Wrap(err)
+	return ErrInternal.withCause(err)
 }

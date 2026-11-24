@@ -208,6 +208,20 @@ func TestNormalize_DeadlineIsNotHiddenByNonTimeoutWrapper(t *testing.T) {
 	}
 }
 
+func TestNormalize_StackPolicy(t *testing.T) {
+	if got := Normalize(errors.New("raw")); got.Stack() != nil {
+		t.Fatalf("Normalize must not capture a stack at the HTTP boundary: %v", got.Stack())
+	}
+	origin := ErrNotFound.Wrap(errors.New("origin"))
+	got := Normalize(fmt.Errorf("load: %w", origin))
+	if len(got.Stack()) == 0 {
+		t.Fatal("the business-side stack must survive normalization")
+	}
+	if !errors.Is(got, origin) {
+		t.Fatal("normalization lost the original error")
+	}
+}
+
 func TestNormalize_ConcurrentIndependentPolicies(t *testing.T) {
 	raw := errors.New("backend failure")
 	policies := []struct {

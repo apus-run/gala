@@ -295,8 +295,9 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `Message()` / `WithMessage(text)` | 读取或替换当前实例的文案 |
 | `KV(key, value)` / `Metadata()` | 添加可公开的字符串键值，或读取元数据副本。同名键取最后一次设置的值 |
 | `Wrap(cause)` / `Unwrap()` | 替换或读取底层原因。`Wrap(nil)` 清除副本上的原因 |
+| `WithStack()` / `Stack()` | 捕获或读取调用栈副本；已有栈时 `WithStack` 原样返回 |
 
-`WithMessage`、`KV` 和 `Wrap` 都返回副本。请求可以从同一个预定义错误派生出各自的实例，并发复用时应避免重新赋值共享变量。
+`WithMessage`、`KV` 和 `Wrap` 都返回副本。请求可以从同一个预定义错误派生出各自的实例，并发复用时应避免重新赋值共享变量。`Wrap` 附加非 nil 原因时在首次派生的副本上捕获调用栈（5 层），供日志定位；栈不进入响应，HTTP 出口的 `Normalize` 不再重复捕获。
 
 ### 预定义错误速查
 
@@ -357,7 +358,7 @@ func mapUserLookup(err error) *errcode.AppError {
 
 **内部故障。** 数据库或上游服务故障可通过 `errcode.ErrInternal.Wrap(err)` 返回。当前错误与 `ErrInternal` 的声明状态和 Reason 均相同时，响应的 `detail` 固定为 `Internal server error.`。即使通过 `WithMessage` 加入了诊断信息，这条规则也适用。独立定义的其他 500 类业务错误使用各自的文案。所有错误的 `KV` 元数据都可能返回客户端，只应放入可公开的值。零值 `AppError` 按 500 响应，`reason` 和 `detail` 回填 `ErrInternal` 的预定义值。
 
-**日志字段。** `slog.Log(ctx, level, "request failed", "err", e)` 会通过 `LogValue()` 输出 `code`、`reason`、`message` 以及可选的 `metadata`、`cause`。其中 `code` 为声明状态，`cause` 保留底层错误文本。`Error()` 也包含诊断细节，生成 HTTP 响应时应使用 `Respond` 返回的 `Body`。
+**日志字段。** `slog.Log(ctx, level, "request failed", "err", e)` 会通过 `LogValue()` 输出 `code`、`reason`、`message` 以及可选的 `metadata`、`cause`、`stack`。其中 `code` 为声明状态，`cause` 保留底层错误文本，`stack` 是业务侧 `Wrap` 或 `WithStack` 捕获的调用栈。`Error()` 也包含诊断细节，生成 HTTP 响应时应使用 `Respond` 返回的 `Body`。
 
 ## 本地验证
 
