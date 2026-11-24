@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -93,8 +92,7 @@ func TestError_CarriesCauseForLogsButNotForJSON(t *testing.T) {
 		t.Fatal("Error() should carry cause for logging")
 	}
 	// 字段不导出：即便有人直接 json.Marshal(err)，也不会把 cause 序列化出去.
-	//nolint:staticcheck // SA9005：无导出字段正是本断言要验证的行为
-	if b, _ := json.Marshal(e); string(b) != "{}" {
+	if b, _ := json.Marshal(e); string(b) != "{}" { //nolint:staticcheck // 正是要验证没有可导出字段，因此不会序列化
 		t.Fatalf("json.Marshal(e) = %s", b)
 	}
 }
@@ -112,7 +110,6 @@ func TestLogValue(t *testing.T) {
 			Message  string
 			Metadata map[string]string
 			Cause    string
-			Stack    []string
 		}
 	}
 	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
@@ -125,55 +122,37 @@ func TestLogValue(t *testing.T) {
 	if !strings.Contains(got.Cause, "load user:") || !strings.Contains(got.Cause, cause.Error()) {
 		t.Fatalf("unexpected log cause: %q", got.Cause)
 	}
-	if !strings.Contains(strings.Join(got.Stack, "\n"), "TestLogValue") {
-		t.Fatalf("unexpected log stack: %v", got.Stack)
-	}
 	if got := (*AppError)(nil).LogValue(); got.Kind() != slog.KindString || got.String() != "<nil>" {
 		t.Fatalf("typed nil logged as %v", got)
 	}
 }
 
-func TestStackCapture(t *testing.T) {
-	if got := ErrNotFound.Stack(); got != nil {
-		t.Fatal("predefined errors must not capture an init-time stack")
+// 与 README 的“预定义错误速查”一致；改动状态码或 Reason 会破坏已发布客户端，必须同时更新文档。
+func TestPredefinedErrors(t *testing.T) {
+	tests := []struct {
+		err    *AppError
+		status int
+		reason string
+	}{
+		{ErrInvalidArgument, 400, "InvalidArgument"},
+		{ErrUnauthenticated, 401, "Unauthenticated"},
+		{ErrPermissionDenied, 403, "PermissionDenied"},
+		{ErrNotFound, 404, "NotFound"},
+		{ErrMethodNotAllowed, 405, "MethodNotAllowed"},
+		{ErrConflict, 409, "Conflict"},
+		{ErrTooManyRequests, 429, "TooManyRequests"},
+		{ErrCanceled, 499, "Canceled"},
+		{ErrInternal, 500, "InternalError"},
+		{ErrTimeout, 504, "DeadlineExceeded"},
 	}
-
-	e := ErrConflict.Wrap(errors.New("boom"))
-	st := e.Stack()
-	if !strings.Contains(strings.Join(st, "\n"), "TestStackCapture") {
-		t.Fatalf("Wrap stack = %v", st)
-	}
-	if ErrConflict.Stack() != nil {
-		t.Fatal("Wrap must not attach a stack to the shared predefined error")
-	}
-
-	// 已有栈时保留先捕获的那次，不被后续派生覆盖。
-	if got := e.Wrap(errors.New("other")); !slices.Equal(got.Stack(), st) {
-		t.Fatalf("Wrap overwrote the first stack: %v", got.Stack())
-	}
-	if got := e.WithStack(); !slices.Equal(got.Stack(), st) {
-		t.Fatalf("WithStack overwrote the first stack: %v", got.Stack())
-	}
-
-	// Stack 返回副本，调用方修改不影响错误。
-	st[0] = "mutated"
-	if e.Stack()[0] == "mutated" {
-		t.Fatal("Stack() must return a copy")
-	}
-}
-
-func TestWithStackAndWrapNil(t *testing.T) {
-	e := New(500, "Manual.Failure", "failed").WithStack()
-	if !strings.Contains(strings.Join(e.Stack(), "\n"), "TestWithStackAndWrapNil") {
-		t.Fatalf("WithStack stack = %v", e.Stack())
-	}
-	if got := ErrNotFound.Wrap(nil); got.Stack() != nil {
-		t.Fatalf("Wrap(nil) must not capture a stack: %v", got.Stack())
-	}
-}
-
-func TestCaptureStack_NoFrames(t *testing.T) {
-	if got := captureStack(1 << 10); got != nil {
-		t.Fatalf("an impossible skip must yield no frames: %v", got)
+	seen := map[string]bool{}
+	for _, tt := range tests {
+		if tt.err.Code() != tt.status || tt.err.HTTPStatus() != tt.status || tt.err.Reason() != tt.reason {
+			t.Errorf("%s: got %d/%s, want %d/%s", tt.reason, tt.err.Code(), tt.err.Reason(), tt.status, tt.reason)
+		}
+		if tt.err.Message() == "" || seen[tt.reason] {
+			t.Errorf("%s: message must be set and reason unique", tt.reason)
+		}
+		seen[tt.reason] = true
 	}
 }

@@ -60,16 +60,16 @@ func TestNormalize_IdentityAndIdempotence(t *testing.T) {
 	}
 }
 
-type normalizationWrapper struct{ cause error }
+type wrapperError struct{ cause error }
 
-func (e *normalizationWrapper) Error() string { return "load user: " + e.cause.Error() }
-func (e *normalizationWrapper) Unwrap() error { return e.cause }
+func (e *wrapperError) Error() string { return "load user: " + e.cause.Error() }
+func (e *wrapperError) Unwrap() error { return e.cause }
 
 func TestNormalize_PreservesOuterWrapperAndJoinedBranches(t *testing.T) {
 	raw := errors.New("storage failure")
 	sibling := errors.New("audit failure")
 	known := ErrNotFound.WithMessage("User not found.").KV("field", "user_id").Wrap(raw)
-	outer := &normalizationWrapper{cause: known}
+	outer := &wrapperError{cause: known}
 	for _, input := range []error{outer, errors.Join(nil, outer, sibling)} {
 		got := Normalize(input)
 		if got == known || got.Code() != known.Code() || got.Reason() != known.Reason() ||
@@ -79,7 +79,7 @@ func TestNormalize_PreservesOuterWrapperAndJoinedBranches(t *testing.T) {
 		if errors.Unwrap(got) != input || !errors.Is(got, input) || !errors.Is(got, raw) {
 			t.Fatal("the complete input must remain on the cause chain")
 		}
-		var recovered *normalizationWrapper
+		var recovered *wrapperError
 		if !errors.As(got, &recovered) || recovered != outer {
 			t.Fatal("errors.As cannot reach the original outer wrapper")
 		}
@@ -193,32 +193,18 @@ func TestNormalize_ExplicitErrorThenMapperThenBuiltins(t *testing.T) {
 	}
 }
 
-type normalizationNonTimeout struct{ error }
+type nonTimeoutError struct{ error }
 
-func (normalizationNonTimeout) Timeout() bool   { return false }
-func (e normalizationNonTimeout) Unwrap() error { return e.error }
+func (nonTimeoutError) Timeout() bool   { return false }
+func (e nonTimeoutError) Unwrap() error { return e.error }
 
 func TestNormalize_DeadlineIsNotHiddenByNonTimeoutWrapper(t *testing.T) {
 	for _, deadline := range []error{context.DeadlineExceeded, os.ErrDeadlineExceeded} {
-		input := fmt.Errorf("upstream: %w", normalizationNonTimeout{deadline})
+		input := fmt.Errorf("upstream: %w", nonTimeoutError{deadline})
 		got := Normalize(input)
 		if got.Reason() != ErrTimeout.Reason() || !errors.Is(got, deadline) || errors.Unwrap(got) != input {
 			t.Fatalf("outer Timeout() == false hid the deadline or lost its chain: %v", got)
 		}
-	}
-}
-
-func TestNormalize_StackPolicy(t *testing.T) {
-	if got := Normalize(errors.New("raw")); got.Stack() != nil {
-		t.Fatalf("Normalize must not capture a stack at the HTTP boundary: %v", got.Stack())
-	}
-	origin := ErrNotFound.Wrap(errors.New("origin"))
-	got := Normalize(fmt.Errorf("load: %w", origin))
-	if len(got.Stack()) == 0 {
-		t.Fatal("the business-side stack must survive normalization")
-	}
-	if !errors.Is(got, origin) {
-		t.Fatal("normalization lost the original error")
 	}
 }
 

@@ -9,6 +9,8 @@ var (
 	ErrInvalidArgument = New(http.StatusBadRequest, "InvalidArgument", "Invalid argument.")
 
 	// ErrUnauthenticated 表示缺少有效身份凭据。
+	// RFC 9110 要求 401 响应必须带 WWW-Authenticate 头，说明可用的认证方案。
+	// [Respond] 不生成该头，适配器应在写响应前自行设置。
 	ErrUnauthenticated = New(http.StatusUnauthorized, "Unauthenticated", "Unauthenticated.")
 
 	// ErrPermissionDenied 表示当前身份无权执行操作。
@@ -31,12 +33,9 @@ var (
 	// ErrInternal 表示未分类的内部错误，对外使用通用消息。
 	ErrInternal = New(http.StatusInternalServerError, "InternalError", "Internal server error.")
 
-	// ErrServiceUnavailable 表示服务暂时不可用，通常是可以重试的上游或依赖故障。
-	ErrServiceUnavailable = New(http.StatusServiceUnavailable, "ServiceUnavailable", "Service unavailable.")
-
 	// ErrTimeout 是 [Normalize] 对超时错误的默认分类，使用 HTTP 504。
 	ErrTimeout = New(http.StatusGatewayTimeout, "DeadlineExceeded", "The operation timed out.")
 
-	// ErrCanceled 是 [Normalize] 对 context.Canceled 的默认分类，使用非标准状态码 499。
-	ErrCanceled = New(499, "Canceled", "Request canceled.")
+	// ErrCanceled 是 [Normalize] 对取消错误的默认分类，使用 HTTP 408。
+	ErrCanceled = New(http.StatusRequestTimeout, "Canceled", "Request canceled.")
 )

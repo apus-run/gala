@@ -295,9 +295,8 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `Message()` / `WithMessage(text)` | 读取或替换当前实例的文案 |
 | `KV(key, value)` / `Metadata()` | 添加可公开的字符串键值，或读取元数据副本。同名键取最后一次设置的值 |
 | `Wrap(cause)` / `Unwrap()` | 替换或读取底层原因。`Wrap(nil)` 清除副本上的原因 |
-| `WithStack()` / `Stack()` | 捕获或读取调用栈副本；已有栈时 `WithStack` 原样返回 |
 
-`WithMessage`、`KV` 和 `Wrap` 都返回副本。请求可以从同一个预定义错误派生出各自的实例，并发复用时应避免重新赋值共享变量。`Wrap` 附加非 nil 原因时在首次派生的副本上捕获调用栈（5 层），供日志定位；栈不进入响应，HTTP 出口的 `Normalize` 不再重复捕获。
+`WithMessage`、`KV` 和 `Wrap` 都返回副本。请求可以从同一个预定义错误派生出各自的实例，并发复用时应避免重新赋值共享变量。
 
 ### 预定义错误速查
 
@@ -312,7 +311,6 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `ErrTooManyRequests` | 429 | `TooManyRequests` |
 | `ErrCanceled` | 499 | `Canceled` |
 | `ErrInternal` | 500 | `InternalError` |
-| `ErrServiceUnavailable` | 503 | `ServiceUnavailable` |
 | `ErrTimeout` | 504 | `DeadlineExceeded` |
 
 ## 保留原因、识别错误与归一化
@@ -322,7 +320,7 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | 调用意图 | 写法 |
 | --- | --- |
 | 判断错误链中是否包含某一业务错误或底层原因 | `errors.Is(err, ErrUserNotFound)` 或 `errors.Is(err, sql.ErrNoRows)` |
-| 提取链中已有的业务错误，读取其字段 | 声明 `var e *errcode.AppError`，在 `errors.As(err, &e) && e != nil` 时读取 |
+| 提取链中已有的业务错误，读取其字段 | `e, ok := errors.AsType[*errcode.AppError](err)`，在 `ok && e != nil` 时读取 |
 | 在 HTTP 出口为任意错误确定公开分类 | `e := errcode.Normalize(err, mappers...)` |
 
 ### 用 Mapper 翻译第三方错误
@@ -340,26 +338,36 @@ func mapUserLookup(err error) *errcode.AppError {
 
 `Normalize(nil)` 返回 nil 指针。其余输入按以下顺序分类，首个匹配决定公开字段。
 
-1. 查找错误链中的第一个 `*AppError`。输入本身是有效的 `*AppError` 时原样返回。匹配到带类型的 nil 指针时归为 `ErrInternal`。
+1. 用 `errors.AsType` 查找错误链中的第一个 `*AppError`。输入本身是有效的 `*AppError` 时原样返回。匹配到带类型的 nil 指针时归为 `ErrInternal`。
 2. 按传入顺序调用非 nil 的 Mapper，采用第一个非 nil 结果。
-3. 匹配到 `context.DeadlineExceeded`、`os.ErrDeadlineExceeded`，或错误链中第一个实现 `Timeout() bool` 的错误，且其 `Timeout()` 返回 true 时，归为 `ErrTimeout`。
+3. 匹配到 `context.DeadlineExceeded`、`os.ErrDeadlineExceeded`，或链中首个实现 `Timeout() bool` 的错误返回 true 时，归为 `ErrTimeout`。
 4. 匹配到 `context.Canceled` 时归为 `ErrCanceled`，其余错误归为 `ErrInternal`。
 
 对于包装错误和 `errors.Join`，归一化结果保留完整输入作为底层原因，其他分支仍可通过 `errors.Is` 或 `errors.As` 访问。返回类型为 `error` 的业务函数在成功时应直接返回 `nil`。把 `Normalize(nil)` 赋给 `error` 会得到包含 nil 指针的非 nil 接口。
 
 ## HTTP 响应与服务端日志
 
-`AppHandler` 通过 `slog` 记录请求错误，再用 `Respond` 生成响应。HEAD 请求只发送响应头。错误响应带 `X-Content-Type-Options: nosniff` 和 `Cache-Control: no-store`，避免中间缓存复用携带每请求 metadata 的响应。使用其他 HTTP 适配器时，先调用 `Normalize`，在结果非 nil 时记录日志，再用 `status, body := errcode.Respond(e)` 获取状态与正文，并在写入前设置 `Content-Type`（`errcode.ContentType`）以及上述两个安全头。
+`AppHandler` 通过 `slog` 记录请求错误，再用 `Respond` 生成响应。HEAD 请求只发送响应头。使用其他 HTTP 适配器时，先调用 `Normalize`，在结果非 nil 时记录日志，再用 `status, body := errcode.Respond(e)` 获取状态与正文，并在写入前将 `Content-Type` 设置为 `errcode.ContentType`。
 
 **日志级别。** 响应状态为 5xx 时记为 `Error`，其余记为 `Warn`。5xx 是服务端故障，4xx 是客户端可预期的失败，不应与故障混在同一级别触发告警；OpenTelemetry 的 [HTTP 语义约定](https://opentelemetry.io/docs/specs/semconv/http/http-spans/)同样规定服务端 span 遇到 4xx 不置为错误。`AppHandler` 的日志包含请求方法和路径，不含查询串，其中可能带有凭证。响应写入失败只可能是连接已断开，`AppHandler` 与 `http.Error` 一样忽略。
 
-**405 与 Allow 头。** RFC 9110 要求 405 响应必须带 `Allow` 头，列出资源当前支持的方法。`ErrMethodNotAllowed` 只表达分类，`Respond` 不生成该头，需要适配器在写响应前自行设置。
+**必须带的响应头。** RFC 9110 要求 405 响应带 `Allow` 头，401 响应带 `WWW-Authenticate` 头。`ErrMethodNotAllowed` 和 `ErrUnauthenticated` 只表达分类，`Respond` 不生成这些头，需要适配器在写响应前自行设置。
+
+**ServeMux 自己的 404 和 405。** `http.ServeMux` 在路由未命中时自行写出 `text/plain` 响应，不经过 `AppHandler`。要让未知路径也返回 problem+json，可以注册兜底路由：
+
+```go
+mux.Handle("/", errcode.AppHandler(func(http.ResponseWriter, *http.Request) *errcode.AppError {
+	return errcode.ErrNotFound
+}))
+```
+
+兜底路由会让已注册路径上的错误方法也落入它，得到 404，而不是 `ServeMux` 原本的 405 和 `Allow` 头。需要保留 405 时，不要注册兜底路由，或在兜底处理函数中自行判断并设置 `Allow`。
 
 **客户端字段。** `Body` 使用 Problem Details 的 `title`、`status`、`detail`，并用 `reason`、`metadata` 承载业务信息。空字段在 JSON 中省略，例如 499 没有标准状态短语，响应会省略 `title`。`Respond(nil)` 返回 200 和 `Body{}`。协议格式见 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)。
 
-**内部故障。** 数据库或上游服务故障可通过 `errcode.ErrInternal.Wrap(err)` 返回。当前错误与 `ErrInternal` 的声明状态和 Reason 均相同时，响应的 `detail` 固定为 `Internal server error.`。即使通过 `WithMessage` 加入了诊断信息，这条规则也适用。独立定义的其他 500 类业务错误使用各自的文案。所有错误的 `KV` 元数据都可能返回客户端，只应放入可公开的值。零值 `AppError` 按 500 响应，`reason` 和 `detail` 回填 `ErrInternal` 的预定义值。
+**内部故障。** 数据库或上游服务故障可通过 `errcode.ErrInternal.Wrap(err)` 返回。当前错误与 `ErrInternal` 的声明状态和 Reason 均相同时，响应的 `detail` 固定为 `Internal server error.`。即使通过 `WithMessage` 加入了诊断信息，这条规则也适用。独立定义的其他 500 类业务错误使用各自的文案。所有错误的 `KV` 元数据都可能返回客户端，只应放入可公开的值。
 
-**日志字段。** `slog.Log(ctx, level, "request failed", "err", e)` 会通过 `LogValue()` 输出 `code`、`reason`、`message` 以及可选的 `metadata`、`cause`、`stack`。其中 `code` 为声明状态，`cause` 保留底层错误文本，`stack` 是业务侧 `Wrap` 或 `WithStack` 捕获的调用栈。`Error()` 也包含诊断细节，生成 HTTP 响应时应使用 `Respond` 返回的 `Body`。
+**日志字段。** `slog.Log(ctx, level, "request failed", "err", e)` 会通过 `LogValue()` 输出 `code`、`reason`、`message` 以及可选的 `metadata`、`cause`。其中 `code` 为声明状态，`cause` 保留底层错误文本。`Error()` 也包含诊断细节，生成 HTTP 响应时应使用 `Respond` 返回的 `Body`。
 
 ## 本地验证
 

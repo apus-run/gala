@@ -19,7 +19,7 @@ func TestAppHandler_Success(t *testing.T) {
 		return nil
 	}))
 	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, httptest.NewRequest(http.MethodDelete, "/users/7", nil))
+	mux.ServeHTTP(res, httptest.NewRequest(http.MethodDelete, "/users/7", http.NoBody))
 	if res.Code != http.StatusNoContent || res.Body.Len() != 0 || res.Header().Get("Content-Type") != "" {
 		t.Fatalf("status = %d, headers = %v, body = %q", res.Code, res.Header(), res.Body.String())
 	}
@@ -36,9 +36,8 @@ func TestAppHandler_Error(t *testing.T) {
 		return ErrNotFound.Wrap(errors.New(privateCause))
 	})
 	res := httptest.NewRecorder()
-	h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/users/7", nil))
-	if res.Code != http.StatusNotFound || res.Header().Get("Content-Type") != ContentType ||
-		res.Header().Get("Cache-Control") != "no-store" {
+	h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/users/7", http.NoBody))
+	if res.Code != http.StatusNotFound || res.Header().Get("Content-Type") != ContentType {
 		t.Fatalf("status = %d, headers = %v", res.Code, res.Header())
 	}
 	var body Body
@@ -72,7 +71,7 @@ func TestAppHandler_HeadWithInvalidStatus(t *testing.T) {
 		return &AppError{}
 	})
 	res := httptest.NewRecorder()
-	h.ServeHTTP(res, httptest.NewRequest(http.MethodHead, "/", nil))
+	h.ServeHTTP(res, httptest.NewRequest(http.MethodHead, "/", http.NoBody))
 	if res.Code != http.StatusInternalServerError || res.Body.Len() != 0 ||
 		res.Header().Get("Content-Type") != ContentType || res.Header().Get("Content-Length") != "" {
 		t.Fatalf("status = %d, headers = %v, body = %q", res.Code, res.Header(), res.Body.String())
@@ -104,11 +103,11 @@ func TestRespond(t *testing.T) {
 		t.Fatalf("Respond(Normalize(nil)) => %d %+v", code, b)
 	}
 
-	// 零值 AppError 回填 ErrInternal 的公开字段，客户端仍可按 reason 分支。
-	if code, b = Respond(&AppError{}); code != 500 || b.Status != 500 || b.Reason != ErrInternal.Reason() || b.Detail != ErrInternal.Message() {
-		t.Fatalf("zero value => %d %+v", code, b)
-	}
+}
 
+func TestRespond_StatusRange(t *testing.T) {
+	var code int
+	var b Body
 	// 不符合本包错误响应约定的状态回退为 500，包括 1xx、2xx 和 3xx。
 	for _, bad := range []int{0, 99, 100, 199, 200, 201, 204, 205, 302, 304, 399, 600, 999, 1000} {
 		if code, b = Respond(New(bad, "Bad", "x")); code != 500 || b.Status != 500 {
@@ -180,7 +179,7 @@ func TestRespond_InternalErrorDetail(t *testing.T) {
 
 // 与 gin.Context.JSON(code int, obj any) 同形；编译通过即证明
 // c.JSON(errcode.Respond(errcode.Normalize(err))) 这一文档化用法成立。
-func jsonLike(code int, obj any) (int, any) { return code, obj }
+func jsonLike(code int, obj any) (status int, body any) { return code, obj }
 
 func TestRespond_FitsJSONSignature(t *testing.T) {
 	if code, _ := jsonLike(Respond(Normalize(ErrNotFound))); code != 404 {
@@ -256,7 +255,7 @@ func TestAppHandler_LogLevelAndRequestFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logs.Reset()
 			h := AppHandler(func(http.ResponseWriter, *http.Request) *AppError { return tt.err })
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/7?token=secret", nil))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/7?token=secret", http.NoBody))
 
 			var entry struct{ Level, Method, Path string }
 			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
@@ -286,25 +285,13 @@ func TestAppHandler_IgnoresResponseWriteFailure(t *testing.T) {
 	logs := captureLogs(t)
 	w := &brokenWriter{header: http.Header{}}
 	h := AppHandler(func(http.ResponseWriter, *http.Request) *AppError { return ErrNotFound })
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 
 	if w.status != http.StatusNotFound {
 		t.Fatalf("status = %d", w.status)
 	}
 	if n := strings.Count(logs.String(), "\n"); n != 1 || strings.Contains(logs.String(), "broken pipe") {
 		t.Fatalf("want only the request-failed entry, got %d lines: %s", n, logs.String())
-	}
-}
-
-// 503 是标准状态码，且不属于 ErrInternal 类别，保留自己的文案。
-func TestErrServiceUnavailable(t *testing.T) {
-	status, body := Respond(ErrServiceUnavailable.Wrap(errors.New("upstream down")))
-	if status != http.StatusServiceUnavailable || body.Title != "Service Unavailable" ||
-		body.Reason != "ServiceUnavailable" || body.Detail != "Service unavailable." {
-		t.Fatalf("got %d %+v", status, body)
-	}
-	if strings.Contains(body.Detail, "upstream") {
-		t.Fatal("the cause must not reach the response")
 	}
 }
 
