@@ -2,6 +2,7 @@ package accesslog
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,10 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gavv/httpexpect/v2"
 	"github.com/gin-gonic/gin"
-
-	"github.com/apus-run/gala/components/ginx/middlewares/requstid"
 )
 
 func GinHandler(r *gin.Engine) *gin.Engine {
@@ -72,7 +70,13 @@ func TestRequest(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.Default()
 
-	engine.Use(requstid.RequestID())
+	// A local stand-in for the requstid middleware keeps this module free of a
+	// dependency on a sibling module just for a test fixture.
+	// 用本地替身取代 requstid 中间件，避免仅为测试依赖一个同级的子模块。
+	engine.Use(func(c *gin.Context) {
+		c.Header("X-Request-ID", "test-request")
+		c.Next()
+	})
 	// custom print log
 	engine.Use(NewBuilder(
 		func(ctx context.Context, al *AccessLog) {
@@ -90,17 +94,29 @@ func TestRequest(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	e := httpexpect.Default(t, server.URL)
-
-	e.GET("/ping").
-		Expect().
-		Status(http.StatusOK).JSON().Object().HasValue("msg", "ping")
-	e.GET("/foo").
-		Expect().
-		Status(http.StatusOK).JSON().Object().HasValue("msg", "foo")
-	e.GET("/hello").
-		Expect().
-		Status(http.StatusOK).JSON().Object().HasValue("msg", "hello world")
+	for _, tc := range []struct{ path, want string }{
+		{"/ping", "ping"},
+		{"/foo", "foo"},
+		{"/hello", "hello world"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := http.Get(server.URL + tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("want 200, got %d", resp.StatusCode)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["msg"] != tc.want {
+				t.Fatalf("want msg %q, got %v", tc.want, body["msg"])
+			}
+		})
+	}
 }
 
 func TestPortlessHostDoesNotPanic(t *testing.T) {

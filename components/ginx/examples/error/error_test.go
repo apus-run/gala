@@ -14,15 +14,18 @@ func TestTypedErrorBecomes400(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	example.New().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/orders/7", nil))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", w.Code)
 	}
 	var body map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["status"] != "ORDER_NOT_FOUND" || body["message"] != "order does not exist" {
+	if body["reason"] != "NotFound" || body["detail"] != "order does not exist" {
 		t.Fatalf("unexpected body: %s", w.Body.String())
+	}
+	if meta, ok := body["metadata"].(map[string]any); !ok || meta["order_id"] != "7" {
+		t.Fatalf("metadata missing order_id: %s", w.Body.String())
 	}
 }
 

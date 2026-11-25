@@ -12,8 +12,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/apus-run/gala/pkg/errorsx"
 )
 
 func TestBind(t *testing.T) {
@@ -292,7 +290,7 @@ func TestBCErrorDoesNotReturnOK(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "failed")
 }
 
-func TestWrapperFuncsPreserveErrorsxHTTPStatus(t *testing.T) {
+func TestWrapperFuncsPreserveHTTPStatus(t *testing.T) {
 	testCases := []struct {
 		name       string
 		method     string
@@ -309,9 +307,7 @@ func TestWrapperFuncsPreserveErrorsxHTTPStatus(t *testing.T) {
 					return Result{Code: CodeErr, Msg: "failed"}, err
 				}))
 			},
-			err: errorsx.InvalidParams("INVALID_PARAMS").
-				WithMessage("invalid input").
-				KV("field", "name"),
+			err:        statusErr{http.StatusBadRequest},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -322,7 +318,7 @@ func TestWrapperFuncsPreserveErrorsxHTTPStatus(t *testing.T) {
 					return Result{Code: CodeErr, Msg: "failed"}, err
 				}))
 			},
-			err:        errorsx.NotFound("NOT_FOUND").WithMessage("resource not found"),
+			err:        statusErr{http.StatusNotFound},
 			wantStatus: http.StatusNotFound,
 			body:       `{}`,
 		},
@@ -337,7 +333,7 @@ func TestWrapperFuncsPreserveErrorsxHTTPStatus(t *testing.T) {
 					})(ctx)
 				})
 			},
-			err:        errorsx.InvalidParams("INVALID_PARAMS").WithMessage("invalid input"),
+			err:        statusErr{http.StatusBadRequest},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -351,7 +347,7 @@ func TestWrapperFuncsPreserveErrorsxHTTPStatus(t *testing.T) {
 					})(ctx)
 				})
 			},
-			err:        errorsx.NotFound("NOT_FOUND").WithMessage("resource not found"),
+			err:        statusErr{http.StatusNotFound},
 			wantStatus: http.StatusNotFound,
 			body:       `{}`,
 		},

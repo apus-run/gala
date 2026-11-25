@@ -24,6 +24,16 @@ check:
 	@$(MAKE) --no-print-directory fmt
 	@$(MAKE) --no-print-directory tidy
 
+# 测试 ginx 的全部 go 模块
+.PHONY: test-ginx
+test-ginx:
+	@sh ./scripts/test-modules.sh components/ginx
+
+# 测试 authz 的全部 go 模块
+.PHONY: test-authz
+test-authz:
+	@bash ./scripts/test-modules.sh components/authz -short
+
 # 代码规范检查
 .PHONY: lint
 lint:

@@ -39,5 +39,3 @@ Details about exposed Prometheus metrics.
 ### Grafana charts
 
 import [gin_grafana.json](gin_grafana.json) to your grafana, datasource name is `Prometheus`, change the name of the datasource according to your actual datasource.
-
-![metrics](gin_grafana.jpg)

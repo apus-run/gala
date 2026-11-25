@@ -28,19 +28,19 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/atomic"
 )
 
 // Builder records HTTP request/response details | Builder 记录 HTTP 请求/响应细节.
 type Builder struct {
-	allowReqBody  *atomic.Bool
-	allowRespBody *atomic.Bool
+	allowReqBody  atomic.Bool
+	allowRespBody atomic.Bool
 
 	// Max length of http response body and request URL | http 响应体与请求 URL 的最大长度.
-	maxLength *atomic.Int64
+	maxLength atomic.Int64
 
 	// Routes whose logs are skipped | 忽略指定路由的日志打印.
 	ignoreRoutes map[string]struct{}
@@ -51,13 +51,7 @@ type Builder struct {
 // NewBuilder creates a Builder using fn as the log sink
 // | NewBuilder 创建 Builder，fn 为日志输出函数。
 func NewBuilder(fn func(ctx context.Context, al *AccessLog)) *Builder {
-	return &Builder{
-		// Not logged by default | 默认不打印。
-		allowReqBody:  atomic.NewBool(false),
-		allowRespBody: atomic.NewBool(false),
-
-		maxLength: atomic.NewInt64(1024), // 1 MiB
-
+	b := &Builder{
 		ignoreRoutes: map[string]struct{}{
 			"/ping":   {},
 			"/pong":   {},
@@ -66,6 +60,9 @@ func NewBuilder(fn func(ctx context.Context, al *AccessLog)) *Builder {
 
 		logFunc: fn,
 	}
+	// 1 KiB default | 默认 1 KiB
+	b.maxLength.Store(1024)
+	return b
 }
 
 // AllowReqBody enables logging the request body | AllowReqBody 开启请求体日志。

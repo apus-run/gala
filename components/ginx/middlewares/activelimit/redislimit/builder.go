@@ -6,12 +6,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 	"uuid"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/atomic"
 )
 
 // counter is the minimal Redis command surface required | counter 是所需的最小 Redis 命令接口.
@@ -43,7 +43,7 @@ const releaseLease = `return redis.call('ZREM', KEYS[1], ARGV[1])`
 // RedisActiveLimit 通过一个租约 key 在多实例间共享准入额度。setter 需在
 // Build 前配置（SetMaxActive 除外，它并发安全）；使用后不要拷贝实例。
 type RedisActiveLimit struct {
-	maxActive        *atomic.Int64
+	maxActive        atomic.Int64
 	key              string
 	cmd              counter
 	logFn            func(msg any, args ...any)
@@ -62,14 +62,15 @@ func NewRedisActiveLimit(cmd counter, maxActive int64, key string) *RedisActiveL
 	if cmd == nil || key == "" {
 		panic("redislimit: Redis client and key are required")
 	}
-	return &RedisActiveLimit{
-		maxActive:        atomic.NewInt64(maxActive),
+	l := &RedisActiveLimit{
 		key:              key + ":leases",
 		cmd:              cmd,
 		leaseTTL:         30 * time.Second,
 		operationTimeout: time.Second,
 		logFn:            func(msg any, args ...any) { fmt.Printf("%v: %v\n", msg, args) },
 	}
+	l.maxActive.Store(maxActive)
+	return l
 }
 
 // SetMaxActive changes the admission limit; zero or negative refuses new requests.

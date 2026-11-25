@@ -15,4 +15,5 @@ jobs:
           cache-dependency-path: |
             components/authz/go.sum
             components/ginx/go.sum
+            components/ginx/**/go.sum
       - run: make test-authz
