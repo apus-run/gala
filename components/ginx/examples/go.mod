@@ -27,7 +27,7 @@ require (
 	github.com/apus-run/gala/components/ginx/middlewares/timeout v0.17.1
 	github.com/apus-run/gala/components/ginx/middlewares/tracing v0.17.1
 	github.com/apus-run/gala/components/sse v0.17.1
-	github.com/apus-run/gala/pkg/errcode v0.17.1
+	github.com/apus-run/gala/pkg/errcode v0.17.4
 	github.com/gin-gonic/gin v1.12.0
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/stretchr/testify v1.11.1
