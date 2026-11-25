@@ -1,11 +1,11 @@
 // Package server demonstrates a realistic ginx middleware chain: identity,
 // logging, recovery and header hygiene engine-wide, then per-group protection
 // (timeout, active limit, circuit breaker), with liveness kept outside the
-// protected group. The Use order is the point of this example; each call says
+// protected group, plus a crawler-only group for search engines. The Use order is the point of this example; each call says
 // why it sits where it does. Swap the business handlers for your own.
 // Package server 演示一条贴近真实的 ginx 中间件链：身份、日志、recover 和
 // 响应头治理覆盖整个引擎，之后是组级防护（超时、活跃请求上限、熔断器），
-// 存活检查放在受保护组之外。本示例的重点在于 Use 的顺序；每次调用都说明
+// 存活检查放在受保护组之外，另有一个只对搜索引擎开放的爬虫分组。本示例的重点在于 Use 的顺序；每次调用都说明
 // 自己为何放在这个位置。业务 handler 请替换为你自己的实现。
 package server
 
@@ -19,6 +19,7 @@ import (
 	"github.com/apus-run/gala/components/ginx/middlewares/circuitbreaker"
 	"github.com/apus-run/gala/components/ginx/middlewares/cors"
 	"github.com/apus-run/gala/components/ginx/middlewares/cost"
+	"github.com/apus-run/gala/components/ginx/middlewares/crawlerdetect"
 	"github.com/apus-run/gala/components/ginx/middlewares/gzip"
 	"github.com/apus-run/gala/components/ginx/middlewares/helmet"
 	"github.com/apus-run/gala/components/ginx/middlewares/recovery"
@@ -40,7 +41,7 @@ type Server struct {
 // write it to your logger, MQ or both.
 // New 组装整条链。logAccess 每收到一个完成的请求就得到一条记录；
 // 可写入你的日志器、MQ 或两者。
-func New(logAccess func(context.Context, *accesslog.AccessLog)) *Server {
+func New(logAccess func(context.Context, *accesslog.AccessLog), crawlerResolver ...crawlerdetect.Resolver) *Server {
 	breaker := circuitbreaker.NewBuilder().
 		SetFailureThreshold(3).
 		SetTimeout(10 * time.Second)
@@ -82,6 +83,18 @@ func New(logAccess func(context.Context, *accesslog.AccessLog)) *Server {
 	// Per-request latency of the whole chain, logged after it unwinds.
 	// 整条链的单请求耗时，在链路回溯完成后记录。
 	r.Use(cost.NewBuilder().Build())
+
+	// A crawler-only surface: verification rejects every non-crawler, so mount
+	// it on a dedicated group, never engine-wide.
+	// 仅面向爬虫的入口：校验会拒绝所有非爬虫，因此挂在独立分组上，
+	// 不要在引擎级挂载。
+	crawlerBuilder := crawlerdetect.NewBuilder()
+	if len(crawlerResolver) > 0 {
+		crawlerBuilder.SetResolver(crawlerResolver[0])
+	}
+	seo := r.Group("/seo")
+	seo.Use(crawlerBuilder.Build())
+	seo.GET("/orders/:id", getOrder)
 
 	api := r.Group("/api/v1")
 	{

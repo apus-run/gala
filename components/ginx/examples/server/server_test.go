@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -115,5 +116,35 @@ func TestCompressedPanicReturns500JSON(t *testing.T) {
 	}
 	if result.Code != 500 {
 		t.Fatalf("unexpected error body: %s", body)
+	}
+}
+
+// fakeCrawlerResolver verifies every IP as the Baidu test crawler.
+// fakeCrawlerResolver 把所有 IP 都当作校验通过的百度爬虫。
+type fakeCrawlerResolver struct{}
+
+func (fakeCrawlerResolver) LookupAddr(context.Context, string) ([]string, error) {
+	return []string{"crawl-111-206-198-69.baidu.com."}, nil
+}
+
+func (fakeCrawlerResolver) LookupIP(context.Context, string) ([]net.IP, error) {
+	return []net.IP{net.ParseIP("111.206.198.69")}, nil
+}
+
+func TestCrawlerGroupOnlyAdmitsVerifiedCrawlers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := New(func(context.Context, *accesslog.AccessLog) {}, fakeCrawlerResolver{})
+
+	if w := get(s.Engine, "/seo/orders/42"); w.Code != http.StatusForbidden {
+		t.Fatalf("browser: want 403, got %d", w.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/seo/orders/42", nil)
+	req.RemoteAddr = "111.206.198.69:1234"
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Baiduspider/2.0)")
+	w := httptest.NewRecorder()
+	s.Engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("verified crawler: want 200, got %d", w.Code)
 	}
 }
