@@ -52,6 +52,29 @@ func TestMetadata_ReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestWithMetadata_CopiesAndReplaces(t *testing.T) {
+	src := map[string]string{"tenant": "a", "user": "7"}
+	e := ErrConflict.WithMetadata(src)
+	src["tenant"] = "b"
+
+	if got := e.Metadata()["tenant"]; got != "a" {
+		t.Fatalf("WithMetadata must copy the map, got %q", got)
+	}
+	if ErrConflict.Metadata() != nil {
+		t.Fatal("WithMetadata must not mutate the receiver")
+	}
+	derived := e.WithMessage("m")
+	if len(derived.Metadata()) != 2 || derived.Metadata()["user"] != "7" {
+		t.Fatalf("derived metadata = %v", derived.Metadata())
+	}
+	if e.WithMetadata(map[string]string{"other": "1"}).Metadata()["tenant"] != "" {
+		t.Fatal("WithMetadata must replace, not merge")
+	}
+	if e.WithMetadata(nil).Metadata() != nil {
+		t.Fatal("WithMetadata(nil) must clear the metadata")
+	}
+}
+
 func TestIs(t *testing.T) {
 	err := fmt.Errorf("load user: %w", ErrNotFound.WithMessage("user 7 not found"))
 	if !errors.Is(err, ErrNotFound) {
@@ -147,6 +170,8 @@ func TestPredefinedErrors(t *testing.T) {
 		{ErrTooManyRequests, 429, "TooManyRequests"},
 		{ErrCanceled, 499, "Canceled"},
 		{ErrInternal, 500, "InternalError"},
+		{ErrNotImplemented, 501, "NotImplemented"},
+		{ErrServiceUnavailable, 503, "ServiceUnavailable"},
 		{ErrTimeout, 504, "DeadlineExceeded"},
 	}
 	seen := map[string]bool{}

@@ -294,6 +294,7 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `HTTPStatus()` | 读取最终响应状态。非 nil 错误的声明值在 400–599 范围外时返回 500，nil 接收者返回 200 |
 | `Message()` / `WithMessage(text)` | 读取或替换当前实例的文案 |
 | `KV(key, value)` / `Metadata()` | 添加可公开的字符串键值，或读取元数据副本。同名键取最后一次设置的值 |
+| `WithMetadata(map[string]string)` | 用给定 map 的副本替换全部元数据，适合一次写入多对公开信息 |
 | `Wrap(cause)` / `Unwrap()` | 替换或读取底层原因。`Wrap(nil)` 清除副本上的原因 |
 
 `WithMessage`、`KV` 和 `Wrap` 都返回副本。请求可以从同一个预定义错误派生出各自的实例，并发复用时应避免重新赋值共享变量。
@@ -305,6 +306,7 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 - **不改名，不换含义。** `Message` 随时可以润色，`Reason` 和状态码改动会破坏已发布的客户端。需要废弃时，新增错误并保留旧错误一段时间。
 - **（状态码，Reason）共同决定类别。** 两个包里定义了相同的一对值，`errors.Is` 会认为它们是同一类错误，所以同一服务内要保持唯一。相同 Reason 配不同状态码则是不同类别。
 - **格式。** 用点号连接的大驼峰 ASCII 片段，如 `InvalidArgument`、`Order.AlreadyPaid`、`Auth.TokenExpired`。不要放空格或随请求变化的内容。
+- **迁移既有服务。** 已经发布的 reason 字符串优先于本节的命名格式：迁移期间可以继续用 `New` 声明原有字符串，等客户端完成升级后再按格式改名。
 - **变化的内容放进 `KV`。** 订单号、字段名等用 `KV("order_id", id)` 返回，`Reason` 保持静态。这也是 Google [AIP-193](https://google.aip.dev/193) 的做法。
 
 ### 预定义错误速查
@@ -320,6 +322,8 @@ func ListOrders(list func(context.Context, string, int, int) ([]Order, int64, er
 | `ErrTooManyRequests` | 429 | `TooManyRequests` |
 | `ErrCanceled` | 499 | `Canceled` |
 | `ErrInternal` | 500 | `InternalError` |
+| `ErrNotImplemented` | 501 | `NotImplemented` |
+| `ErrServiceUnavailable` | 503 | `ServiceUnavailable` |
 | `ErrTimeout` | 504 | `DeadlineExceeded` |
 
 ## 保留原因、识别错误与归一化
@@ -345,6 +349,12 @@ func mapUserLookup(err error) *errcode.AppError {
 }
 ```
 
+需要给未识别的错误一个应用级默认分类时（例如租户校验统一按 403 处理），把 `Fallback` 放在 Mapper 列表末尾。错误链中已有的业务错误和前面的 Mapper 仍然优先；`Fallback(nil)` 返回 nil，等价于不设置兜底。
+
+```go
+e := errcode.Normalize(err, mapUserLookup, errcode.Fallback(ErrPermissionDenied))
+```
+
 `Normalize(nil)` 返回 nil 指针。其余输入按以下顺序分类，首个匹配决定公开字段。
 
 1. 用 `errors.AsType` 查找错误链中的第一个 `*AppError`。输入本身是有效的 `*AppError` 时原样返回。匹配到带类型的 nil 指针时归为 `ErrInternal`。
@@ -356,7 +366,7 @@ func mapUserLookup(err error) *errcode.AppError {
 
 ## HTTP 响应与服务端日志
 
-`AppHandler` 通过 `slog` 记录请求错误，再用 `Respond` 生成响应。HEAD 请求只发送响应头。使用其他 HTTP 适配器时，先调用 `Normalize`，在结果非 nil 时记录日志，再用 `status, body := errcode.Respond(e)` 获取状态与正文，并在写入前将 `Content-Type` 设置为 `errcode.ContentType`。
+`AppHandler` 通过 `slog` 记录请求错误，再用 `Respond` 生成响应。HEAD 请求只发送响应头。使用其他 HTTP 适配器时，先调用 `Normalize`，在结果非 nil 时记录日志，再用 `status, body := errcode.Respond(e)` 获取状态与正文，并在写入前将 `Content-Type` 设置为 `errcode.ContentType`。只需要按状态分级日志或指标时，`errcode.HTTPStatus(err)` 直接返回归一化后的状态码，nil 返回 200。
 
 **日志级别。** 响应状态为 5xx 时记为 `Error`，其余记为 `Warn`。5xx 是服务端故障，4xx 是客户端可预期的失败，不应与故障混在同一级别触发告警；OpenTelemetry 的 [HTTP 语义约定](https://opentelemetry.io/docs/specs/semconv/http/http-spans/)同样规定服务端 span 遇到 4xx 不置为错误。`AppHandler` 的日志包含请求方法和路径，不含查询串，其中可能带有凭证。响应写入失败只可能是连接已断开，`AppHandler` 与 `http.Error` 一样忽略。
 

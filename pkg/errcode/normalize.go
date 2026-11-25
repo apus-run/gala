@@ -11,6 +11,17 @@ import (
 // 多个请求共享同一个 Mapper 时，调用方负责其并发安全。
 type Mapper func(err error) *AppError
 
+// Fallback 返回一个把所有错误都归类为 e 的 Mapper，用作 Mapper 列表末尾的兜底。
+// 错误链中已有的 *AppError 和前面的 Mapper 仍然优先，只有未识别的错误才落到 e。
+// e 为 nil 时返回 nil，[Normalize] 会跳过这个 Mapper，未识别的错误仍归为 [ErrInternal]。
+// 原错误会作为底层原因保留，日志和 errors.Is 仍可访问。
+func Fallback(e *AppError) Mapper {
+	if e == nil {
+		return nil
+	}
+	return func(error) *AppError { return e }
+}
+
 // Normalize 为 HTTP 出口确定错误分类。nil 输入返回 nil，其他输入均返回非 nil 的 *AppError。
 //
 // 分类按以下优先级进行：
@@ -62,4 +73,11 @@ func Normalize(err error, mappers ...Mapper) *AppError {
 		return ErrCanceled.Wrap(err)
 	}
 	return ErrInternal.Wrap(err)
+}
+
+// HTTPStatus 返回 err 最终会使用的 HTTP 状态码。
+// nil 返回 200，其余错误按 [Normalize] 分类后再取 [AppError.HTTPStatus]。
+// 需要在日志或指标里按 4xx/5xx 分级时可以直接使用，不必先构造完整响应体。
+func HTTPStatus(err error) int {
+	return Normalize(err).HTTPStatus()
 }

@@ -117,6 +117,15 @@ func (e *AppError) KV(key, value string) *AppError {
 	return &c
 }
 
+// WithMetadata 返回用 m 的副本替换全部元数据的副本。
+// 传入 nil 或空 map 会清除元数据；修改 m 或返回值的元数据都不会影响错误实例。
+// 一次写入多对公开信息时用它，按键逐个添加时用 [AppError.KV]。
+func (e *AppError) WithMetadata(m map[string]string) *AppError {
+	c := *e
+	c.metadata = maps.Clone(m)
+	return &c
+}
+
 // Wrap 返回将底层原因替换为 cause 的副本，保留公开字段。
 // cause 为 nil 时清除已有原因。
 func (e *AppError) Wrap(cause error) *AppError {

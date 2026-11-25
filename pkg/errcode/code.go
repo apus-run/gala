@@ -33,6 +33,12 @@ var (
 	// ErrInternal 表示未分类的内部错误，对外使用通用消息。
 	ErrInternal = New(http.StatusInternalServerError, "InternalError", "Internal server error.")
 
+	// ErrNotImplemented 表示服务器尚未实现该功能。
+	ErrNotImplemented = New(http.StatusNotImplemented, "NotImplemented", "Not implemented.")
+
+	// ErrServiceUnavailable 表示依赖或服务暂时不可用。
+	ErrServiceUnavailable = New(http.StatusServiceUnavailable, "ServiceUnavailable", "Service unavailable.")
+
 	// ErrTimeout 是 [Normalize] 对超时错误的默认分类，使用 HTTP 504。
 	ErrTimeout = New(http.StatusGatewayTimeout, "DeadlineExceeded", "The operation timed out.")
 

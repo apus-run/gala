@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"sync"
@@ -204,6 +205,57 @@ func TestNormalize_DeadlineIsNotHiddenByNonTimeoutWrapper(t *testing.T) {
 		got := Normalize(input)
 		if got.Reason() != ErrTimeout.Reason() || !errors.Is(got, deadline) || errors.Unwrap(got) != input {
 			t.Fatalf("outer Timeout() == false hid the deadline or lost its chain: %v", got)
+		}
+	}
+}
+
+func TestNormalize_Fallback(t *testing.T) {
+	raw := errors.New("backend failure")
+	input := fmt.Errorf("load: %w", raw)
+
+	got := Normalize(input, Fallback(ErrPermissionDenied))
+	if got.Reason() != ErrPermissionDenied.Reason() || errors.Unwrap(got) != input || !errors.Is(got, raw) {
+		t.Fatalf("fallback classification lost fields or cause: %v", got)
+	}
+	if ErrPermissionDenied.Unwrap() != nil || ErrPermissionDenied.Metadata() != nil {
+		t.Fatal("Fallback mutated the shared predefined error")
+	}
+
+	// 已有的业务错误和前面的 Mapper 优先于兜底。
+	if got := Normalize(ErrNotFound, Fallback(ErrPermissionDenied)); got != ErrNotFound {
+		t.Fatal("an explicit business error must take precedence over Fallback")
+	}
+	if got := Normalize(input, func(error) *AppError { return ErrConflict }, Fallback(ErrPermissionDenied)); got.Reason() != ErrConflict.Reason() {
+		t.Fatal("an earlier mapper must take precedence over Fallback")
+	}
+
+	// nil 禁用兜底，未识别的错误仍归为 ErrInternal。
+	if Fallback(nil) != nil {
+		t.Fatal("Fallback(nil) must be nil so Normalize skips it")
+	}
+	if got := Normalize(input, Fallback(nil)); got.Reason() != ErrInternal.Reason() {
+		t.Fatalf("disabled fallback produced %v", got)
+	}
+	if got := Normalize(nil, Fallback(ErrPermissionDenied)); got != nil {
+		t.Fatal("nil input must stay nil")
+	}
+}
+
+func TestHTTPStatus_Error(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"nil", nil, http.StatusOK},
+		{"business error", fmt.Errorf("load: %w", ErrNotFound), http.StatusNotFound},
+		{"deadline", context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{"canceled", context.Canceled, 499},
+		{"unknown", errors.New("boom"), http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		if got := HTTPStatus(tt.err); got != tt.want {
+			t.Errorf("%s: HTTPStatus(%v) = %d, want %d", tt.name, tt.err, got, tt.want)
 		}
 	}
 }
