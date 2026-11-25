@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/apus-run/gala/components/authn v0.17.0
-	github.com/apus-run/gala/components/ginx v0.17.0
+	github.com/apus-run/gala/components/ginx v0.17.1
 	github.com/apus-run/gala/components/ginx/middlewares/accesslog v0.17.0
 	github.com/apus-run/gala/components/ginx/middlewares/activelimit/locallimit v0.17.0
 	github.com/apus-run/gala/components/ginx/middlewares/activelimit/ratelimit v0.17.0
