@@ -1,5 +1,5 @@
-github.com/apus-run/gala v0.17.0 h1:MMloBeSZKeH4LcbGADbg//VRWKjuySijgoZ9Mq8YEOk=
-github.com/apus-run/gala v0.17.0/go.mod h1:K0Dzga1mgnebul72zDhHQNQLGdDR+uOBXKIgxiKrTSI=
+github.com/apus-run/gala v0.17.1 h1:KS3crfqacTqyDTwNL8env4YgL+KbCMV7HdzHWJEU+d4=
+github.com/apus-run/gala v0.17.1/go.mod h1:nvl1DcCJc9S3UePu9S6AuxzcuaNdJKn3XVN/srWIghM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=

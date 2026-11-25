@@ -3,7 +3,7 @@ module github.com/apus-run/gala/components/ginx/middlewares/error
 go 1.27
 
 require (
-	github.com/apus-run/gala/pkg/errcode v0.17.0
+	github.com/apus-run/gala/pkg/errcode v0.17.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/stretchr/testify v1.11.1
 )

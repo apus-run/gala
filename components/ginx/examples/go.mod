@@ -4,40 +4,40 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/apus-run/gala/components/authn v0.17.0
+	github.com/apus-run/gala/components/authn v0.17.1
 	github.com/apus-run/gala/components/ginx v0.17.1
-	github.com/apus-run/gala/components/ginx/middlewares/accesslog v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/activelimit/locallimit v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/activelimit/ratelimit v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/activelimit/redislimit v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/auth v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/casbin v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/circuitbreaker v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/cors v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/cost v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/error v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/gzip v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/helmet v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/metrics v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/recovery v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/requstid v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/secure v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/static v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/timeout v0.17.0
-	github.com/apus-run/gala/components/ginx/middlewares/tracing v0.17.0
-	github.com/apus-run/gala/components/sse v0.17.0
-	github.com/apus-run/gala/pkg/errcode v0.17.0
+	github.com/apus-run/gala/components/ginx/middlewares/accesslog v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/activelimit/locallimit v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/activelimit/ratelimit v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/activelimit/redislimit v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/auth v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/casbin v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/circuitbreaker v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/cors v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/cost v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/error v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/gzip v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/helmet v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/metrics v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/recovery v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/requstid v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/secure v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/static v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/timeout v0.17.1
+	github.com/apus-run/gala/components/ginx/middlewares/tracing v0.17.1
+	github.com/apus-run/gala/components/sse v0.17.1
+	github.com/apus-run/gala/pkg/errcode v0.17.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/stretchr/testify v1.11.1
 )
 
 require (
-	github.com/apus-run/gala/components/ecache v0.17.0 // indirect
-	github.com/apus-run/gala/components/token v0.17.0 // indirect
-	github.com/apus-run/gala/pkg/jwtx v0.17.0 // indirect
-	github.com/apus-run/gala/pkg/lang v0.17.0 // indirect
-	github.com/apus-run/gala/pkg/option v0.17.0 // indirect
+	github.com/apus-run/gala/components/ecache v0.17.1 // indirect
+	github.com/apus-run/gala/components/token v0.17.1 // indirect
+	github.com/apus-run/gala/pkg/jwtx v0.17.1 // indirect
+	github.com/apus-run/gala/pkg/lang v0.17.1 // indirect
+	github.com/apus-run/gala/pkg/option v0.17.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect

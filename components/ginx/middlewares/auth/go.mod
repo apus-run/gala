@@ -3,17 +3,17 @@ module github.com/apus-run/gala/components/ginx/middlewares/auth
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/authn v0.17.0
-	github.com/apus-run/gala/components/ginx v0.17.0
+	github.com/apus-run/gala/components/authn v0.17.1
+	github.com/apus-run/gala/components/ginx v0.17.1
 	github.com/gin-gonic/gin v1.12.0
 )
 
 require (
-	github.com/apus-run/gala/components/sse v0.17.0 // indirect
-	github.com/apus-run/gala/components/token v0.17.0 // indirect
-	github.com/apus-run/gala/pkg/jwtx v0.17.0 // indirect
-	github.com/apus-run/gala/pkg/lang v0.17.0 // indirect
-	github.com/apus-run/gala/pkg/option v0.17.0 // indirect
+	github.com/apus-run/gala/components/sse v0.17.1 // indirect
+	github.com/apus-run/gala/components/token v0.17.1 // indirect
+	github.com/apus-run/gala/pkg/jwtx v0.17.1 // indirect
+	github.com/apus-run/gala/pkg/lang v0.17.1 // indirect
+	github.com/apus-run/gala/pkg/option v0.17.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect

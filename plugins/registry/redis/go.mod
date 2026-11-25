@@ -7,8 +7,8 @@ replace github.com/apus-run/gala => ../../..
 replace github.com/apus-run/gala/components/rdb => ../../../components/rdb
 
 require (
-	github.com/apus-run/gala v0.17.0
-	github.com/apus-run/gala/components/rdb v0.17.0
+	github.com/apus-run/gala v0.17.1
+	github.com/apus-run/gala/components/rdb v0.17.1
 	github.com/redis/go-redis/v9 v9.19.0
 )
 

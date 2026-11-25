@@ -3,8 +3,8 @@ module github.com/apus-run/gala/components/ginx
 go 1.27
 
 require (
-	github.com/apus-run/gala/components/sse v0.17.0
-	github.com/apus-run/gala/pkg/lang v0.17.0
+	github.com/apus-run/gala/components/sse v0.17.1
+	github.com/apus-run/gala/pkg/lang v0.17.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/stretchr/testify v1.11.1

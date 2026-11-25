@@ -4,9 +4,9 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/apus-run/gala/components/token v0.17.0
-	github.com/apus-run/gala/pkg/jwtx v0.17.0
-	github.com/apus-run/gala/pkg/option v0.17.0
+	github.com/apus-run/gala/components/token v0.17.1
+	github.com/apus-run/gala/pkg/jwtx v0.17.1
+	github.com/apus-run/gala/pkg/option v0.17.1
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.13.0
