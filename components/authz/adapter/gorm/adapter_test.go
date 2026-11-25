@@ -392,7 +392,20 @@ func testUpdateFilteredPolicies(t *testing.T, a *Adapter) {
 	testGetPolicyWithoutOrder(t, e, [][]string{{"alice", "data1", "write"}, {"data2_admin", "data2", "read"}, {"data2_admin", "data2", "write"}, {"bob", "data2", "read"}})
 }
 
+// skipExternalDB keeps the default test run free of MySQL/Postgres/SQL Server
+// requirements; CI runs with -short. Run without -short to exercise them.
+// skipExternalDB 让默认测试不依赖 MySQL/Postgres/SQL Server；CI 使用 -short，
+// 需要覆盖这些数据库时去掉 -short 运行。
+func skipExternalDB(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping test that needs an external database; run without -short")
+	}
+}
+
 func TestAdapterWithCustomTable(t *testing.T) {
+	skipExternalDB(t)
+
 	db, err := gorm.Open(postgres.Open("user=postgres password=postgres host=127.0.0.1 port=5432 sslmode=disable"), &gorm.Config{})
 	if err != nil {
 		panic(err)
@@ -419,6 +432,8 @@ func TestAdapterWithCustomTable(t *testing.T) {
 }
 
 func TestAdapterWithoutAutoMigrate(t *testing.T) {
+	skipExternalDB(t)
+
 	db, err := gorm.Open(mysql.Open("root:@tcp(127.0.0.1:3306)/casbin"), &gorm.Config{})
 	if err != nil {
 		panic(err)
@@ -481,6 +496,8 @@ func TestAdapterWithoutAutoMigrate(t *testing.T) {
 }
 
 func TestAdapterWithMulDb(t *testing.T) {
+	skipExternalDB(t)
+
 	//create new database
 	NewAdapter("mysql", "root:@tcp(127.0.0.1:3306)/", "casbin")
 	NewAdapter("mysql", "root:@tcp(127.0.0.1:3306)/", "casbin2")
@@ -534,6 +551,8 @@ func testBasicFeatures(t *testing.T) {
 }
 
 func TestAdapters(t *testing.T) {
+	skipExternalDB(t)
+
 	a := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 	testAutoSave(t, a)
 	testSaveLoad(t, a)
@@ -684,6 +703,8 @@ func TestAdapters(t *testing.T) {
 }
 
 func TestAddPolicies(t *testing.T) {
+	skipExternalDB(t)
+
 	a := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 	e, _ := casbin.NewEnforcer("examples/rbac_model.conf", a)
 	e.AddPolicies([][]string{{"jack", "data1", "read"}, {"jack2", "data1", "read"}})
@@ -693,6 +714,8 @@ func TestAddPolicies(t *testing.T) {
 }
 
 func TestAddPolicy(t *testing.T) {
+	skipExternalDB(t)
+
 	tests := []struct {
 		driverName     string
 		dataSourceName string
@@ -733,6 +756,8 @@ func TestAddPolicy(t *testing.T) {
 }
 
 func TestTransaction(t *testing.T) {
+	skipExternalDB(t)
+
 	// create adapter using the same pattern as other tests
 	adapter := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 
@@ -973,6 +998,8 @@ func TestTransaction(t *testing.T) {
 }
 
 func TestTransactionRace(t *testing.T) {
+	skipExternalDB(t)
+
 	// create adapter using the same pattern as other tests
 	a := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 
@@ -1012,6 +1039,8 @@ func TestTransactionRace(t *testing.T) {
 }
 
 func TestTransactionWithSavePolicy(t *testing.T) {
+	skipExternalDB(t)
+
 	// create adapter using the same pattern as other tests
 	a := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 
@@ -1045,6 +1074,8 @@ func TestTransactionWithSavePolicy(t *testing.T) {
 
 // TestTransactionalAdapter tests the new TransactionalAdapter interface implementation.
 func TestTransactionalAdapter(t *testing.T) {
+	skipExternalDB(t)
+
 	// Skip if we don't have access to casbin's TransactionalEnforcer
 	// This test requires the new transaction implementation from casbin core
 
@@ -1079,6 +1110,8 @@ func TestTransactionalAdapter(t *testing.T) {
 
 // TestTransactionContextCommitRollback tests transaction commit and rollback.
 func TestTransactionContextCommitRollback(t *testing.T) {
+	skipExternalDB(t)
+
 	adapter := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 
 	ctx := context.Background()
@@ -1154,6 +1187,8 @@ func TestTransactionContextCommitRollback(t *testing.T) {
 // TestConcurrentTransactions tests that multiple transactions can run concurrently.
 // This is the key advantage over the old Transaction method.
 func TestConcurrentTransactions(t *testing.T) {
+	skipExternalDB(t)
+
 	adapter := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 
 	ctx := context.Background()
@@ -1214,6 +1249,8 @@ func TestConcurrentTransactions(t *testing.T) {
 
 // TestTransactionWithContext tests transaction with context cancellation.
 func TestTransactionWithContext(t *testing.T) {
+	skipExternalDB(t)
+
 	adapter := initAdapter(t, "mysql", "root:@tcp(127.0.0.1:3306)/", "casbin", "casbin_rule")
 
 	// Test with timeout context

@@ -1,13 +1,13 @@
 package gzip
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/gavv/httpexpect/v2"
 	"github.com/gin-gonic/gin"
 )
 
@@ -67,15 +67,27 @@ func TestRequest(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	e := httpexpect.Default(t, server.URL)
-
-	e.GET("/ping").
-		Expect().
-		Status(http.StatusOK).JSON().Object().HasValue("msg", "ping")
-	e.GET("/foo").
-		Expect().
-		Status(http.StatusOK).JSON().Object().HasValue("msg", "foo")
-	e.GET("/hello").
-		Expect().
-		Status(http.StatusOK).JSON().Object().HasValue("msg", "hello world")
+	for _, tc := range []struct{ path, want string }{
+		{"/ping", "ping"},
+		{"/foo", "foo"},
+		{"/hello", "hello world"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := http.Get(server.URL + tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("want 200, got %d", resp.StatusCode)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["msg"] != tc.want {
+				t.Fatalf("want msg %q, got %v", tc.want, body["msg"])
+			}
+		})
+	}
 }

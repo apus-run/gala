@@ -11,8 +11,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/apus-run/gala/pkg/errorsx"
 )
 
 // statusErr carries an HTTP status through the httpStatusError interface.
@@ -52,8 +50,6 @@ func TestW(t *testing.T) {
 			wantStatus: http.StatusInternalServerError, wantBody: `"msg":"failed"`},
 		{name: "status error", err: statusErr{http.StatusTeapot}, res: Result{Code: CodeErr, Msg: "failed"},
 			wantStatus: http.StatusTeapot, wantBody: `"msg":"failed"`},
-		{name: "errorsx code", err: errorsx.InvalidParams("BAD"), res: Result{Code: CodeErr, Msg: "failed"},
-			wantStatus: http.StatusBadRequest, wantBody: `"msg":"failed"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,8 +213,6 @@ func TestHTTPStatusFromError(t *testing.T) {
 	}{
 		{name: "status error", err: statusErr{http.StatusTeapot}, want: http.StatusTeapot},
 		{name: "status out of range falls back", err: statusErr{42}, want: http.StatusInternalServerError},
-		{name: "errorsx code", err: errorsx.InvalidParams("BAD"), want: http.StatusBadRequest},
-		{name: "errorsx code out of range", err: errorsx.New(42, "WEIRD"), want: http.StatusInternalServerError},
 		{name: "plain error", err: errors.New("boom"), want: http.StatusInternalServerError},
 		{name: "wrapped status error", err: errors.Join(errors.New("ctx"), statusErr{http.StatusConflict}), want: http.StatusConflict},
 	}

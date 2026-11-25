@@ -1,0 +1,38 @@
+name: Ginx
+on:
+  push:
+    paths:
+      - 'components/ginx/**'
+      - 'components/authn/**'
+      - 'components/sse/**'
+      - 'components/ecache/**'
+      - 'pkg/lang/**'
+      - 'pkg/errcode/**'
+      - 'scripts/test-modules.sh'
+      - 'Makefile'
+      - '.github/workflows/ginx.yml'
+  pull_request:
+    paths:
+      - 'components/ginx/**'
+      - 'components/authn/**'
+      - 'components/sse/**'
+      - 'components/ecache/**'
+      - 'pkg/lang/**'
+      - 'pkg/errcode/**'
+      - 'scripts/test-modules.sh'
+      - 'Makefile'
+      - '.github/workflows/ginx.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          # Every ginx sub-module is a separate module with its own go.sum.
+          # ginx 的每个子模块都是独立 module，各有自己的 go.sum。
+          cache-dependency-path: |
+            components/ginx/go.sum
+            components/ginx/**/go.sum
+      - run: make test-ginx
