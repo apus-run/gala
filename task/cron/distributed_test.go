@@ -17,6 +17,7 @@ var (
 	errFakeLocked   = errors.New("fake: lease held by another owner")
 	errFakeNotHeld  = errors.New("fake: lease not held")
 	errFakeProvider = errors.New("fake: provider failed")
+	errFakeUnlock   = errors.New("fake: unlock failed")
 )
 
 // fakeBackend is an in-memory lease store shared by several Cron instances.
@@ -59,6 +60,7 @@ type fakeLocker struct {
 	owner       string
 	jobID       string
 	failRefresh atomic.Bool
+	failUnlock  atomic.Bool
 
 	// blockRefresh makes Refresh wait for its context and return ctx.Err(),
 	// modeling a slow backend that must be cancellable by Stop/Shutdown.
@@ -66,6 +68,15 @@ type fakeLocker struct {
 	// Stop/Shutdown 取消的慢后端。
 	blockRefresh   atomic.Bool
 	refreshEntered chan struct{}
+
+	// blockUnlock makes Unlock wait for unlockRelease (or its context),
+	// modeling a slow backend that Remove/RemoveAll/Stop must handle without
+	// blocking their caller.
+	// blockUnlock 让 Unlock 等待 unlockRelease（或其 context），模拟
+	// Remove/RemoveAll/Stop 必须在不阻塞调用方的前提下处理的慢后端。
+	blockUnlock   atomic.Bool
+	unlockEntered chan struct{}
+	unlockRelease chan struct{}
 }
 
 func newFakeLocker(b *fakeBackend, owner, jobID string) *fakeLocker {
@@ -93,10 +104,29 @@ func (f *fakeLocker) Unlock(ctx context.Context) error {
 		return err
 	}
 
+	if f.blockUnlock.Load() {
+		if f.unlockEntered != nil {
+			select {
+			case f.unlockEntered <- struct{}{}:
+			default:
+			}
+		}
+		if f.unlockRelease != nil {
+			select {
+			case <-f.unlockRelease:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
 	f.backend.mu.Lock()
 	defer f.backend.mu.Unlock()
 
 	f.backend.unlocks++
+	if f.failUnlock.Load() {
+		return errFakeUnlock
+	}
 	if cur, held := f.backend.owner[f.jobID]; !held || cur != f.owner {
 		return errFakeNotHeld
 	}
@@ -276,6 +306,41 @@ func leaseOf(c *Cron, jobID string) *jobLease {
 	return c.leases[jobID]
 }
 
+// mustLease returns the lease state a test expects to exist, failing instead of
+// letting a nil state make refresherStopped vacuously true.
+// mustLease 返回测试期望存在的租约状态；状态为 nil 时直接失败，避免
+// refresherStopped 因 nil 而空洞地为真。
+func mustLease(t *testing.T, c *Cron, jobID string) *jobLease {
+	t.Helper()
+
+	l := leaseOf(c, jobID)
+	if l == nil {
+		t.Fatalf("expected a lease state for %q", jobID)
+	}
+	return l
+}
+
+// waitInflight waits (bounded) until no job goroutine is running. Call it only
+// after the dispatch whose completion it waits for: a WaitGroup Wait that
+// starts before a later Add may return too early.
+// waitInflight 有界地等待所有任务 goroutine 结束。只能在它所等待的触发分发之后
+// 调用：若 Wait 早于随后的 Add，它可能过早返回。
+func waitInflight(t *testing.T, c *Cron) {
+	t.Helper()
+
+	done := make(chan struct{})
+	go func() {
+		c.inflight.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight jobs to finish")
+	}
+}
+
 // refresherStopped reports whether the lease's refresher goroutine has exited.
 // refresherStopped 报告租约的续期 goroutine 是否已退出。
 func (l *jobLease) refresherStopped() bool {
@@ -380,7 +445,7 @@ func TestDistributedStopReleasesAndFollowerTakesOver(t *testing.T) {
 	if owner := backend.ownerOf(fakeJobID); owner != "" {
 		t.Fatalf("Stop must release the lease, owner = %q", owner)
 	}
-	if !leaseOf(c1, fakeJobID).refresherStopped() {
+	if !mustLease(t, c1, fakeJobID).refresherStopped() {
 		t.Fatal("Stop left a refresher goroutine running")
 	}
 
@@ -437,7 +502,7 @@ func TestDistributedRefreshFailureDemotesAndReacquires(t *testing.T) {
 	if _, _, unlocks := backend.counts(); unlocks != 0 {
 		t.Fatalf("a Refresh error must not trigger Unlock, got %d unlock calls", unlocks)
 	}
-	if !leaseOf(c, fakeJobID).refresherStopped() {
+	if !mustLease(t, c, fakeJobID).refresherStopped() {
 		t.Fatal("the refresher is still running after LockLost")
 	}
 
@@ -492,7 +557,7 @@ func TestDistributedReleaseFailureEvent(t *testing.T) {
 	if rec.jobID != fakeJobID || !errors.Is(rec.err, errFakeNotHeld) {
 		t.Fatalf("unexpected release failure event: %+v", rec)
 	}
-	if !leaseOf(c, fakeJobID).refresherStopped() {
+	if !mustLease(t, c, fakeJobID).refresherStopped() {
 		t.Fatal("Stop left a refresher goroutine running")
 	}
 }
@@ -640,7 +705,7 @@ func TestDistributedShutdownWaitsForInflightThenReleases(t *testing.T) {
 	if owner := backend.ownerOf(fakeJobID); owner != "" {
 		t.Fatalf("Shutdown did not release the lease: owner %q", owner)
 	}
-	if !leaseOf(c, fakeJobID).refresherStopped() {
+	if !mustLease(t, c, fakeJobID).refresherStopped() {
 		t.Fatal("Shutdown left a refresher goroutine running")
 	}
 }
@@ -687,10 +752,12 @@ func TestDistributedLeaderRefreshesWhileRunning(t *testing.T) {
 }
 
 // TestDistributedShutdownCtxExpiryKeepsLease covers Shutdown returning
-// ctx.Err() without releasing while the job is still running; a later
-// Shutdown releases the lease.
+// ctx.Err() without releasing while the job is still running; the shared
+// background waiter still releases the lease once the job finishes, without a
+// later Shutdown call.
 // TestDistributedShutdownCtxExpiryKeepsLease 覆盖任务仍在运行时 Shutdown 返回
-// ctx.Err() 且不释放租约；之后的 Shutdown 会释放。
+// ctx.Err() 且不释放租约；共享的后台等待者仍会在任务结束后释放租约，无需再次调用
+// Shutdown。
 func TestDistributedShutdownCtxExpiryKeepsLease(t *testing.T) {
 	t.Parallel()
 
@@ -731,21 +798,106 @@ func TestDistributedShutdownCtxExpiryKeepsLease(t *testing.T) {
 		return backend.refreshCount() > before
 	})
 
+	// Finishing the job is enough: the waiter releases the lease without any
+	// later Shutdown call.
+	// 任务结束就够了：等待者会释放租约，无需再次调用 Shutdown。
 	close(release)
+	waitFor(t, "the timed-out Shutdown's release", func() bool {
+		return backend.ownerOf(fakeJobID) == ""
+	})
+	waitFor(t, "the refresher to stop", func() bool {
+		return mustLease(t, c, fakeJobID).refresherStopped()
+	})
+
+	// A later Shutdown reports success as well (a completed waiter is
+	// replaced, and the fresh one drains immediately).
+	// 之后的 Shutdown 同样返回成功（已完成的等待者会被替换，新的等待者立即排空）。
 	if err := c.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if owner := backend.ownerOf(fakeJobID); owner != "" {
-		t.Fatalf("the later Shutdown did not release the lease: owner %q", owner)
+}
+
+// TestDistributedShutdownAfterEarlyStopDrainsRestartedCron covers a Stop before
+// Start (allowed by the gala.Task adapter) followed by a Start: the next Stop
+// must not reuse the completed waiter, or it would return before the restarted
+// Cron drains its in-flight job and releases its lease.
+// TestDistributedShutdownAfterEarlyStopDrainsRestartedCron 覆盖先于 Start 的 Stop
+// （gala.Task 适配器允许）之后再 Start：下一次 Stop 不得复用已完成的等待者，否则
+// 会在重启后的 Cron 仍在途的任务结束、租约释放之前就返回。
+func TestDistributedShutdownAfterEarlyStopDrainsRestartedCron(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+
+	c := New(WithLockerProvider(fixedProvider(locker)))
+	task := NewTask(c)
+
+	// gala may stop a task whose Start never ran.
+	// gala 可能停止一个 Start 未曾执行的任务。
+	if err := task.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() before Start error = %v", err)
 	}
-	if !leaseOf(c, fakeJobID).refresherStopped() {
-		t.Fatal("the refresher is still running after Shutdown")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	c.MustAdd(fakeJobID, "* * * * *", func() {
+		close(started)
+		<-release
+	})
+
+	if err := task.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	c.runDue(time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC))
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the job did not start")
+	}
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("lease owner while running = %q, want A", owner)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- task.Stop(context.Background()) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Stop returned before the job finished: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	released = true
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return after the job finished")
+	}
+
+	if owner := backend.ownerOf(fakeJobID); owner != "" {
+		t.Fatalf("Stop did not release the lease: owner %q", owner)
+	}
+	if !mustLease(t, c, fakeJobID).refresherStopped() {
+		t.Fatal("Stop left a refresher goroutine running")
 	}
 }
 
 // TestDistributedRemoveReleasesLease covers Remove releasing the lease and
-// forgetting its state.
-// TestDistributedRemoveReleasesLease 覆盖 Remove 释放租约并遗忘其状态。
+// forgetting its state in the background.
+// TestDistributedRemoveReleasesLease 覆盖 Remove 在后台释放租约并遗忘其状态。
 func TestDistributedRemoveReleasesLease(t *testing.T) {
 	t.Parallel()
 
@@ -760,22 +912,19 @@ func TestDistributedRemoveReleasesLease(t *testing.T) {
 	c.runDue(time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC))
 	waitFor(t, "the run", func() bool { return runs.Load() == 1 })
 
-	l := leaseOf(c, fakeJobID)
-	if l == nil {
-		t.Fatal("expected lease state")
-	}
+	l := mustLease(t, c, fakeJobID)
 
 	c.Remove(fakeJobID)
 
-	if owner := backend.ownerOf(fakeJobID); owner != "" {
-		t.Fatalf("Remove did not release the lease: owner %q", owner)
-	}
-	if !l.refresherStopped() {
-		t.Fatal("Remove left a refresher goroutine running")
-	}
-	if leaseOf(c, fakeJobID) != nil {
-		t.Fatal("Remove did not forget the lease state")
-	}
+	// The release is asynchronous: wait (bounded) for it to finish.
+	// 释放是异步的：有界地等待它完成。
+	waitFor(t, "the Remove release", func() bool {
+		return backend.ownerOf(fakeJobID) == ""
+	})
+	waitFor(t, "the refresher to stop", l.refresherStopped)
+	waitFor(t, "the lease state to be forgotten", func() bool {
+		return leaseOf(c, fakeJobID) == nil
+	})
 	if c.Total() != 0 {
 		t.Fatalf("job not removed, Total = %d", c.Total())
 	}
@@ -816,16 +965,23 @@ func TestDistributedRemoveAllReleasesLeases(t *testing.T) {
 
 	c.RemoveAll()
 
+	// RemoveAll returns before the background releases finish.
+	// RemoveAll 在后台释放完成前就返回。
 	for _, jobID := range []string{"one", "two"} {
-		if owner := backend.ownerOf(jobID); owner != "" {
-			t.Fatalf("RemoveAll did not release %q: owner %q", jobID, owner)
-		}
+		waitFor(t, "the RemoveAll release of "+jobID, func() bool {
+			return backend.ownerOf(jobID) == ""
+		})
 	}
-	if !l1.refresherStopped() || !l2.refresherStopped() {
-		t.Fatal("RemoveAll left a refresher goroutine running")
-	}
-	if c.Total() != 0 || len(c.leases) != 0 {
-		t.Fatalf("RemoveAll left state: jobs=%d leases=%d", c.Total(), len(c.leases))
+	waitFor(t, "both refreshers to stop", func() bool {
+		return l1.refresherStopped() && l2.refresherStopped()
+	})
+	waitFor(t, "all lease state to be forgotten", func() bool {
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+		return len(c.leases) == 0
+	})
+	if c.Total() != 0 {
+		t.Fatalf("RemoveAll left jobs: Total = %d", c.Total())
 	}
 }
 
@@ -1064,7 +1220,14 @@ func TestDistributedRemoveSkipsLateFire(t *testing.T) {
 	close(gated.release)
 	<-removed
 
-	time.Sleep(50 * time.Millisecond)
+	// The background release settles the tombstone only after the fire passed
+	// the gate (it needs the fire's opMu), so once the state is gone the fire
+	// has decided and must not have run.
+	// 后台释放只有在触发通过闸门后才会结算墓碑（它需要触发的 opMu），因此状态消失
+	// 时触发已经做出决定，且必须没有运行。
+	waitFor(t, "the removed lease state to be forgotten", func() bool {
+		return leaseOf(c, fakeJobID) == nil
+	})
 
 	if got := runs.Load(); got != 0 {
 		t.Fatalf("a fire dispatched before Remove ran the job %d times", got)
@@ -1075,9 +1238,6 @@ func TestDistributedRemoveSkipsLateFire(t *testing.T) {
 	}
 	if owner := backend.ownerOf(fakeJobID); owner != "" {
 		t.Fatalf("stale fire kept the lease: owner %q", owner)
-	}
-	if l := leaseOf(c, fakeJobID); l != nil {
-		t.Fatal("Remove left a resurrected lease state")
 	}
 
 	// Re-adding the id starts a fresh lifecycle and may acquire again.
@@ -1139,8 +1299,9 @@ func TestDistributedStopSkipsLateFire(t *testing.T) {
 	close(gated.release)
 	<-stopped
 
-	time.Sleep(50 * time.Millisecond)
-
+	// Stop returned only after its release passed the fire's opMu, so the fire
+	// has already decided and must not have run.
+	// Stop 只在释放通过触发的 opMu 后返回，因此触发已经做出决定，且必须没有运行。
 	if got := runs.Load(); got != 0 {
 		t.Fatalf("a fire dispatched before Stop ran the job %d times", got)
 	}
@@ -1202,23 +1363,25 @@ func TestDistributedAddReplacementSkipsOldFire(t *testing.T) {
 	waitFor(t, "the stale fire to finish the gate", func() bool {
 		return backend.ownerOf(fakeJobID) == "A"
 	})
-	time.Sleep(50 * time.Millisecond)
+
+	c.runDue(base.Add(time.Minute))
+	waitFor(t, "the new version to run", func() bool { return newRuns.Load() == 1 })
+
+	// Shutdown waits for every in-flight fire, which makes the stale fire's
+	// decision observable without a timing window.
+	// Shutdown 等待所有在途触发，因此无需时间窗口即可观察旧触发的决定。
+	if err := c.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	if got := oldRuns.Load(); got != 0 {
 		t.Fatalf("the replaced job's stale fire ran the old func %d times", got)
 	}
 
-	c.runDue(base.Add(time.Minute))
-	waitFor(t, "the new version to run", func() bool { return newRuns.Load() == 1 })
-
 	// The lease state survived the replacement: no second Lock was needed.
 	// 租约状态在替换中保留：不需要第二次 Lock。
 	if locks, _, _ := backend.counts(); locks != 1 {
 		t.Fatalf("%d Lock calls, want 1 (Add replacement keeps leadership)", locks)
-	}
-
-	if err := c.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -1342,11 +1505,496 @@ func TestDistributedStopAbortsSlowRefresh(t *testing.T) {
 		t.Fatal("Stop waited for the slow Refresh instead of aborting it")
 	}
 
-	if !leaseOf(c, fakeJobID).refresherStopped() {
+	if !mustLease(t, c, fakeJobID).refresherStopped() {
 		t.Fatal("the refresher is still running after Stop")
 	}
 	if owner := backend.ownerOf(fakeJobID); owner != "" {
 		t.Fatalf("Stop did not release the lease: owner %q", owner)
 	}
 	events.none(t)
+}
+
+// TestDistributedRemoveIsAsync covers Remove returning without waiting for a
+// slow Unlock: the release runs in the background with the state's opMu held,
+// and the tombstone keeps fencing the id (including a re-added job) until the
+// release finishes and reopens it.
+// TestDistributedRemoveIsAsync 覆盖 Remove 不等待慢 Unlock 而返回：释放持有状态的
+// opMu 在后台进行，墓碑在释放完成并重新开放之前持续隔离该 id（包括重新添加的任务）。
+func TestDistributedRemoveIsAsync(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+	locker.blockUnlock.Store(true)
+	locker.unlockEntered = make(chan struct{}, 1)
+	locker.unlockRelease = make(chan struct{})
+
+	c := New(WithLockerProvider(fixedProvider(locker)))
+
+	var runs atomic.Int32
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	c.runDue(base)
+	waitFor(t, "the first run", func() bool { return runs.Load() == 1 })
+
+	removed := make(chan struct{})
+	go func() {
+		c.Remove(fakeJobID)
+		close(removed)
+	}()
+
+	select {
+	case <-removed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Remove blocked on the slow Unlock")
+	}
+
+	select {
+	case <-locker.unlockEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the background release never reached Unlock")
+	}
+
+	// The tombstone fences a re-added job while the release is still blocked.
+	// 释放仍被阻塞时，墓碑隔离重新添加的任务。
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+	c.runDue(base.Add(time.Minute))
+	waitInflight(t, c)
+
+	if locks, _, _ := backend.counts(); locks != 1 {
+		t.Fatalf("%d Lock calls while the release is pending, want 1", locks)
+	}
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("a fire ran while the Remove release was pending: %d runs", got)
+	}
+
+	close(locker.unlockRelease)
+	waitFor(t, "the Remove release", func() bool {
+		return backend.ownerOf(fakeJobID) == ""
+	})
+	waitFor(t, "the reopened lease state", func() bool {
+		l := leaseOf(c, fakeJobID)
+		if l == nil {
+			return false
+		}
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return !l.removed && !l.mayHold
+	})
+
+	// The re-added job may acquire on the next fire.
+	// 重新添加的任务可在下次触发时获取租约。
+	c.runDue(base.Add(2 * time.Minute))
+	waitFor(t, "the run after the release", func() bool { return runs.Load() == 2 })
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("lease owner after the release = %q, want A", owner)
+	}
+
+	if err := c.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDistributedRemoveFailedReleaseKeepsTombstone covers a failed Unlock during
+// Remove: the state and tombstone are kept, LockReleaseFailed is reported, a
+// re-added job stays fenced, and a later Stop retries with the cached Locker and
+// reopens the state.
+// TestDistributedRemoveFailedReleaseKeepsTombstone 覆盖 Remove 期间 Unlock 失败：
+// 状态与墓碑被保留、上报 LockReleaseFailed、重新添加的任务仍被隔离，之后的 Stop
+// 用缓存的 Locker 重试并重新开放该状态。
+func TestDistributedRemoveFailedReleaseKeepsTombstone(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+	events := newLockEventRecorder()
+
+	c := New(WithLockerProvider(
+		fixedProvider(locker),
+		WithLockEventHandler(events.handler()),
+	))
+
+	var runs atomic.Int32
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	c.runDue(base)
+	waitFor(t, "the first run", func() bool { return runs.Load() == 1 })
+
+	locker.failUnlock.Store(true)
+	c.Remove(fakeJobID)
+
+	rec := events.wait(t, LockReleaseFailed)
+	if rec.jobID != fakeJobID || !errors.Is(rec.err, errFakeUnlock) {
+		t.Fatalf("unexpected release failure event: %+v", rec)
+	}
+
+	// A failed Unlock must keep the state, its tombstone and its cached Locker.
+	// Unlock 失败必须保留状态、墓碑与缓存的 Locker。
+	l := mustLease(t, c, fakeJobID)
+	l.mu.Lock()
+	removed, mayHold := l.removed, l.mayHold
+	l.mu.Unlock()
+	if !removed || !mayHold {
+		t.Fatalf("after a failed release: removed=%v mayHold=%v, want true, true", removed, mayHold)
+	}
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("the failed Unlock changed the backend: owner %q", owner)
+	}
+
+	// A re-added job stays fenced until a later release succeeds.
+	// 重新添加的任务保持隔离，直到之后的释放成功。
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+	c.runDue(base.Add(time.Minute))
+	waitInflight(t, c)
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("the re-added job ran while the tombstone was kept: %d runs", got)
+	}
+	if locks, _, _ := backend.counts(); locks != 1 {
+		t.Fatalf("%d Lock calls while the tombstone was kept, want 1", locks)
+	}
+
+	// A later Stop retries the release with the cached Locker and succeeds.
+	// 之后的 Stop 用缓存的 Locker 重试释放并成功。
+	locker.failUnlock.Store(false)
+	c.Stop()
+
+	if owner := backend.ownerOf(fakeJobID); owner != "" {
+		t.Fatalf("Stop did not release the retried lease: owner %q", owner)
+	}
+	waitFor(t, "the state reopened for the re-added job", func() bool {
+		l := leaseOf(c, fakeJobID)
+		if l == nil {
+			return false
+		}
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return !l.removed && !l.mayHold
+	})
+
+	// Restart: the re-added job acquires again.
+	// 重启：重新添加的任务再次获取租约。
+	c.Start()
+	defer func() {
+		if err := c.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	c.runDue(base.Add(2 * time.Minute))
+	waitFor(t, "the run after the retried release", func() bool { return runs.Load() == 2 })
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("lease owner after the retried release = %q, want A", owner)
+	}
+}
+
+// TestDistributedStaleReleaseKeepsNewLeadership covers a release snapshot taken
+// by Stop that is delayed until after a concurrent Start acquired the lease
+// again: leaderGen changed, so the stale release must neither cancel the new
+// refresher nor Unlock the new lease, and the job keeps running with its lease
+// held.
+// TestDistributedStaleReleaseKeepsNewLeadership 覆盖 Stop 取得、但被拖到并发 Start
+// 重新获取租约之后才执行的释放快照：leaderGen 已变，旧释放不得取消新续期器或
+// Unlock 新租约，任务继续持有租约运行。
+func TestDistributedStaleReleaseKeepsNewLeadership(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+
+	c := New(WithLockerProvider(
+		fixedProvider(locker),
+		WithLockRefreshInterval(5*time.Millisecond),
+	))
+
+	var runs atomic.Int32
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	c.runDue(base)
+	waitFor(t, "the first run", func() bool { return runs.Load() == 1 })
+
+	// Snapshot exactly like Stop does, then Stop releases the first lease.
+	// 像 Stop 那样快照，然后由 Stop 释放第一份租约。
+	stale := c.leaseSnapshot()
+	if len(stale) != 1 || stale[0].id != fakeJobID {
+		t.Fatalf("unexpected stop snapshot: %+v", stale)
+	}
+	c.Stop()
+
+	// Restart and acquire again: the new leadership bumps leaderGen.
+	// 重启并再次获取：新的 leadership 会递增 leaderGen。
+	c.Start()
+	defer func() {
+		if err := c.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	c.runDue(base.Add(time.Minute))
+	waitFor(t, "the restarted run", func() bool { return runs.Load() == 2 })
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("lease owner after restart = %q, want A", owner)
+	}
+
+	l := mustLease(t, c, fakeJobID)
+	l.mu.Lock()
+	gen := l.leaderGen
+	l.mu.Unlock()
+	if gen != stale[0].gen+1 {
+		t.Fatalf("leaderGen = %d, want %d", gen, stale[0].gen+1)
+	}
+
+	before := backend.refreshCount()
+
+	// Replay the delayed release: it must be a no-op for the new leadership.
+	// 重放被拖后的释放：它对新 leadership 必须无操作。
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	c.releaseRefs(ctx, stale, false)
+
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("the stale release Unlocked the new lease: owner %q", owner)
+	}
+	if mustLease(t, c, fakeJobID).refresherStopped() {
+		t.Fatal("the stale release cancelled the new refresher")
+	}
+	waitFor(t, "the new refresher to keep going", func() bool {
+		return backend.refreshCount() > before
+	})
+
+	// The lease still belongs to the new leadership: no second Lock is needed.
+	// 租约仍属于新 leadership：无需第二次 Lock。
+	c.runDue(base.Add(2 * time.Minute))
+	waitFor(t, "a run with the kept leadership", func() bool { return runs.Load() == 3 })
+	if locks, _, _ := backend.counts(); locks != 2 {
+		t.Fatalf("%d Lock calls, want 2 (no reacquire after the stale release)", locks)
+	}
+}
+
+// TestDistributedStaleRemovedReleaseKeepsNewLeadership covers a Remove release
+// snapshot that is replayed after a Stop/Start cycle reopened the state and a
+// fire acquired it again: the stale release must not re-tombstone the id (that
+// would fence it forever while the new refresher keeps its lease) nor skip the
+// newer leadership.
+// TestDistributedStaleRemovedReleaseKeepsNewLeadership 覆盖 Stop/Start 周期重新
+// 开放状态并由新触发再次获取之后，才重放的 Remove 释放快照：旧释放不得重新写墓碑
+// （否则会永久隔离该 id，而新续期器仍在续期其租约），也不得跳过新的 leadership。
+func TestDistributedStaleRemovedReleaseKeepsNewLeadership(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+
+	c := New(WithLockerProvider(
+		fixedProvider(locker),
+		WithLockRefreshInterval(5*time.Millisecond),
+	))
+
+	var runs atomic.Int32
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	c.runDue(base)
+	waitFor(t, "the first run", func() bool { return runs.Load() == 1 })
+
+	// Snapshot like Remove does, then let Stop release the lease and the
+	// restarted Cron acquire it again.
+	// 像 Remove 那样快照，然后让 Stop 释放租约、重启后的 Cron 再次获取。
+	stale := c.leaseSnapshot()
+	c.Stop()
+	c.Start()
+	defer func() {
+		if err := c.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	c.runDue(base.Add(time.Minute))
+	waitFor(t, "the restarted run", func() bool { return runs.Load() == 2 })
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("lease owner after restart = %q, want A", owner)
+	}
+
+	// Replay the delayed Remove release: leaderGen changed, so it must leave
+	// the newer leadership, its lease and its refresher untouched, and must
+	// not re-apply the tombstone.
+	// 重放被拖后的 Remove 释放：leaderGen 已变，因此它不得碰新的 leadership、
+	// 其租约与续期器，也不得重新写墓碑。
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	c.releaseRefs(ctx, stale, true)
+
+	l := mustLease(t, c, fakeJobID)
+	l.mu.Lock()
+	removed, leader := l.removed, l.leader
+	l.mu.Unlock()
+	if removed || !leader {
+		t.Fatalf("stale removed release rewrote the state: removed=%v leader=%v, want false, true",
+			removed, leader)
+	}
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("the stale release Unlocked the new lease: owner %q", owner)
+	}
+	if l.refresherStopped() {
+		t.Fatal("the stale release cancelled the new refresher")
+	}
+
+	// The re-added job is not fenced: the next fire runs with the kept
+	// leadership and no extra Lock.
+	// 重新添加的任务不会被隔离：下次触发以保留的 leadership 运行，且无需额外 Lock。
+	c.runDue(base.Add(2 * time.Minute))
+	waitFor(t, "a run with the kept leadership", func() bool { return runs.Load() == 3 })
+	if locks, _, _ := backend.counts(); locks != 2 {
+		t.Fatalf("%d Lock calls, want 2 (no reacquire after the stale release)", locks)
+	}
+}
+
+// TestDistributedReleaseSharesOneBudget covers Stop releasing several leases
+// concurrently under one acquire-timeout budget instead of one timeout per
+// lease: every Unlock must start well before that single budget expires.
+// TestDistributedReleaseSharesOneBudget 覆盖 Stop 在一份 acquire 超时预算下并发
+// 释放多个租约，而不是每个租约各用一份超时：所有 Unlock 必须在这份唯一预算到期
+// 之前开始。
+func TestDistributedReleaseSharesOneBudget(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	provider := newFakeProviderSet(backend, "A")
+
+	c := New(WithLockerProvider(
+		provider.provider(),
+		WithLockAcquireTimeout(2*time.Second),
+	))
+
+	ids := []string{"one", "two", "three"}
+	for _, id := range ids {
+		c.MustAdd(id, "* * * * *", func() {})
+	}
+
+	c.runDue(time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC))
+	for _, id := range ids {
+		waitFor(t, "the lease of "+id, func() bool {
+			return backend.ownerOf(id) == "A"
+		})
+	}
+
+	entered := make(chan struct{}, len(ids))
+	for _, id := range ids {
+		l := provider.locker(id)
+		if l == nil {
+			t.Fatalf("no locker for %q", id)
+		}
+		l.blockUnlock.Store(true)
+		l.unlockEntered = entered
+		l.unlockRelease = make(chan struct{})
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		c.Stop()
+		close(stopped)
+	}()
+
+	// All Unlocks must start well within the single 2s budget; per-lease
+	// timeouts would serialize them and need one timeout each.
+	// 所有 Unlock 必须在这份唯一的 2s 预算内开始；每个租约一份超时会把它们串行化，
+	// 各需一份超时。
+	deadline := time.After(time.Second)
+	for i := 0; i < len(ids); i++ {
+		select {
+		case <-entered:
+		case <-deadline:
+			t.Fatalf("only %d of %d Unlocks started within one budget", i, len(ids))
+		}
+	}
+
+	for _, id := range ids {
+		close(provider.locker(id).unlockRelease)
+	}
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return after the releases finished")
+	}
+
+	for _, id := range ids {
+		if owner := backend.ownerOf(id); owner != "" {
+			t.Fatalf("%q lease not released: owner %q", id, owner)
+		}
+	}
+}
+
+// gatedNilProvider blocks its first call and then always returns (nil, nil), so
+// a test can replace the job while the fire is inside the provider call.
+// gatedNilProvider 阻塞第一次调用，之后总是返回 (nil, nil)，使测试能在触发停留于
+// provider 调用时替换任务。
+type gatedNilProvider struct {
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newGatedNilProvider() *gatedNilProvider {
+	return &gatedNilProvider{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (p *gatedNilProvider) provider() LockerProvider {
+	return func(context.Context, string) (taskcontract.Locker, error) {
+		if p.calls.Add(1) == 1 {
+			close(p.entered)
+			<-p.release
+		}
+		return nil, nil
+	}
+}
+
+// TestDistributedNilProviderReplacementSkipsOldFire covers a provider returning
+// (nil, nil) while Add replaces the job: the old fire must not run, and the new
+// version runs on the next fire using the cached local-only verdict.
+// TestDistributedNilProviderReplacementSkipsOldFire 覆盖 provider 返回 (nil, nil)
+// 期间 Add 替换任务：旧触发不得运行，新版本在下次触发时使用缓存的"纯本地"结论
+// 运行。
+func TestDistributedNilProviderReplacementSkipsOldFire(t *testing.T) {
+	t.Parallel()
+
+	gated := newGatedNilProvider()
+	c := New(WithLockerProvider(gated.provider()))
+
+	var oldRuns, newRuns atomic.Int32
+	c.MustAdd(fakeJobID, "* * * * *", func() { oldRuns.Add(1) })
+
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	c.runDue(base)
+
+	select {
+	case <-gated.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the fire never reached the provider")
+	}
+
+	c.MustAdd(fakeJobID, "* * * * *", func() { newRuns.Add(1) })
+	close(gated.release)
+
+	// Wait for the old fire to finish the provider branch: it must not run.
+	// 等待旧触发完成 provider 分支：它不得运行。
+	waitInflight(t, c)
+	if got := oldRuns.Load(); got != 0 {
+		t.Fatalf("the replaced job's stale fire ran the old func %d times", got)
+	}
+
+	// The cached local-only verdict serves the new version on the next fire
+	// without another provider call.
+	// 缓存的"纯本地"结论供新版本在下次触发时使用，且不再调用 provider。
+	c.runDue(base.Add(time.Minute))
+	waitFor(t, "the new version to run", func() bool { return newRuns.Load() == 1 })
+	if got := gated.calls.Load(); got != 1 {
+		t.Fatalf("provider called %d times, want 1 (local-only is cached)", got)
+	}
+
+	if err := c.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }

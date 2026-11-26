@@ -80,6 +80,37 @@ type Client interface {
 	NewLock(ctx context.Context, opts ...Option) (Locker, error)
 }
 
+// Initializer is an optional capability implemented by backends that must
+// create or migrate schema before locking: gorm creates/repairs its table and
+// mongo creates the unique index on name. Call Init once during startup,
+// after constructing the client and before the first NewLock/Lock. Lock may
+// fail closed until Init succeeds; in particular mongo.Lock verifies the
+// unique index on every first use per Locker and refuses to insert without
+// it, so a missing Init returns an error instead of silently losing
+// exclusivity. Factories that only know a dlock.Client can use a type
+// assertion:
+//
+//	if init, ok := client.(dlock.Initializer); ok {
+//		if err := init.Init(ctx); err != nil {
+//			return err
+//		}
+//	}
+//
+// Initializer 是可选能力，由必须在加锁前建表/迁移/建索引的后端实现：gorm 建表
+// 并修复旧行，mongo 建立 name 唯一索引。启动时、构造 client 之后、首次
+// NewLock/Lock 之前调用一次 Init。Init 成功前 Lock 可能 fail closed；特别是
+// mongo.Lock 会在每个 Locker 首次加锁时校验该唯一索引，缺少索引时拒绝插入，
+// 从而返回错误而不是静默失去排他性。只拿到 dlock.Client 的工厂可用类型断言：
+//
+//	if init, ok := client.(dlock.Initializer); ok {
+//		if err := init.Init(ctx); err != nil {
+//			return err
+//		}
+//	}
+type Initializer interface {
+	Init(ctx context.Context) error
+}
+
 // Locker is an interface that defines the methods for a distributed lock.
 // It provides methods to acquire, release, and refresh a lock in a distributed system.
 // Locker 是定义分布式锁方法的接口，提供在分布式系统中获取、释放与续期锁的方法。

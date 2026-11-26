@@ -23,7 +23,8 @@
 //
 // - 5-field expressions, @daily-style macros, per-job CRON_TZ= prefix | 5 段表达式、@daily 等宏、单任务的 CRON_TZ= 前缀
 // - Add/Remove reconfigure a live cron; Jobs snapshots next run times | Add/Remove 在线增删任务，Jobs 快照各任务下次运行时间
-// - Shutdown stops the ticker and waits for running jobs, bounded by ctx | Shutdown 停止 ticker 并等待运行中的任务结束，由 ctx 限时
+// - Remove/RemoveAll release leases asynchronously; a tombstone fences the id until the release finishes | Remove/RemoveAll 异步释放租约，墓碑在释放完成前隔离该 id
+// - Shutdown stops the ticker and waits for running jobs, bounded by ctx; a timed-out shutdown still releases leases after the drain | Shutdown 停止 ticker 并等待运行中的任务结束，由 ctx 限时；超时的关闭仍会在任务排空后释放租约
 // - Optional per-job distributed leases make replicas coordinate each due fire | 可选的任务级分布式租约让副本间协调每次到期触发
 //
 // # Example | 示例
@@ -199,6 +200,28 @@ type Cron struct {
 
 	loops    sync.WaitGroup // tick loop goroutines | tick 循环 goroutine。
 	inflight sync.WaitGroup // running jobs | 运行中的任务。
+
+	// shutdown is the current drain-and-release cycle. Its waiter is started
+	// once, so repeated or timed-out Shutdown calls share it instead of leaking
+	// one goroutine per call; done is closed when the release has finished.
+	// Once the cycle has completed, the next Shutdown replaces it under mu, so
+	// a Cron restarted with Start is drained again instead of reporting
+	// immediate success.
+	// shutdown 是当前的排空并释放周期。它的等待者只启动一次，因此重复或超时的
+	// Shutdown 调用共享它，不会每次调用泄漏一个 goroutine；释放完成时 done 关闭。
+	// 周期完成后，下一次 Shutdown 会在 mu 下替换它，因此用 Start 重启的 Cron 会被
+	// 重新排空，而不是立即报告成功。
+	shutdown *shutdownCycle
+}
+
+// shutdownCycle is one drain-and-release cycle: its waiter drains the loops and
+// the in-flight jobs and then releases every lease, closing done when it has
+// finished.
+// shutdownCycle 是一个排空并释放的周期：其等待者排空循环与在途任务，然后释放
+// 所有租约，完成时关闭 done。
+type shutdownCycle struct {
+	once sync.Once
+	done chan struct{}
 }
 
 // New create a new Cron struct with default tick interval of 1 minute
@@ -216,6 +239,7 @@ func New(opts ...Option) *Cron {
 		jobs:     map[string]*job{},
 		leases:   map[string]*jobLease{},
 		onPanic:  defaultPanicHandler,
+		shutdown: &shutdownCycle{done: make(chan struct{})},
 	}
 
 	for _, opt := range opts {
@@ -357,48 +381,60 @@ func (c *Cron) Add(jobId string, cronExpr string, run func(), opts ...JobOption)
 // Remove removes a single cron job by its id.
 //
 // A run that is already in progress (it passed the lease gate) is not
-// interrupted. With distributed leases the job's lease is released and its
-// state forgotten: a fire that was dispatched before Remove but has not
-// reached the lease gate yet is skipped instead of acquiring, and re-adding
-// the id later starts a fresh lifecycle.
+// interrupted. With distributed leases the job's state is tombstoned under the
+// Cron lock and its release runs in the background with one acquire-timeout
+// budget: Remove returns without waiting for the Unlock. A fire that was
+// dispatched before Remove but has not reached the lease gate yet is skipped
+// instead of acquiring, and the tombstone keeps fencing a re-added id until the
+// release finishes. A failed Unlock keeps the tombstone (and the cached Locker)
+// so a later Stop/Shutdown release retries it; once that succeeds, a re-added
+// job is reopened and the next fire may acquire.
 // Remove 按 id 移除一个定时任务。
 //
-// 已经通过租约闸门的运行不会被中断。启用分布式租约时，该任务的租约会被释放、
-// 状态被遗忘：Remove 之前已分发、但尚未到达租约闸门的触发会被跳过而不是获取
-// 租约；之后重新添加该 id 会开始新的生命周期。
+// 已经通过租约闸门的运行不会被中断。启用分布式租约时，任务状态在 Cron 锁下被
+// 写入墓碑，释放以一份 acquire 超时预算在后台进行：Remove 不等待 Unlock 就返回。
+// Remove 之前已分发、但尚未到达租约闸门的触发会被跳过而不是获取租约；墓碑在被
+// 重新添加的 id 上持续隔离，直到释放完成。Unlock 失败会保留墓碑（与缓存的
+// Locker），让之后的 Stop/Shutdown 释放重试；重试成功后，重新添加的任务会被
+// 重新开放，下次触发即可获取租约。
 func (c *Cron) Remove(jobId string) {
 	c.mu.Lock()
 
 	delete(c.jobs, jobId)
 
-	l := c.leases[jobId]
-	if l != nil {
+	var refs []leaseRef
+	if l := c.leases[jobId]; l != nil {
 		// Tombstone before releasing: a fire for a re-added job must skip
-		// until the release (and its Unlock) has finished.
-		// 释放前先写墓碑：被重新添加任务的触发必须等到释放（及其 Unlock）完成后
-		// 才能继续。
+		// until the background release (and its Unlock) has finished.
+		// 释放前先写墓碑：被重新添加任务的触发必须等到后台释放（及其 Unlock）
+		// 完成后才能继续。
 		l.mu.Lock()
 		l.removed = true
+		refs = append(refs, leaseRef{id: jobId, lease: l, gen: l.leaderGen})
 		l.mu.Unlock()
 	}
 
 	c.mu.Unlock()
 
-	if l != nil {
-		c.releaseLease(jobId, l, true)
+	if len(refs) > 0 {
+		go c.releaseRemoved(refs)
 	}
 }
 
 // RemoveAll removes all registered cron jobs.
 //
-// With distributed leases every lease is released and all lease state is
-// forgotten. Fires dispatched before RemoveAll but not yet past the lease gate
-// are skipped, and re-adding any id later starts a fresh lifecycle.
+// With distributed leases every state is tombstoned under the Cron lock and the
+// releases run in the background with one acquire-timeout budget: RemoveAll
+// returns without waiting for the Unlock. Fires dispatched before RemoveAll but
+// not yet past the lease gate are skipped, and the tombstones keep fencing a
+// re-added id until each release finishes. A failed Unlock keeps its tombstone
+// for a later Stop/Shutdown retry.
 // RemoveAll 移除所有已注册的任务。
 //
-// 启用分布式租约时，所有租约都会被释放、所有租约状态被遗忘。RemoveAll 之前已
-// 分发、但尚未通过租约闸门的触发会被跳过；之后重新添加任何 id 都会开始新的
-// 生命周期。
+// 启用分布式租约时，所有状态在 Cron 锁下被写入墓碑，释放以一份 acquire 超时预算
+// 在后台进行：RemoveAll 不等待 Unlock 就返回。RemoveAll 之前已分发、但尚未通过
+// 租约闸门的触发会被跳过；每个墓碑在被重新添加的 id 上持续隔离，直到对应释放
+// 完成。Unlock 失败会保留其墓碑，供之后的 Stop/Shutdown 重试。
 func (c *Cron) RemoveAll() {
 	c.mu.Lock()
 
@@ -406,15 +442,17 @@ func (c *Cron) RemoveAll() {
 	for id, l := range c.leases {
 		l.mu.Lock()
 		l.removed = true
+		locks = append(locks, leaseRef{id: id, lease: l, gen: l.leaderGen})
 		l.mu.Unlock()
-		locks = append(locks, leaseRef{id: id, lease: l})
 	}
 
 	c.jobs = map[string]*job{}
 
 	c.mu.Unlock()
 
-	c.releaseRefs(locks)
+	if len(locks) > 0 {
+		go c.releaseRemoved(locks)
+	}
 }
 
 // Total returns the current total number of registered cron jobs.
@@ -456,20 +494,26 @@ func (c *Cron) Jobs() []JobInfo {
 //
 // With distributed leases Stop also releases every held lease immediately,
 // without waiting for running jobs, so another replica may take over before
-// they finish. It also fences fires that were dispatched before Stop but have
-// not passed the lease gate yet: they are skipped instead of re-acquiring a
-// lease a stopped Cron would keep refreshing forever. Restarting the ticker
-// with Start never releases leases and reopens the gate for new fires; a fire
-// dispatched before Stop stays fenced because it carries the old stop epoch.
+// they finish. All releases share one acquire-timeout budget and run
+// concurrently, so N leases do not cost N timeouts. Stop fences fires that were
+// dispatched before it but have not passed the lease gate yet: they are skipped
+// instead of re-acquiring a lease a stopped Cron would keep refreshing forever.
+// Restarting the ticker with Start never releases leases and reopens the gate
+// for new fires; a fire dispatched before Stop stays fenced because it carries
+// the old stop epoch. A release that was delayed across a concurrent Start is
+// tied to the leader generation it snapshotted, so it never cancels a refresher
+// or Unlocks a lease the restarted Cron acquired meanwhile.
 // Stop 停止当前 cron ticker（若尚未停止）。
 //
 // 它不等待已在运行的任务（那用 Shutdown）。之后可以再调用 Start() 恢复 ticker。
 //
 // 启用分布式租约时，Stop 还会立即释放所有持有的租约（不等待运行中的任务），
-// 因此其他副本可能在其结束前接管。它还会隔离 Stop 之前已分发、但尚未通过租约
-// 闸门的触发：这些触发会被跳过，而不是重新获取一个停止后的 Cron 会永远续期的
-// 租约。用 Start 重启 ticker 不会释放租约，并会为新触发重新打开闸门；Stop 之前
-// 分发的旧触发携带着旧的 epoch，仍会被隔离。
+// 因此其他副本可能在其结束前接管。所有释放共享一份 acquire 超时预算并并发执行，
+// 因此 N 个租约不会花费 N 份超时。Stop 会隔离它之前已分发、但尚未通过租约闸门
+// 的触发：这些触发会被跳过，而不是重新获取一个停止后的 Cron 会永远续期的租约。
+// 用 Start 重启 ticker 不会释放租约，并会为新触发重新打开闸门；Stop 之前分发的
+// 旧触发携带着旧的 epoch，仍会被隔离。被并发 Start 拖后的释放与它快照的 leader
+// 代数绑定，因此绝不会取消重启后 Cron 刚获取的租约的续期器，也不会 Unlock 它。
 func (c *Cron) Stop() {
 	c.mu.Lock()
 	c.stopLocked()
@@ -484,12 +528,20 @@ func (c *Cron) Stop() {
 // or for ctx to be done, whichever comes first (in which case ctx.Err()
 // is returned and the remaining jobs keep running in the background).
 //
-// With distributed leases it stops only the ticker first, waits for the
-// loops and in-flight jobs, then releases every lease. If ctx expires first
-// it returns ctx.Err() without releasing anything, so background jobs keep
-// their leases and refreshers; a later Shutdown call releases them.
+// With distributed leases it stops only the ticker first, then a single
+// background waiter drains the loops and the in-flight jobs and releases every
+// lease. That waiter is started once and keeps running even when ctx expires,
+// so a timed-out Shutdown still releases the leases as soon as the in-flight
+// jobs finish; no later Shutdown call is required. Every Shutdown call made
+// while the waiter runs shares it, and a waiter that has drained the Cron is
+// reported as success even when ctx expires at the same moment. Once the waiter
+// has completed, the next Shutdown starts a fresh one, so a Cron restarted with
+// Start is drained and its leases released again.
 //
-// Don't call Start() concurrently with or after Shutdown().
+// Don't call Start() concurrently with Shutdown(), or after a Shutdown that
+// returned ctx.Err(): that call's waiter is still draining in the background
+// and will release the leases the restarted Cron acquires. A Start after
+// Shutdown returned nil is safe: the next Shutdown drains the new run.
 //
 // Don't call Shutdown from inside a job: it waits for all running jobs,
 // including the calling one, so context.Background() blocks forever and a
@@ -498,31 +550,68 @@ func (c *Cron) Stop() {
 // Shutdown 停止 ticker 并等待运行中的任务返回，或直到 ctx 结束（此时返回
 // ctx.Err()，剩余任务继续在后台运行），以先到者为准。
 //
-// 启用分布式租约时，它先只停 ticker，等循环与进行中的任务结束，再释放所有
-// 租约。若 ctx 先到期，则返回 ctx.Err() 且不释放任何租约，后台任务继续持有
-// 租约和续期器；之后再调用 Shutdown 会释放它们。
+// 启用分布式租约时，它先只停 ticker，再由唯一的后台等待者排空循环与在途任务并
+// 释放所有租约。该等待者只启动一次，且即使 ctx 到期也继续运行，因此超时的
+// Shutdown 仍会在在途任务结束后释放租约；无需再次调用 Shutdown。等待者运行期间
+// 的所有 Shutdown 调用共享它；若等待者已排空该 Cron，即使 ctx 同时到期也返回
+// 成功。等待者完成后，下一次 Shutdown 会启动新的等待者，因此用 Start 重启的
+// Cron 会再次被排空并释放其租约。
 //
-// 不要与 Shutdown() 并发调用 Start()，也不要在 Shutdown() 之后再调用。
+// 不要与 Shutdown() 并发调用 Start()，也不要在 Shutdown 返回 ctx.Err() 之后
+// 调用 Start()：该调用的等待者仍在后台排空，并会释放重启后的 Cron 获取的租约。
+// Shutdown 返回 nil 之后再调用 Start() 是安全的：下一次 Shutdown 会排空新的运行。
 //
 // 不要在任务（job）里调用 Shutdown：它要等所有运行中的任务返回，包括调用它的这一个，
 // 传 context.Background() 会永久阻塞，传带超时的 ctx 会白等到超时。任务想让调度器停下来时调用 Stop。
 func (c *Cron) Shutdown(ctx context.Context) error {
 	c.mu.Lock()
 	c.stopLocked()
+
+	// Share the running waiter, including timed-out calls, instead of leaking a
+	// goroutine each. Once it has completed, arm a fresh cycle so work started
+	// since (eg. by a later Start) is drained too. Seeing done closed also
+	// guarantees the previous loops.Wait/inflight.Wait returned, so the new
+	// cycle may wait on the same WaitGroups.
+	// 共享运行中的等待者（包括超时的调用），而不是每次调用泄漏一个 goroutine。
+	// 等待者完成后就准备新周期，使之后（例如由随后的 Start）启动的工作也会被排空。
+	// 观察到 done 已关闭也保证上一轮的 loops.Wait/inflight.Wait 已返回，因此新
+	// 周期可以再次等待同一组 WaitGroup。
+	s := c.shutdown
+	if s == nil {
+		s = &shutdownCycle{done: make(chan struct{})}
+		c.shutdown = s
+	}
+	select {
+	case <-s.done:
+		s = &shutdownCycle{done: make(chan struct{})}
+		c.shutdown = s
+	default:
+	}
 	c.mu.Unlock()
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		c.loops.Wait()    // no more jobs will be dispatched after this | 此后不再分发新任务。
-		c.inflight.Wait() // wait for the already dispatched ones | 等已分发的任务结束。
-	}()
+	s.once.Do(func() {
+		go func() {
+			defer close(s.done)
+
+			c.loops.Wait()    // no more jobs will be dispatched after this | 此后不再分发新任务。
+			c.inflight.Wait() // wait for the already dispatched ones | 等已分发的任务结束。
+
+			c.releaseAllLeases()
+		}()
+	})
 
 	select {
-	case <-done:
-		c.releaseAllLeases()
+	case <-s.done:
 		return nil
 	case <-ctx.Done():
+	}
+
+	// Prefer a drained Cron when both are ready.
+	// 两者同时就绪时，优先返回已排空的结果。
+	select {
+	case <-s.done:
+		return nil
+	default:
 		return ctx.Err()
 	}
 }

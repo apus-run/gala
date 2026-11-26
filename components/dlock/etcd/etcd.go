@@ -187,7 +187,28 @@ func (l *Lock) Unlock(ctx context.Context) error {
 	cleanupCtx, cancel := cleanup.Context(ctx)
 	defer cancel()
 
-	_, err := l.lease.Revoke(cleanupCtx, l.leaseID)
+	// A live lease does not prove the key still belongs to this Locker: an old
+	// binary or an operator may have deleted or replaced it. Check ownership
+	// before Revoke; after Revoke the key is gone, so checking then would
+	// false-positive on every normal release.
+	// 租约存活不代表 key 仍属于本 Locker：旧版本或运维操作可能删除或替换它。
+	// 在 Revoke 之前校验所有权；Revoke 之后 key 已消失，事后检查会让每次正常
+	// 释放都误报。
+	owned, err := l.ownsKey(cleanupCtx)
+	if err != nil {
+		return fmt.Errorf("dlock/etcd: verify lock %q before release: %w", l.lockKey, err)
+	}
+	if !owned {
+		// The key is gone or owned by another token; revoke our now-useless
+		// lease so it does not linger until its TTL.
+		// key 已消失或属于其他令牌；撤销我们已无用的租约，避免它留到 TTL。
+		l.discardLease(cleanupCtx, l.leaseID)
+		l.held = false
+		l.leaseID = 0
+		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
+	}
+
+	_, err = l.lease.Revoke(cleanupCtx, l.leaseID)
 	if err != nil {
 		if errors.Is(err, rpctypes.ErrLeaseNotFound) {
 			l.held = false

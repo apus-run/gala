@@ -47,13 +47,20 @@ func (f OptionFunc) apply(o *Options) {
 //
 // Start must return promptly after launching its background loop: long-running
 // work belongs in a goroutine owned by the task. Stop must be idempotent and
-// bounded by ctx; it may be called for a task whose Start never ran or did not
-// finish.
+// bounded by ctx: Run hands each task's Stop a fresh deadline-bounded context
+// that carries the application context values but not its cancellation, so an
+// externally canceled application context cannot cut cleanup short and one
+// task exhausting its budget cannot starve the tasks stopped after it. Stop may
+// be called for a task whose Start never ran or did not finish. Nil tasks are
+// ignored.
 // Task 是受 Service 生命周期管理的后台任务。
 //
 // Start 必须在启动后台循环后立即返回：长时间运行的工作应放在任务自己持有的
-// goroutine 中。Stop 必须幂等，并以其 ctx 约束自身时长；即使某个任务的 Start
-// 未曾执行或未执行完，也可能收到 Stop 调用。
+// goroutine 中。Stop 必须幂等，并以其 ctx 约束自身时长：Run 为每个任务的 Stop
+// 提供独立的、带截止时间的新鲜 context，它携带应用 context 的值但不继承其取消
+// 信号，因此外部取消应用 context 不会截断清理，单个任务耗尽预算也不会饿死其后
+// 停止的任务。即使某个任务的 Start 未曾执行或未执行完，也可能收到 Stop 调用。
+// nil 任务会被忽略。
 type Task interface {
 	// Start starts the task | 启动任务.
 	Start(ctx context.Context) error
@@ -78,8 +85,10 @@ type Options struct {
 	registry registry.Registry
 	// registry timeout | 注册超时
 	registryTimeout time.Duration
-	// stop timeout | 停止超时
+	// stop timeout for servers and, as a fallback, background tasks | 服务器停止超时，并作为后台任务的回退值
 	stopTimeout time.Duration
+	// per-task stop timeout | 每个后台任务的停止超时
+	taskStopTimeout time.Duration
 	// services | 承载服务的服务器列表
 	servers []server.Server
 	// background tasks managed alongside the servers | 与服务器一同托管的后台任务
@@ -94,6 +103,12 @@ type Options struct {
 	afterStart  []func(context.Context) error
 	afterStop   []func(context.Context) error
 }
+
+// defaultTaskStopTimeout is the stop budget for each background task when
+// neither WithTaskStopTimeout nor WithStopTimeout is set.
+// defaultTaskStopTimeout 是既未设置 WithTaskStopTimeout 也未设置 WithStopTimeout
+// 时每个后台任务的停止预算.
+const defaultTaskStopTimeout = 30 * time.Second
 
 // DefaultOptions returns a new Options holding the package defaults | DefaultOptions 返回持有包默认值的 Options.
 func DefaultOptions() *Options {
@@ -118,6 +133,21 @@ func (o *Options) Apply(opts ...Option) {
 	for _, opt := range opts {
 		opt.apply(o)
 	}
+}
+
+// effectiveTaskStopTimeout resolves the stop budget applied to each background
+// task: taskStopTimeout when set, otherwise stopTimeout when set, otherwise
+// defaultTaskStopTimeout.
+// effectiveTaskStopTimeout 解析每个后台任务适用的停止预算：优先 taskStopTimeout，
+// 其次 stopTimeout，最后 defaultTaskStopTimeout.
+func (o *Options) effectiveTaskStopTimeout() time.Duration {
+	if o.taskStopTimeout > 0 {
+		return o.taskStopTimeout
+	}
+	if o.stopTimeout > 0 {
+		return o.stopTimeout
+	}
+	return defaultTaskStopTimeout
 }
 
 // WithID sets the service instance id | WithID 设置服务实例 id.
@@ -163,10 +193,18 @@ func WithServers(srvs ...server.Server) Option {
 	return OptionFunc(func(o *Options) { o.servers = srvs })
 }
 
-// WithTasks appends background tasks managed by the app lifecycle | WithTasks 追加由应用生命周期托管的后台任务.
+// WithTasks appends background tasks managed by the app lifecycle. Nil entries
+// are skipped, so a nil Task never reaches Start or Stop.
+// WithTasks 追加由应用生命周期托管的后台任务。nil 条目会被跳过，nil Task 不会
+// 进入 Start 或 Stop.
 func WithTasks(tasks ...Task) Option {
 	return OptionFunc(func(o *Options) {
-		o.tasks = append(o.tasks, tasks...)
+		for _, task := range tasks {
+			if task == nil {
+				continue
+			}
+			o.tasks = append(o.tasks, task)
+		}
 	})
 }
 
@@ -189,10 +227,28 @@ func WithRegistryTimeout(timeout time.Duration) Option {
 	})
 }
 
-// WithStopTimeout with stop timeout | WithStopTimeout 设置停止排水超时.
+// WithStopTimeout with stop timeout. It bounds server drain and is also the
+// fallback stop budget for background tasks; WithTaskStopTimeout overrides it
+// for tasks.
+// WithStopTimeout 设置停止排水超时。它限定服务器的排水时长，同时作为后台任务的
+// 回退停止预算；WithTaskStopTimeout 可为任务单独覆盖.
 func WithStopTimeout(timeout time.Duration) Option {
 	return OptionFunc(func(o *Options) {
 		o.stopTimeout = timeout
+	})
+}
+
+// WithTaskStopTimeout sets the stop budget applied to each background task. It
+// takes precedence over WithStopTimeout for tasks; non-positive values are
+// ignored, leaving the fallback in effect.
+// WithTaskStopTimeout 设置每个后台任务的停止预算。对任务而言它优先于
+// WithStopTimeout；非正值会被忽略，仍沿用回退值.
+func WithTaskStopTimeout(timeout time.Duration) Option {
+	return OptionFunc(func(o *Options) {
+		if timeout <= 0 {
+			return
+		}
+		o.taskStopTimeout = timeout
 	})
 }
 

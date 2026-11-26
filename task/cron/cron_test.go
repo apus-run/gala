@@ -322,7 +322,10 @@ func TestCronSkipIfRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// after the previous run returned it can run again
+	// after the previous run returned it can run again; a Shutdown after a
+	// completed one arms a fresh waiter, so it drains the new run
+	// 上一次运行返回后它可以再次运行；已完成一次 Shutdown 后的新 Shutdown 会准备
+	// 新的等待者，因此会排空这次新的运行
 	c.runDue(base.Add(4 * time.Minute))
 	_ = c.Shutdown(context.Background())
 	if started.Load() != 2 {

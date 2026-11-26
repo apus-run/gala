@@ -13,20 +13,26 @@
 // package also carries typed context metadata (trace ID, user ID, color tag)
 // and build Info helpers overridden via -ldflags. WithTasks registers
 // background tasks that start after the servers and the afterStart hooks and
-// stop before the servers during shutdown.
+// stop before the servers during shutdown. Each task Stop gets its own cleanup
+// context: it carries the application context values but not its cancellation,
+// and its budget is taskStopTimeout when set, otherwise stopTimeout when set,
+// otherwise a 30s default. Nil tasks are ignored.
 // New 按选项组装应用；Run 在 errgroup 中启动所有服务器，就绪后向配置的 registry
 // 注册 ServiceInstance，随后阻塞等待信号（默认 SIGINT、SIGTERM、SIGQUIT）或任一
 // 服务器返回。Stop 注销实例并取消 context；设置 stopTimeout 时限定服务器的排水
 // 时间。未显式配置时端点取各 server 的 Endpointer 实现。包内还提供类型化的
 // context 元数据（trace ID、user ID、color tag）与可用 -ldflags 覆盖的构建 Info。
 // WithTasks 注册的后台任务在服务器与 afterStart 钩子之后启动，并在停机时先于
-// 服务器停止。
+// 服务器停止。每个任务的 Stop 获得独立的清理 context：它携带应用 context 的值
+// 但不继承其取消信号，预算优先取 taskStopTimeout，其次 stopTimeout，两者都未
+// 设置时默认 30s。nil 任务会被忽略。
 //
 // # Features | 功能
 //
 // - Run / Stop lifecycle with before/after hooks | 带 before/after 钩子的 Run / Stop 生命周期
 // - Servers managed in an errgroup | errgroup 托管的多个服务器
 // - Background tasks ordered around the server lifecycle | 围绕服务器生命周期有序启停的后台任务
+// - Per-task stop budgets with WithTaskStopTimeout | 通过 WithTaskStopTimeout 为每个后台任务设置停止预算
 // - Optional registry with registration timeout | 可选服务注册与注册超时
 // - WithTraceID / WithUserID / WithColorTag context helpers | context 元数据助手
 // - Version Info with build metadata | 携带构建元数据的版本 Info
@@ -116,13 +122,32 @@ func (s *Service) Run() error {
 	wg := sync.WaitGroup{}
 	var taskStopErr error
 
+	// tasks is the nil-free view of the configured tasks. A nil Task interface
+	// must never be invoked through Start or Stop.
+	// tasks 是已配置任务去除 nil 后的视图；nil Task 接口绝不能通过 Start 或
+	// Stop 被调用。
+	tasks := make([]Task, 0, len(s.opts.tasks))
+	for _, task := range s.opts.tasks {
+		if task != nil {
+			tasks = append(tasks, task)
+		}
+	}
+
 	for _, fn := range s.opts.beforeStart {
 		if err = fn(c); err != nil {
 			return err
 		}
 	}
 
+	// octx is the cancellable context handed to server Start, so transports see
+	// shutdown. cleanupBase carries the same values without the cancellation:
+	// an externally canceled app context must not pre-cancel graceful cleanup,
+	// so both server and task stop contexts derive from it.
+	// octx 是传给服务器 Start 的可取消 context，使传输服务感知停机。cleanupBase
+	// 携带相同的值但不继承取消信号：外部取消应用 context 不应提前取消优雅清理，
+	// 因此服务器与任务的停止 context 都从它派生。
 	octx := ServiceContextKey.NewContext(s.opts.context, s)
+	cleanupBase := ServiceContextKey.NewContext(context.WithoutCancel(s.opts.context), s)
 
 	// tasksStopped is closed once task shutdown finishes, or immediately when no
 	// tasks are configured. The server stop goroutines wait for it, so tasks
@@ -134,7 +159,7 @@ func (s *Service) Run() error {
 	closeTasksStopped := func() {
 		tasksStoppedOnce.Do(func() { close(tasksStopped) })
 	}
-	if len(s.opts.tasks) == 0 {
+	if len(tasks) == 0 {
 		closeTasksStopped()
 	}
 
@@ -156,7 +181,7 @@ func (s *Service) Run() error {
 		eg.Go(func() error {
 			<-ctx.Done()   // wait for stop signal | 等待停止信号
 			<-tasksStopped // tasks stop before their transports | 任务先于传输服务停止
-			stopCtx := octx
+			stopCtx := cleanupBase
 			if s.opts.stopTimeout > 0 {
 				var cancel context.CancelFunc
 				stopCtx, cancel = context.WithTimeout(stopCtx, s.opts.stopTimeout)
@@ -194,11 +219,11 @@ func (s *Service) Run() error {
 	// context 与已注册的服务。由同一个 goroutine 负责启停：启动阶段结束（或失败）
 	// 后才执行任何 Stop，因此与启动竞争的停机不会让任务在 Stop 之后又被启动。
 	// 任务存在时它是 tasksStopped 的唯一关闭者。
-	if len(s.opts.tasks) > 0 {
+	if len(tasks) > 0 {
 		tasksStarted = true
 		eg.Go(func() error {
 			var startErr error
-			for _, task := range s.opts.tasks {
+			for _, task := range tasks {
 				if ctx.Err() != nil {
 					// Shutdown was requested before this task started; do not
 					// start new work. Stop below still runs for every task.
@@ -218,17 +243,24 @@ func (s *Service) Run() error {
 				<-ctx.Done() // signal, Stop, or a failing goroutine triggered shutdown | 由信号、Stop 或失败的 goroutine 触发停机
 			}
 
-			stopCtx := octx
-			if s.opts.stopTimeout > 0 {
-				var cancel context.CancelFunc
-				stopCtx, cancel = context.WithTimeout(stopCtx, s.opts.stopTimeout)
-				defer cancel()
-			}
+			// Stop sequentially in option order. Every task gets its own
+			// deadline-bounded context derived from cleanupBase, so a task that
+			// exhausts its budget cannot starve the tasks stopped after it.
+			// Cancel happens after the call, never deferred inside the loop.
+			// Every Stop error is recorded: a context.Canceled reported by a
+			// task is a cleanup failure, not the normal signal path.
+			// 按选项顺序依次停止。每个任务都获得从 cleanupBase 派生的独立、带截止
+			// 时间的 context，因此耗尽预算的任务不会饿死其后停止的任务。cancel 在
+			// 调用之后执行，绝不在循环中 defer。每个 Stop 错误都会被收集：任务返回
+			// 的 context.Canceled 属于清理失败，而非正常的信号停机路径。
+			taskTimeout := s.opts.effectiveTaskStopTimeout()
 			var errs []error
-			for _, task := range s.opts.tasks {
-				if err := task.Stop(stopCtx); err != nil && !errors.Is(err, context.Canceled) {
+			for _, task := range tasks {
+				stopCtx, cancel := context.WithTimeout(cleanupBase, taskTimeout)
+				if err := task.Stop(stopCtx); err != nil {
 					errs = append(errs, err)
 				}
+				cancel()
 			}
 			taskStopErr = errors.Join(errs...)
 			closeTasksStopped()

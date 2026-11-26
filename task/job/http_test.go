@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -207,6 +208,172 @@ func TestHandlerErrorHandlerSeesRunError(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "kaboom") {
 		t.Fatal("custom handler body unexpectedly contains the panic value")
 	}
+}
+
+func TestHandlerBodyOverMaxBytes(t *testing.T) {
+	r := NewRegistry()
+	var (
+		runs   atomic.Int32
+		gotLen atomic.Int64
+	)
+	if err := r.Register("echo", func(ctx context.Context) error {
+		inv, _ := FromContext(ctx)
+		gotLen.Store(int64(len(inv.Payload)))
+		runs.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h := r.Handler(WithMaxBodyBytes(16))
+
+	// Exactly at the limit is accepted and delivered whole.
+	// 恰好等于上限的请求体被接受并完整交付。
+	req := httptest.NewRequest(http.MethodPost, "/jobs", strings.NewReader(strings.Repeat("a", 16)))
+	req.Header.Set(defaultJobHeader, "echo")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("at-limit status %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("job ran %d times, want 1", got)
+	}
+	if got := gotLen.Load(); got != 16 {
+		t.Fatalf("payload length %d, want 16", got)
+	}
+
+	// One byte over is refused with 413 and the job does not run.
+	// 超出 1 字节返回 413 且任务不运行。
+	req = httptest.NewRequest(http.MethodPost, "/jobs", strings.NewReader(strings.Repeat("b", 17)))
+	req.Header.Set(defaultJobHeader, "echo")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("over-limit status %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("job ran on an over-limit body: %d runs, want 1", got)
+	}
+}
+
+// notReadReader records Read attempts and fails them, so a test can prove a
+// body was never touched.
+// notReadReader 记录并拒绝 Read 调用，测试因此可以证明请求体从未被读取。
+type notReadReader struct{ reads atomic.Int32 }
+
+func (r *notReadReader) Read([]byte) (int, error) {
+	r.reads.Add(1)
+	return 0, errors.New("body must not be read")
+}
+
+func TestHandlerUnknownJobDoesNotReadBody(t *testing.T) {
+	body := &notReadReader{}
+	req := httptest.NewRequest(http.MethodPost, "/jobs", body)
+	req.Header.Set(defaultJobHeader, "missing")
+	rec := httptest.NewRecorder()
+
+	NewRegistry().Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if got := body.reads.Load(); got != 0 {
+		t.Fatalf("body read %d times for an unknown job, want 0", got)
+	}
+}
+
+func TestHandlerUnknownJobCallsErrorHandlerWithoutReadingBody(t *testing.T) {
+	var gotErr error
+	h := NewRegistry().Handler(WithHTTPErrorHandler(func(w http.ResponseWriter, _ *http.Request, err error) {
+		gotErr = err
+		http.Error(w, "custom", http.StatusGone)
+	}))
+
+	body := &notReadReader{}
+	req := httptest.NewRequest(http.MethodPost, "/jobs", body)
+	req.Header.Set(defaultJobHeader, "missing")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status %d, want the handler's %d", rec.Code, http.StatusGone)
+	}
+	if !errors.Is(gotErr, ErrNotFound) {
+		t.Fatalf("handler error %v, want ErrNotFound", gotErr)
+	}
+	if got := body.reads.Load(); got != 0 {
+		t.Fatalf("body read %d times for an unknown job, want 0", got)
+	}
+}
+
+func TestHandlerDefaultMaxBodyBytes(t *testing.T) {
+	if defaultMaxBodyBytes != 10<<20 {
+		t.Fatalf("defaultMaxBodyBytes = %d, want 10 MiB", defaultMaxBodyBytes)
+	}
+
+	for _, tt := range []struct {
+		name string
+		opts []HTTPOption
+	}{
+		{name: "default"},
+		{name: "non-positive keeps default", opts: []HTTPOption{WithMaxBodyBytes(0), WithMaxBodyBytes(-1)}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewRegistry()
+			var ran atomic.Bool
+			if err := r.Register("echo", func(context.Context) error {
+				ran.Store(true)
+				return nil
+			}); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/jobs", &zeroReader{n: defaultMaxBodyBytes + 1})
+			req.Header.Set(defaultJobHeader, "echo")
+			rec := httptest.NewRecorder()
+			r.Handler(tt.opts...).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+			}
+			if ran.Load() {
+				t.Fatal("job ran on a body over the default limit")
+			}
+		})
+	}
+}
+
+func TestWithMaxBodyBytesOption(t *testing.T) {
+	c := httpConfig{maxBodyBytes: 42}
+
+	WithMaxBodyBytes(0)(&c)
+	WithMaxBodyBytes(-1)(&c)
+	if c.maxBodyBytes != 42 {
+		t.Fatalf("non-positive limit changed the cap: %d, want 42", c.maxBodyBytes)
+	}
+
+	WithMaxBodyBytes(7)(&c)
+	if c.maxBodyBytes != 7 {
+		t.Fatalf("cap %d, want 7", c.maxBodyBytes)
+	}
+}
+
+// zeroReader yields n zero bytes without buffering them up front.
+// zeroReader 按需产出 n 个零字节，不预先缓冲。
+type zeroReader struct{ n int64 }
+
+func (r *zeroReader) Read(p []byte) (int, error) {
+	if r.n <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.n {
+		p = p[:r.n]
+	}
+	clear(p)
+	r.n -= int64(len(p))
+	return len(p), nil
 }
 
 func TestHandlerRecoversPanic(t *testing.T) {

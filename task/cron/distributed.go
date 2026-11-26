@@ -101,17 +101,17 @@ func (e LockEvent) String() string {
 // LockEventHandler receives distributed-lease events.
 //
 // It is called synchronously by the goroutine that observed the event: a job
-// goroutine, the lease refresher, or the caller of Stop/Shutdown/Remove. It
-// may therefore run concurrently for different jobs and must be fast and
-// concurrency-safe. Do not block in it, and do not call back into the same
-// Cron (a handler invoked from the refresher would deadlock a Stop that waits
-// for that refresher to exit).
+// goroutine, the lease refresher, the caller of Stop/Shutdown, or a background
+// release started by Remove/RemoveAll. It may therefore run concurrently for
+// different jobs and must be fast and concurrency-safe. Do not block in it, and
+// do not call back into the same Cron (a handler invoked from the refresher
+// would deadlock a Stop that waits for that refresher to exit).
 // LockEventHandler 接收分布式租约事件。
 //
-// 它由观察到事件的 goroutine 同步调用：任务 goroutine、租约续期 goroutine，
-// 或 Stop/Shutdown/Remove 的调用方。因此不同任务的事件可能并发到达，处理器
-// 必须快速且并发安全。不要在其中阻塞，也不要回调同一个 Cron（续期 goroutine
-// 里调用的处理器若去 Stop，会等待该续期器退出而死锁）。
+// 它由观察到事件的 goroutine 同步调用：任务 goroutine、租约续期 goroutine、
+// Stop/Shutdown 的调用方，或 Remove/RemoveAll 启动的后台释放。因此不同任务的事件
+// 可能并发到达，处理器必须快速且并发安全。不要在其中阻塞，也不要回调同一个 Cron
+// （续期 goroutine 里调用的处理器若去 Stop，会等待该续期器退出而死锁）。
 type LockEventHandler func(jobID string, event LockEvent, err error)
 
 // LockOption configures the distributed-lease behavior enabled by
@@ -242,6 +242,16 @@ type jobLease struct {
 	leader  bool // this replica owns the lease | 本副本持有租约。
 	mayHold bool // the lease MAY still be held in the backend | 后端租约"可能"仍被持有。
 
+	// leaderGen increments each time this replica wins a Lock and becomes
+	// leader. A release snapshots it: if it changed by the time the release
+	// actually runs, a newer leadership was acquired (eg. after a concurrent
+	// Start), and the stale release must not cancel its refresher nor Unlock
+	// its lease.
+	// leaderGen 在每次本副本 Lock 成功并成为 leader 时递增。释放会快照它：若释放
+	// 真正执行时它已变化，说明已有更新的 leadership（如在并发 Start 之后获取），
+	// 旧的释放不得取消其续期器，也不得 Unlock 其租约。
+	leaderGen uint64
+
 	refreshCancel context.CancelFunc // stops the refresher | 停止续期器。
 	refreshDone   chan struct{}      // closed when the refresher exits | 续期器退出时关闭。
 }
@@ -306,11 +316,20 @@ func (c *Cron) leaseFor(j *job, epoch uint64) (*jobLease, bool) {
 // unnecessary) and no new acquire can interleave. A job re-added while the
 // release was in flight keeps its state (with the same opMu) and is reopened
 // for the next fire; a still-removed job forgets the state entirely.
+//
+// It never deletes a state whose lease may still be held: a failed Unlock keeps
+// the state, its tombstone, and its cached Locker (with the replica's ownership
+// token) so a later Stop/Shutdown release can retry instead of forgetting a
+// lease that the backend may still consider ours.
 // finishRemoval 在释放完成后处理墓碑租约。
 //
 // 它在状态的 opMu 下运行，因此旧的 Unlock 已经发生（或本就无需释放），不会有新的
 // 获取插入。释放期间被重新添加的任务保留其状态（同一个 opMu）并重新开放给下次
 // 触发；仍被移除的任务则彻底遗忘该状态。
+//
+// 它绝不会删除租约"可能仍被持有"的状态：Unlock 失败会保留状态、墓碑以及缓存的
+// Locker（含本副本的所有权令牌），让之后的 Stop/Shutdown 释放可以重试，而不是
+// 遗忘一个后端可能仍认为属于我们的租约。
 func (c *Cron) finishRemoval(jobID string, l *jobLease) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -318,6 +337,14 @@ func (c *Cron) finishRemoval(jobID string, l *jobLease) {
 	if c.leases[jobID] != l {
 		return
 	}
+
+	l.mu.Lock()
+	mayHold := l.mayHold
+	l.mu.Unlock()
+	if mayHold {
+		return
+	}
+
 	if c.jobs[jobID] != nil {
 		l.mu.Lock()
 		l.removed = false
@@ -424,13 +451,40 @@ func (c *Cron) ensureLeader(j *job, epoch uint64) bool {
 		}
 
 		if got == nil {
-			if c.gateFenced(l, epoch) {
+			// Install the local-only verdict under the Cron read lock, like
+			// leadership below: Remove/RemoveAll and Stop set removed, stopped
+			// and epoch under its write lock, so the fence cannot land between
+			// the check and the installation.
+			// 与下面的 leadership 一样，在 Cron 读锁下记录"纯本地"结论：Remove/
+			// RemoveAll 与 Stop 在其写锁下设置 removed、stopped 与 epoch，因此闸门
+			// 不可能落在检查与安装之间。
+			c.mu.RLock()
+			fenced := c.stopped || c.epoch != epoch
+			if !fenced {
+				l.mu.Lock()
+				fenced = l.removed
+				if !fenced {
+					l.localOnly = true
+				}
+				l.mu.Unlock()
+			}
+			c.mu.RUnlock()
+			if fenced {
 				return false
 			}
-			l.mu.Lock()
-			l.localOnly = true
-			l.mu.Unlock()
-			return true
+
+			// The provider may have been slow enough for Add to replace the job:
+			// mirror the Locked path's stillCurrent check so the replaced
+			// version's fire does not run. The cached local-only verdict stays on
+			// the id's state for the new version.
+			// provider 可能慢到足以让 Add 替换任务：与 Locked 路径一样做
+			// stillCurrent 检查，使被替换版本的触发不运行。缓存的"纯本地"结论
+			// 保留在 id 的状态上，供新版本使用。
+			c.mu.RLock()
+			stillCurrent := c.jobs[jobID] == j
+			c.mu.RUnlock()
+
+			return stillCurrent
 		}
 
 		l.mu.Lock()
@@ -461,10 +515,43 @@ func (c *Cron) ensureLeader(j *job, epoch uint64) bool {
 	// Remove/RemoveAll tombstoned this state, or Stop fenced the Cron. The
 	// lease we just acquired must not be kept: release it here and skip the
 	// run. Any release already queued behind opMu then finds mayHold false.
+	//
+	// Re-check the fence and install leadership in one critical section under
+	// the Cron read lock: Remove/RemoveAll and Stop take its write lock and set
+	// removed, stopped and epoch under it, so no fence can land between the
+	// check and the installation. Otherwise the queued release snapshots the
+	// older leader generation, skips the newer leadership, and a Remove/Stop
+	// leaves a lease with its refresher alive for a tombstoned or stopped
+	// state.
 	// 在 provider 或 Lock 进行期间闸门可能已被隔离：Remove/RemoveAll 写了墓碑，
 	// 或 Stop 隔离了 Cron。刚获取的租约不能保留：在这里释放并跳过运行。排在 opMu
 	// 之后的释放随后会看到 mayHold 为 false。
-	if c.gateFenced(l, epoch) {
+	//
+	// 复查闸门与安装 leadership 在 Cron 读锁下的同一个临界区完成：
+	// Remove/RemoveAll 与 Stop 需要其写锁并在锁内设置 removed、stopped 与 epoch，
+	// 因此闸门不可能落在检查与安装之间。否则排队中的释放会快照旧的 leader 代数、
+	// 跳过新的 leadership，使 Remove/Stop 给墓碑或已停止状态留下活着的租约与续期器。
+	done := make(chan struct{})
+	rctx, rcancel := context.WithCancel(context.Background())
+
+	c.mu.RLock()
+	fenced := c.stopped || c.epoch != epoch
+	if !fenced {
+		l.mu.Lock()
+		fenced = l.removed
+		if !fenced {
+			l.leader = true
+			l.leaderGen++
+			l.mayHold = true
+			l.refreshCancel = rcancel
+			l.refreshDone = done
+		}
+		l.mu.Unlock()
+	}
+	c.mu.RUnlock()
+
+	if fenced {
+		rcancel()
 		uctx, ucancel := context.WithTimeout(context.Background(), c.lockCfg.acquireTimeout)
 		uerr := locker.Unlock(uctx)
 		ucancel()
@@ -476,16 +563,6 @@ func (c *Cron) ensureLeader(j *job, epoch uint64) bool {
 		}
 		return false
 	}
-
-	done := make(chan struct{})
-	rctx, rcancel := context.WithCancel(context.Background())
-
-	l.mu.Lock()
-	l.leader = true
-	l.mayHold = true
-	l.refreshCancel = rcancel
-	l.refreshDone = done
-	l.mu.Unlock()
 
 	go c.refresher(l, jobID, locker, rctx, rcancel, done)
 
@@ -503,12 +580,15 @@ func (c *Cron) ensureLeader(j *job, epoch uint64) bool {
 
 // gateFenced reports whether the lease gate has been closed for this fire
 // since it passed the initial checks: Remove/RemoveAll tombstoned the state,
-// or Stop fenced the whole Cron. It is evaluated after provider/Lock I/O,
-// while the state's opMu is held, so a fenced fire can release before any
-// replacement can acquire.
+// or Stop fenced the whole Cron. It is evaluated while the state's opMu is
+// held, right before the Lock is attempted. The state installed after a
+// successful Lock is re-checked atomically with its installation in
+// ensureLeader, so Remove/Stop cannot land between that check and the
+// leadership.
 // gateFenced 报告本次触发通过初始检查之后闸门是否已关闭：Remove/RemoveAll 写了
-// 墓碑，或 Stop 隔离了整个 Cron。它在 provider/Lock I/O 之后、持有状态 opMu 时
-// 求值，因此被隔离的触发会在任何替代者获取之前完成释放。
+// 墓碑，或 Stop 隔离了整个 Cron。它在持有状态 opMu、即将尝试 Lock 时求值。
+// Lock 成功之后安装的状态会在 ensureLeader 中与安装一起原子复查，因此
+// Remove/Stop 不可能落在该检查与 leadership 之间。
 func (c *Cron) gateFenced(l *jobLease, epoch uint64) bool {
 	l.mu.Lock()
 	removed := l.removed
@@ -575,49 +655,135 @@ func (c *Cron) refresher(l *jobLease, jobID string, locker taskcontract.Locker, 
 	}
 }
 
-// releaseAllLeases releases every lease held by this Cron. The states stay
-// reusable: after a Stop, ensureLeader refuses while the Cron is stopped, and
-// after a Start (or a Shutdown that let the in-flight jobs drain) a later fire
-// may become leader again. It never holds the Cron mutex during lease I/O.
-// releaseAllLeases 释放本 Cron 持有的所有租约。状态保持可复用：Stop 之后
+// releaseAllLeases releases every lease held by this Cron, using one overall
+// acquire-timeout budget shared by all releases and running them concurrently,
+// so N leases do not cost N timeouts. The states stay reusable: after a Stop,
+// ensureLeader refuses while the Cron is stopped, and after a Start (or a
+// Shutdown that let the in-flight jobs drain) a later fire may become leader
+// again. It never holds the Cron mutex during lease I/O.
+// releaseAllLeases 释放本 Cron 持有的所有租约，所有释放共享一份 acquire 超时预算
+// 并并发执行，因此 N 个租约不会花费 N 份超时。状态保持可复用：Stop 之后
 // ensureLeader 在 Cron 停止期间拒绝获取；Start 之后（或 Shutdown 等在途任务
 // 排空后）新的触发可再次成为 leader。租约 I/O 期间不持有 Cron 锁。
 func (c *Cron) releaseAllLeases() {
-	c.mu.RLock()
-	refs := make([]leaseRef, 0, len(c.leases))
-	for id, l := range c.leases {
-		refs = append(refs, leaseRef{id: id, lease: l})
+	refs := c.leaseSnapshot()
+	if len(refs) == 0 {
+		return
 	}
-	c.mu.RUnlock()
 
-	for _, ref := range refs {
-		c.releaseLease(ref.id, ref.lease, false)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.lockCfg.acquireTimeout)
+	defer cancel()
+
+	c.releaseRefs(ctx, refs, false)
 }
 
-// leaseRef names a lease in a snapshot taken from Cron.leases.
-// leaseRef 是取自 Cron.leases 快照中的一项。
+// releaseRemoved releases a tombstoned snapshot in the background, with one
+// overall acquire-timeout budget shared by all releases. Remove and RemoveAll
+// call it after writing the tombstones, so their caller never blocks on lease
+// I/O.
+// releaseRemoved 在后台用一份 acquire 超时预算释放墓碑快照。Remove 与 RemoveAll
+// 在写墓碑后调用它，因此调用方绝不会因租约 I/O 而阻塞。
+func (c *Cron) releaseRemoved(refs []leaseRef) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.lockCfg.acquireTimeout)
+	defer cancel()
+
+	c.releaseRefs(ctx, refs, true)
+}
+
+// leaseSnapshot snapshots Cron.leases together with each state's leader
+// generation, so a release can detect leadership acquired after the snapshot.
+// leaseSnapshot 快照 Cron.leases 及每个状态的 leader 代数，使释放能发现快照之后
+// 才获取的 leadership。
+func (c *Cron) leaseSnapshot() []leaseRef {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	refs := make([]leaseRef, 0, len(c.leases))
+	for id, l := range c.leases {
+		l.mu.Lock()
+		gen := l.leaderGen
+		l.mu.Unlock()
+		refs = append(refs, leaseRef{id: id, lease: l, gen: gen})
+	}
+
+	return refs
+}
+
+// leaseRef names a lease and the leader generation observed in a snapshot
+// taken from Cron.leases.
+// leaseRef 是取自 Cron.leases 快照中的一项：租约及其被观察到的 leader 代数。
 type leaseRef struct {
 	id    string
 	lease *jobLease
+	gen   uint64
+}
+
+// releaseRefs releases a snapshot of leases concurrently, one goroutine per
+// state, and waits for all of them. Every Unlock shares ctx, so the batch has a
+// single overall budget instead of one timeout per lease. Once ctx expires no
+// more releases are started: the untouched states (and their tombstones) are
+// left for a later Stop/Shutdown retry.
+// releaseRefs 并发释放租约快照（每个状态一个 goroutine）并等待全部完成。所有
+// Unlock 共享 ctx，因此整批只有一份总预算，而不是每个租约一份超时。ctx 到期后
+// 不再启动新的释放：未处理的状态（及其墓碑）留给之后的 Stop/Shutdown 重试。
+func (c *Cron) releaseRefs(ctx context.Context, refs []leaseRef, markRemoved bool) {
+	var wg sync.WaitGroup
+
+	for _, ref := range refs {
+		if ctx.Err() != nil {
+			// Budget exhausted: do not start more releases.
+			// 预算已耗尽：不再启动新的释放。
+			break
+		}
+
+		wg.Add(1)
+		go func(ref leaseRef) {
+			defer wg.Done()
+			c.releaseLease(ctx, ref, markRemoved)
+		}(ref)
+	}
+
+	wg.Wait()
 }
 
 // releaseLease stops the refresher and, when the lease may still be held,
 // releases it.
 //
-// Order: mark not leader and tombstone (when markRemoved), cancel the
-// refresher, wait for it to exit, then Unlock with a timeout. Everything
-// happens under the state's opMu, so a concurrent ensureLeader either sees the
-// tombstone before it can Lock or runs its Lock after the Unlock, never between
-// them. A Refresher error deliberately leaves mayHold true, so a later release
-// still attempts Unlock; a successful Unlock clears it.
+// Order: check the leader generation, tombstone (when markRemoved), mark not
+// leader, cancel the refresher, wait for it to exit, then Unlock with the
+// batch deadline. Everything happens under the state's opMu, so a concurrent
+// ensureLeader either sees the tombstone before it can Lock or runs its Lock
+// after the Unlock, never between them.
+//
+// When leaderGen changed since the snapshot, a newer Lock already owns the
+// lease (eg. a fire that became leader after a concurrent Start): the stale
+// release must not cancel its refresher, Unlock it, or re-apply the removal
+// tombstone (the state was reopened and re-acquired since this removal was
+// settled), so it skips all three.
+//
+// A failed Unlock keeps mayHold and the tombstone in place for a later retry
+// and reports LockReleaseFailed. A successful Unlock clears mayHold and settles
+// a tombstoned state: it is deleted when the job is still removed, or reopened
+// (removed=false) when the id was re-added meanwhile. finishRemoval re-checks
+// mayHold, so a failed release never forgets the state or its cached Locker.
 // releaseLease 停止续期器，并在租约"可能仍被持有"时释放它。
 //
-// 顺序：标记非 leader 并写墓碑（markRemoved 时）、取消续期器、等待其退出、再带
-// 超时 Unlock。整个过程在状态的 opMu 下进行，因此并发的 ensureLeader 要么在看到
-// 墓碑后放弃 Lock，要么在 Unlock 之后才 Lock，绝不会落在两者之间。续期错误有意
-// 保持 mayHold 为 true，因此之后的释放仍会尝试 Unlock；Unlock 成功才清除它。
-func (c *Cron) releaseLease(jobID string, l *jobLease, markRemoved bool) {
+// 顺序：检查 leader 代数、写墓碑（markRemoved 时）、标记非 leader、取消续期器、
+// 等待其退出，再用整批共享的截止时间 Unlock。整个过程在状态的 opMu 下进行，因此
+// 并发的 ensureLeader 要么在看到墓碑后放弃 Lock，要么在 Unlock 之后才 Lock，
+// 绝不会落在两者之间。
+//
+// 若 leaderGen 与快照不同，说明更新的 Lock 已持有租约（如在并发 Start 后成为
+// leader 的触发）：旧的释放不得取消其续期器、不得 Unlock 它，也不得重新写移除
+// 墓碑（该状态自这次移除结算后已被重新开放并重新获取），因此三者都跳过。
+//
+// Unlock 失败会保留 mayHold 与墓碑供之后重试，并上报 LockReleaseFailed。Unlock
+// 成功则清除 mayHold 并结算墓碑状态：任务仍被移除时删除，期间被重新添加时重新
+// 开放（removed=false）。finishRemoval 会再次检查 mayHold，因此失败的释放绝不
+// 遗忘状态或其缓存的 Locker。
+func (c *Cron) releaseLease(ctx context.Context, ref leaseRef, markRemoved bool) {
+	jobID, l := ref.id, ref.lease
+
 	l.opMu.Lock()
 
 	var (
@@ -627,10 +793,16 @@ func (c *Cron) releaseLease(jobID string, l *jobLease, markRemoved bool) {
 	)
 	defer func() {
 		// Settlement needs opMu: only after this Unlock may a re-added job
-		// acquire again, so its Lock cannot race with the stale release.
+		// acquire again, so its Lock cannot race with the stale release. A
+		// failed Unlock (mayHold still true) is never settled, so the state and
+		// its cached Locker stay for a later Stop/Shutdown retry.
 		// 结算需要 opMu：只有 Unlock 之后被重新添加的任务才能再次获取，其 Lock
-		// 不会与这次旧释放竞争。
-		if markRemoved {
+		// 不会与这次旧释放竞争。Unlock 失败（mayHold 仍为 true）绝不结算，状态与
+		// 其缓存的 Locker 保留给之后的 Stop/Shutdown 重试。
+		l.mu.Lock()
+		settle := l.removed && !l.mayHold
+		l.mu.Unlock()
+		if settle {
 			c.finishRemoval(jobID, l)
 		}
 		l.opMu.Unlock()
@@ -640,6 +812,18 @@ func (c *Cron) releaseLease(jobID string, l *jobLease, markRemoved bool) {
 	}()
 
 	l.mu.Lock()
+	if l.leaderGen != ref.gen {
+		// A newer leadership owns the lease: leave its refresher and lease
+		// untouched. Do not (re)apply the tombstone either: the state was
+		// reopened and re-acquired after this release snapshot, so a tombstone
+		// now would fence the re-added id while the newer refresher keeps its
+		// lease. The earlier release of the same removal already settled it.
+		// 更新的 leadership 持有租约：不碰其续期器与租约。也不要（重新）写墓碑：
+		// 该状态在此释放快照之后已被重新开放并重新获取，此时写墓碑会隔离重新添加
+		// 的 id，而新的续期器仍在续期其租约。同一次移除的更早释放已经结算过它。
+		l.mu.Unlock()
+		return
+	}
 	if markRemoved {
 		l.removed = true
 	}
@@ -664,12 +848,10 @@ func (c *Cron) releaseLease(jobID string, l *jobLease, markRemoved bool) {
 		return
 	}
 
-	ctx, rcancel := context.WithTimeout(context.Background(), c.lockCfg.acquireTimeout)
-	err := locker.Unlock(ctx)
-	rcancel()
-	if err != nil {
-		// The lease may still be held: keep mayHold so a later release retries.
-		// 租约可能仍被持有：保留 mayHold，让之后的释放重试。
+	if err := locker.Unlock(ctx); err != nil {
+		// The lease may still be held: keep mayHold (and a tombstone) so a
+		// later release retries.
+		// 租约可能仍被持有：保留 mayHold（与墓碑），让之后的释放重试。
 		event, evErr, emit = LockReleaseFailed, err, true
 		return
 	}
@@ -677,13 +859,4 @@ func (c *Cron) releaseLease(jobID string, l *jobLease, markRemoved bool) {
 	l.mu.Lock()
 	l.mayHold = false
 	l.mu.Unlock()
-}
-
-// releaseRefs releases a snapshot of leases taken while the Cron lock was
-// held, marking each state as removed.
-// releaseRefs 释放持 Cron 锁时取得的租约快照，并把每个状态标记为已移除。
-func (c *Cron) releaseRefs(refs []leaseRef) {
-	for _, ref := range refs {
-		c.releaseLease(ref.id, ref.lease, true)
-	}
 }

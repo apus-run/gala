@@ -61,10 +61,15 @@ func (t *Task) Start(context.Context) error {
 }
 
 // Stop stops the ticker, waits for in-flight jobs or ctx, then releases every
-// lease, mirroring [Cron.Shutdown]. It is safe to call when Start never ran
-// and when called more than once.
+// lease, mirroring [Cron.Shutdown]. A timed-out Stop still releases the leases
+// once the in-flight jobs finish, because the shared background waiter keeps
+// running; no later Stop call is required. It is safe to call when Start never
+// ran and when called more than once, and a Start after a successful Stop is
+// drained by the next Stop.
 // Stop 停止 ticker，等待运行中的任务或 ctx，然后释放所有租约，语义同
-// [Cron.Shutdown]。即使 Start 未曾调用或重复调用，它也是安全的。
+// [Cron.Shutdown]。超时的 Stop 仍会在在途任务结束后释放租约，因为共享的后台
+// 等待者会继续运行；无需再次调用 Stop。即使 Start 未曾调用或重复调用，它也是
+// 安全的；成功 Stop 之后再 Start，下一次 Stop 仍会排空新的运行。
 func (t *Task) Stop(ctx context.Context) error {
 	if t == nil || t.cron == nil {
 		return nil

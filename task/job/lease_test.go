@@ -191,6 +191,72 @@ func TestLeaseRefreshFailureCancelsJob(t *testing.T) {
 	}
 }
 
+// blockingRefreshLocker blocks every Refresh until its context ends, modelling
+// a slow backend call that is still in flight when the job returns.
+// blockingRefreshLocker 让每次 Refresh 阻塞到 context 结束，模拟任务返回时仍有
+// 慢速后端调用在途。
+type blockingRefreshLocker struct {
+	started chan struct{}
+	unlocks atomic.Int32
+}
+
+func (l *blockingRefreshLocker) Lock(context.Context) error { return nil }
+
+func (l *blockingRefreshLocker) Refresh(ctx context.Context) error {
+	select {
+	case l.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (l *blockingRefreshLocker) Unlock(context.Context) error {
+	l.unlocks.Add(1)
+	return nil
+}
+
+// TestLeaseStopAbortsInFlightRefresh covers stopping the refresher while a
+// Refresh is in flight: Run returns the job result promptly (not after the
+// acquire timeout), the abort is not joined as a refresh error, and the lease
+// is still released.
+// TestLeaseStopAbortsInFlightRefresh 覆盖续期仍在途时停止续期 goroutine：Run 迅速
+// 返回任务结果（而不是等到获取超时），中止不会作为续期错误 join，租约仍被释放。
+func TestLeaseStopAbortsInFlightRefresh(t *testing.T) {
+	const acquireTimeout = 5 * time.Second
+
+	locker := &blockingRefreshLocker{started: make(chan struct{}, 1)}
+	r := NewRegistry(WithLockerProvider(
+		fixedProvider(locker),
+		WithLockRefreshInterval(5*time.Millisecond),
+		WithLockAcquireTimeout(acquireTimeout),
+	))
+	if err := r.Register("quick", func(context.Context) error {
+		select {
+		case <-locker.started:
+			return nil
+		case <-time.After(2 * time.Second):
+			return errors.New("no refresh started")
+		}
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	start := time.Now()
+	err := r.Run(context.Background(), Invocation{Name: "quick"})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("run: %v (an aborted refresh must not be joined)", err)
+	}
+	if elapsed >= acquireTimeout/2 {
+		t.Fatalf("Run waited %s for the in-flight refresh; stopping must abort it", elapsed)
+	}
+	if got := locker.unlocks.Load(); got != 1 {
+		t.Fatalf("Unlock called %d times, want 1", got)
+	}
+}
+
 func TestLeaseUnlockAfterRun(t *testing.T) {
 	locker := &fakeLocker{}
 

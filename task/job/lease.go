@@ -154,8 +154,10 @@ func (r *Registry) runWithLease(ctx context.Context, inv Invocation, fn Func, pr
 	defer cancelRun()
 
 	// Refreshing and unlocking outlive a canceled run ctx on purpose: the lease
-	// must be released even when the caller disconnects.
+	// must be released even when the caller disconnects. refreshCtx additionally
+	// lets Run stop the refresher and abort a refresh still in flight.
 	// 续期与解锁刻意不随运行 ctx 取消：即使调用方断开，也必须释放租约。
+	// refreshCtx 还让 Run 能停止续期 goroutine，并中止仍在途的续期调用。
 	base := context.WithoutCancel(ctx)
 	refreshCtx, stopRefresh := context.WithCancel(base)
 
@@ -175,10 +177,25 @@ func (r *Registry) runWithLease(ctx context.Context, inv Invocation, fn Func, pr
 			case <-refreshCtx.Done():
 				return
 			case <-ticker.C:
-				rctx, cancel := context.WithTimeout(base, lc.acquireTimeout)
+				// Derive the refresh from refreshCtx, not base, so that stopping
+				// the refresher also aborts a call still in flight. Derived from
+				// base, a slow Refresh would keep Run (via refresher.Wait) blocked
+				// for up to the acquire timeout after the job has already returned.
+				// 续期派生自 refreshCtx 而非 base，因此停止续期时也能中止仍在途的
+				// 调用。若派生自 base，慢速 Refresh 会让 Run（经 refresher.Wait）在
+				// 任务已返回后最多阻塞一个获取超时。
+				rctx, cancel := context.WithTimeout(refreshCtx, lc.acquireTimeout)
 				err := locker.Refresh(rctx)
 				cancel()
 				if err != nil {
+					// A canceled refreshCtx means Run is stopping: the abort is
+					// intentional, so it is neither recorded nor treated as a lease
+					// loss (which would cancel the job context pointlessly).
+					// refreshCtx 已取消说明 Run 正在收尾：这是有意中止，既不记录为
+					// 错误，也不当作失去租约（那会无意义地取消任务 ctx）。
+					if refreshCtx.Err() != nil {
+						return
+					}
 					// Record the failure and stop the job; the main goroutine
 					// reads refreshErr only after refresher.Wait, so this write
 					// is synchronized by the WaitGroup.

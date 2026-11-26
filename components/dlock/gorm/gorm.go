@@ -149,9 +149,16 @@ func (l *Lock) Lock(ctx context.Context) error {
 	ctx, cancel := opctx.WithTimeout(ctx, l.operationTimeout)
 	defer cancel()
 
-	now := time.Now()
-
 	for range 2 {
+		// Use one clock reading per attempt for the insert, the liveness check
+		// and the version CAS predicate. Reusing a reading from before a slow
+		// store round trip would shorten the new lease, or even write an
+		// already-expired lease on the retry.
+		// 每次尝试使用同一个时钟读数，供插入、存活判断与 version CAS 条件共用。
+		// 若复用慢速存储往返之前的读数，会缩短新租约，甚至在重试时写入已过期的
+		// 租约。
+		now := time.Now()
+
 		err := l.db.WithContext(ctx).Create(&GORMLock{
 			Name:      l.lockName,
 			OwnerID:   l.ownerID,
@@ -166,7 +173,7 @@ func (l *Lock) Lock(ctx context.Context) error {
 			return fmt.Errorf("dlock/gorm: acquire lock %q: %w", l.lockName, err)
 		}
 
-		done, err := l.takeOver(ctx, now)
+		done, err := l.takeOver(ctx)
 		if err != nil {
 			return err
 		}
@@ -185,7 +192,7 @@ func (l *Lock) Lock(ctx context.Context) error {
 // CAS. done is false when the row vanished and the caller should retry insert.
 // takeOver 检查已有行：报告竞争、延长本 Locker 已持有的锁，或通过 version
 // CAS 接管过期锁。行为消失时 done 为 false，调用方应重试插入。
-func (l *Lock) takeOver(ctx context.Context, now time.Time) (done bool, err error) {
+func (l *Lock) takeOver(ctx context.Context) (done bool, err error) {
 	db := l.db.WithContext(ctx)
 
 	var current GORMLock
@@ -195,6 +202,13 @@ func (l *Lock) takeOver(ctx context.Context, now time.Time) (done bool, err erro
 		}
 		return true, fmt.Errorf("dlock/gorm: inspect lock %q: %w", l.lockName, err)
 	}
+
+	// Read the clock after the row read: the insert attempt before this call may
+	// have spent a long time in the store, and reusing its reading would shorten
+	// (or even expire) the lease written by the extend/take-over update.
+	// 在读出行之后再取时钟：此前的插入尝试可能在存储中耗时很久，复用它之前的
+	// 读数会缩短（甚至写过期）extend/take-over 更新所写的租约。
+	now := time.Now()
 
 	// Retry-friendly: this Locker already owns the row, extend its TTL.
 	// 重试友好：本 Locker 已持有该行，延长 TTL 即可。

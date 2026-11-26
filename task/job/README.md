@@ -63,7 +63,9 @@ decides what the payload and run id are.
 | --- | --- |
 | non-POST method | 405, `Allow: POST` |
 | missing/empty job header | 400 |
-| unknown job (`errors.Is(err, ErrNotFound)`) | 404 |
+| unknown job (`errors.Is(err, ErrNotFound)`) | 404, checked before the body is read |
+| request body over the limit | 413, the job does not run |
+| failed to read the request body | 400 |
 | job, lease or panic error | 500 (or the `WithHTTPErrorHandler` response) |
 | success | 204 |
 
@@ -74,11 +76,19 @@ request headers are copied into `Invocation.Header`. 500 bodies are generic on
 purpose, so internal details and panic values never leak to clients — log with
 middleware if needed.
 
-The adapter owns no server, holds no global registry and imposes no auth,
-timeout or body limit: wrap it with `http.MaxBytesReader`, auth middleware or a
-router as needed. Platform-specific protocols (GitHub webhooks, CloudEvents,
-signed requests, per-job paths) belong in adapters that translate into this
-handler or call `Registry.Run` directly.
+The body is read through `http.MaxBytesReader` and capped at 10 MiB
+(`defaultMaxBodyBytes`); `WithMaxBodyBytes(n)` changes the cap and a
+non-positive `n` keeps the default. A body over the cap is refused with 413
+before the job runs, so `Invocation.Payload` never exceeds it, and an unknown
+job name is answered with 404 before the body is read at all.
+`WithHTTPErrorHandler` is called for run errors and for an unknown job name,
+not for those adapter-level rejections.
+
+The adapter owns no server, holds no global registry and imposes no auth or
+server-side timeout: wrap it with auth middleware or a router as needed.
+Platform-specific protocols (GitHub webhooks, CloudEvents, signed requests,
+per-job paths) belong in adapters that translate into this handler or call
+`Registry.Run` directly.
 
 ## CLI trigger
 
@@ -118,9 +128,11 @@ When a provider is configured, `Run`:
    and the error is wrapped with `%w`, so `errors.Is(err, dlock.ErrLocked)`
    still works;
 2. refreshes on a ticker (`WithLockRefreshInterval`, default 5s) while the job
-   runs; any refresh error is recorded, the job's derived context is canceled
-   and refreshing stops;
-3. after the job returns, cancels and waits for the refresher, then unlocks
+   runs; a refresh error while the job is still running is recorded, cancels
+   the job's derived context and stops refreshing. A refresh aborted because
+   `Run` is stopping is not an error;
+3. after the job returns, cancels and waits for the refresher — aborting a
+   refresh still in flight rather than waiting out its timeout — then unlocks
    with a fresh timeout context derived from the caller's values but not its
    cancellation (`context.WithoutCancel`), so a disconnected caller still
    releases the lease;
@@ -156,8 +168,9 @@ Without a provider, `Run` calls the job directly with the caller's context.
   trigger the same logical work twice (for example after a timeout or after the
   first run finished), and the second call runs.
 - One-shot only — scheduling belongs to `task/cron`.
-- The HTTP adapter is generic: no auth, no request size limit, no server-side
-  timeout, no per-job routes. Platform protocols belong in dedicated adapters.
+- The HTTP adapter is generic: no auth, only a whole-handler body cap (10 MiB
+  by default, `WithMaxBodyBytes`), no server-side timeout and no per-job
+  routes. Platform protocols belong in dedicated adapters.
 - `PanicError.Error()` omits the stack trace; without `WithHTTPErrorHandler`
   (or a custom wrapper around `Registry.Run`), a 500 response leaves no
   server-side trace by itself.

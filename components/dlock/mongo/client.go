@@ -14,8 +14,12 @@ type Client struct {
 	collection *mongo.Collection
 }
 
-// Ensure Client implements dlock.Client | 确保 Client 实现 dlock.Client。
-var _ dlock.Client = (*Client)(nil)
+// Ensure Client implements dlock.Client and the optional dlock.Initializer |
+// 确保 Client 实现 dlock.Client 以及可选的 dlock.Initializer。
+var (
+	_ dlock.Client      = (*Client)(nil)
+	_ dlock.Initializer = (*Client)(nil)
+)
 
 /*
     client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(mongoURI))

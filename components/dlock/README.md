@@ -21,7 +21,7 @@ go get github.com/apus-run/gala/components/dlock
 | `etcd` | etcd | 租约 + 事务 `CreateRevision(key) == 0` | 撤销 / KeepAliveOnce 自己的 lease，并校验 key | 秒（向上取整） | 直接可用 |
 | `consul` | Consul | session + `KV.Acquire` | `KV.Release` + 销毁 / Renew 自己的 session，并校验 key | 秒（10s–24h） | 直接可用 |
 | `gorm` | MySQL、PostgreSQL | `name` 唯一索引 + `version` 乐观锁接管 | 按令牌删除 / 按令牌续写，均要求未过期 | 毫秒（应用时钟） | `gorm.Init(ctx, db)` |
-| `mongo` | MongoDB | `name` 唯一索引 + 原子 FindOneAndUpdate | 按令牌删除 / 按令牌续写，均要求未过期 | 毫秒（应用时钟） | `mongo.Init(ctx, coll)` |
+| `mongo` | MongoDB | `name` 唯一索引 + 原子 FindOneAndUpdate；无索引时 Lock 失败（fail closed） | 按令牌删除 / 按令牌续写，均要求未过期 | 毫秒（应用时钟） | `mongo.Init(ctx, coll)`（缺失时 Lock 报错） |
 | `noop` | 无 | 无排他性，永远成功 | 无 | 无 | 直接可用 |
 
 `gorm` 与 `mongo` 的建表/建索引放在显式的 `Init(ctx)` 中，构造函数不做 I/O。
@@ -146,7 +146,7 @@ defer locker.Unlock(ctx)
 | API | `redis.NewLock` / `etcd.NewLock` 只返回 `*Lock`；`noop.NewLock` 只返回 `*NoopLocke` | 均增加 `error` 返回（`noop` 为 `(*NoopLocke, error)`）；`redis.NewClient` 接受 `redis.Cmdable` | 处理构造错误；传入 `*redis.Client` 的代码无需修改 |
 | GORM 建表 | `NewLock` 内部执行 `AutoMigrate` | 构造不再做 I/O，改为显式 `gorm.Init(ctx, db)` | 启动时调用一次 `Init`，否则首次 `Lock` 会因缺表/缺列失败 |
 | GORM 表结构 | `gorm_locks` 只有 name/owner_id/expired_at 等列 | 新增 `token`、`version` 列与 `expired_at` 索引；`owner_id` 保持原类型（不限长） | `Init` 自动迁移，并把旧行的 `version IS NULL` 回填为 `0`、`token IS NULL` 回填为空串（否则 MySQL/PostgreSQL 读取时报错）。旧行令牌为空，只会在过期后被接管；建议升级前清空锁表 |
-| Mongo 建索引 | `NewLock` 内部创建唯一索引 | 构造不再做 I/O，改为显式 `mongo.Init(ctx, coll)` | 启动时调用一次；需要 `createIndexes` 权限，并先清理重复文档、删除同名非唯一索引 |
+| Mongo 建索引 | `NewLock` **不会**创建唯一索引（旧版本也没有；没有索引时多个副本可同时加锁成功，互斥性静默失效） | 新增 `mongo.Init(ctx, coll)` 创建唯一索引；未调用时首次 `Lock` fail closed 并报错指明 `Init` | 启动时调用一次 `Init`；需要 `createIndexes` 权限，并先清理重复文档、删除同名非唯一索引。升级前必须补齐 `Init`，否则任务会直接失败而不是重复执行 |
 | Consul TTL | 任意值，服务端可能拒绝 | `10s ≤ LockTimeout ≤ 24h`，否则构造时报错 | 调整配置 |
 
 ## 验证

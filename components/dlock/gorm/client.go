@@ -13,8 +13,12 @@ type Client struct {
 	client *gorm.DB
 }
 
-// Ensure Client implements dlock.Client | 确保 Client 实现 dlock.Client。
-var _ dlock.Client = (*Client)(nil)
+// Ensure Client implements dlock.Client and the optional dlock.Initializer |
+// 确保 Client 实现 dlock.Client 以及可选的 dlock.Initializer。
+var (
+	_ dlock.Client      = (*Client)(nil)
+	_ dlock.Initializer = (*Client)(nil)
+)
 
 // NewClient wraps a *gorm.DB | NewClient 包装一个 *gorm.DB。
 func NewClient(db *gorm.DB) *Client {

@@ -38,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -58,6 +59,9 @@ type Lock struct {
 	operationTimeout time.Duration
 	ownerID          string
 	token            string
+
+	indexMu    sync.Mutex
+	indexReady bool
 }
 
 // lockDoc is the document stored in the collection | lockDoc 是集合中存储的文档。
@@ -123,6 +127,15 @@ func (l *Lock) Lock(ctx context.Context) error {
 	ctx, cancel := opctx.WithTimeout(ctx, l.operationTimeout)
 	defer cancel()
 
+	// Without the unique index created by Init two contenders can both insert
+	// their own document for the same name, so Lock must fail closed instead of
+	// silently losing exclusivity.
+	// 缺少 Init 建立的唯一索引时，两个竞争者可能各自插入同名文档；Lock 必须
+	// fail closed，而不是静默失去排他性。
+	if err := l.requireUniqueNameIndex(ctx); err != nil {
+		return err
+	}
+
 	// One retry covers the row/document vanishing between our insert and the
 	// take-over, which means the lock became free.
 	// 一次重试覆盖"插入与接管之间文档消失"的情况，此时锁已空闲。
@@ -139,6 +152,56 @@ func (l *Lock) Lock(ctx context.Context) error {
 		return fmt.Errorf("%w: lock %q held by %q", dlock.ErrLocked, l.lockName, holder)
 	}
 	return fmt.Errorf("%w: lock %q", dlock.ErrLocked, l.lockName)
+}
+
+// requireUniqueNameIndex verifies once per Locker that Init created the unique
+// index on name. A successful verification is cached; failures, including
+// transient list-index errors, are not, so the next Lock retries and can
+// recover after Init runs or the store comes back.
+// requireUniqueNameIndex 对每个 Locker 只成功缓存一次 name 唯一索引校验；失败
+// （含列出索引时的暂时性错误）不缓存，下一次 Lock 会重试，从而能在 Init 执行或
+// 存储恢复后继续工作。
+func (l *Lock) requireUniqueNameIndex(ctx context.Context) error {
+	l.indexMu.Lock()
+	defer l.indexMu.Unlock()
+
+	if l.indexReady {
+		return nil
+	}
+
+	specs, err := l.collection.Indexes().ListSpecifications(ctx)
+	if err != nil {
+		return fmt.Errorf("dlock/mongo: inspect indexes on %q: %w", l.collection.Name(), err)
+	}
+	if !hasUniqueNameIndex(specs) {
+		return fmt.Errorf(
+			"dlock/mongo: collection %q has no unique index on name; call mongo.Init(ctx, collection) before Lock",
+			l.collection.Name(),
+		)
+	}
+
+	l.indexReady = true
+	return nil
+}
+
+// hasUniqueNameIndex reports whether specs contain a unique index whose only
+// key is name in ascending order, the index Init creates.
+// hasUniqueNameIndex 判断 specs 中是否存在 Init 所建立的、唯一键仅为 name（升序）
+// 的唯一索引。
+func hasUniqueNameIndex(specs []*mongo.IndexSpecification) bool {
+	for _, spec := range specs {
+		if spec == nil || spec.Unique == nil || !*spec.Unique {
+			continue
+		}
+		keys, err := spec.KeysDocument.Elements()
+		if err != nil || len(keys) != 1 || keys[0].Key() != "name" {
+			continue
+		}
+		if v, ok := keys[0].Value().Int32OK(); ok && v == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // tryAcquire inserts the lock document, falling back to an atomic take-over.

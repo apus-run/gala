@@ -37,12 +37,28 @@ defer c.Shutdown(context.Background())
 ```
 
 语义是**每任务 leader 租约**：所有副本都注册任务，第一个抢到该任务锁的副本成为 leader 并
-执行；leader 在后台续租，续租失败即退位，下一次触发点重新抢锁。这样即使某个副本的 tick
-延迟，也不会重复执行同一个触发点。
+执行；leader 在后台续租，续租失败即退位（不释放租约——它可能仍然健康），下一次触发点用
+缓存的 `Locker` 重新抢锁。这样即使某个副本的 tick 延迟，也不会重复执行同一个触发点。
 
-`LockerProvider` 返回 `(nil, nil)` 表示该任务只在本地运行、不参与分布式协调；返回错误则
-跳过本次触发并上报 `LockProviderFailed`。锁相关错误通过 `WithLockEventHandler` 上报，
-包本身不 import dlock，因此不区分 `ErrLocked` 与其它错误——由应用用 `errors.Is` 过滤。
+`LockerProvider` 在任务首次到期时才惰性调用；返回 `(nil, nil)` 表示该任务只在本地运行、
+不参与分布式协调，且之后不再调用 provider；返回错误则跳过本次触发并上报
+`LockProviderFailed`，下次到期重试。锁相关错误通过 `WithLockEventHandler` 上报，包本身
+不 import dlock，因此不区分 `ErrLocked` 与其它错误——由应用用 `errors.Is` 过滤。
+
+停止与移除的收尾语义：
+
+- **Shutdown**：只停 ticker，再由唯一的共享后台等待者排空在途任务并释放全部租约。等待者
+  即使 `ctx` 到期也继续运行，所以超时的 `Shutdown` 只返回 `ctx.Err()`，租约仍会在任务
+  结束后释放，无需再次调用；重复或并发的 `Shutdown` 共享同一个等待者。
+- **Stop**：立即释放租约、不等在途任务，因此另一副本可能接管；分发后尚未通过租约闸门的
+  触发会被隔离，不再获取。`Stop`/`Shutdown` 的所有释放共享一份 acquire 超时预算（默认
+  5s）并并发执行，N 个租约不会花费 N 份超时。
+- **Remove / RemoveAll**：在 Cron 锁下写墓碑后异步释放，调用立即返回。`Unlock` 失败会保留
+  墓碑与缓存的 `Locker`，由之后的 `Stop`/`Shutdown` 重试；重试成功前，重新添加的同名 id
+  仍被墓碑隔离。
+- **leader 代数**：每次成功 `Lock` 递增 leader 代数，释放执行前与快照比对。若期间已有更新
+  的 leadership（例如并发 `Start` 之后重新获取），旧释放不会取消新续期器、不会 `Unlock`
+  新租约，也不会重新写墓碑。
 
 ## 一次性 job
 
@@ -61,13 +77,24 @@ mux.Handle("/jobs", registry.Handler())
 ```
 
 可选的 `job.WithLockerProvider(...)` 在每次 Run 时解析一个**独立的** `task.Locker`
-（自带本副本的令牌，dlock 的 `Client.NewLock` 即如此），运行前抢租约、运行中续租；
-续租失败会取消 job 的 context，并把续租错误与任务错误一起返回。provider 也可按任务名
-选择锁名（例如 `"job:"+name`），不同任务互不阻塞；返回 `(nil, nil)` 表示本次不加租约。
+（自带本副本的令牌，dlock 的 `Client.NewLock` 即如此），运行前抢租约、运行中续租。
+provider 可按任务名选择锁名（例如 `"job:"+name`），不同任务互不阻塞；返回 `(nil, nil)`
+表示本次不加租约，返回错误则本次不运行任务。`Lock` 失败时 `Run` 以 `%w` 包装错误返回，
+`errors.Is(err, dlock.ErrLocked)` 仍然可用。
 
-HTTP 适配器默认把任务错误统一映射为通用 500（不泄露细节，但也拿不到错误内容），
-生产环境应安装 `job.WithHTTPErrorHandler` 记录完整错误（含 `*job.PanicError` 堆栈），
-并把 `dlock.ErrLocked` 等租约竞争映射为 409/503，便于客户端区分可重试与永久失败。
+续期失败（不是收尾时的主动中止）会记录续期错误、取消 job 的派生 context（行为良好的
+任务据此停止）并停止续期；job 返回后，仍在途的续期会被立即中止，而不是等满 acquire
+超时，该中止不算错误。随后 `Run` 用携带调用方值、但不继承其取消的 context 释放租约，
+因此调用方断开仍能解锁；任务、续期与解锁错误以 `errors.Join` 一起返回。默认续期间隔
+5s、每次租约操作超时 5s，可用 `job.WithLockRefreshInterval` 与
+`job.WithLockAcquireTimeout` 调整。
+
+HTTP 适配器默认把请求体上限设为 10 MiB（`defaultMaxBodyBytes`），超过上限返回 413 且
+任务不运行，`job.WithMaxBodyBytes(n)` 可调整上限（非正值保留默认）；未知任务名在读取
+请求体之前就返回 404。任务运行错误默认统一映射为通用 500（不泄露细节，但也拿不到错误
+内容），生产环境应安装 `job.WithHTTPErrorHandler` 记录完整错误（含 `*job.PanicError`
+堆栈），并把 `dlock.ErrLocked` 等租约竞争映射为 409/503，便于客户端区分可重试与
+永久失败。
 
 ## 接入应用生命周期
 
@@ -77,13 +104,24 @@ HTTP 适配器默认把任务错误统一映射为通用 500（不泄露细节�
 ```go
 app := gala.New(
     gala.WithServers(httpServer),
-    gala.WithTasks(cron.NewTask(c)), // Start 启动调度，Stop 排空并释放租约
+    gala.WithTasks(cron.NewTask(c)), // Start 启动调度；Stop 排空在途任务并释放租约
+    gala.WithStopTimeout(20*time.Second),     // 服务器排水上限，也作为任务的回退预算
+    gala.WithTaskStopTimeout(15*time.Second), // 可选：单独限定每个后台任务
 )
 if err := app.Run(); err != nil { ... }
 ```
 
-停止顺序是「先停 task（不再产生新任务）→ 再停 transport server」，由应用的
-`WithStopTimeout` 统一限时。
+任务在服务器启动、服务注册（若配置）与 `afterStart` 钩子之后按选项顺序启动；任一
+`Start` 失败会跳过剩余任务，并在全部任务停止后返回该错误。
+
+停机顺序是「先停 task（不再产生新任务）→ 再停 transport server」：服务器的停止会等待
+所有 task 的 `Stop` 完成，因此任务在收尾时仍可使用数据库/HTTP 客户端。每个 task 的
+`Stop` 都获得独立的新鲜 context：携带应用 context 的值，但不继承其取消信号；预算优先
+取 `WithTaskStopTimeout`，其次 `WithStopTimeout`，两者都未设置时默认 30s。因此单个任务
+耗尽预算不会饿死其后停止的任务，外部取消应用 context 也不会截断清理；task 的 `Stop`
+错误会被收集并 join 进 `Run` 的返回值。若某个 task 的停止预算耗尽，它的 `Stop` 返回
+`ctx.Err()`（会出现在 `Run` 的返回值里）；`cron` 的共享等待者仍在后台排空并释放租约，
+无需再次调用。
 
 ## 从 components/cron 迁移
 
@@ -116,9 +154,16 @@ cron 引擎从 `github.com/apus-run/gala/components/cron` 迁到
   内可能错过触发点，不做补跑。
 - **没有 fencing token**：长时间 STW/GC 后旧 leader 仍可能在租约过期后继续写共享资源
   （与 `components/dlock` 的已知边界一致）。
-- **运行中的任务不会被取消**：`cron` 的 job 函数不接收 context；租约丢失后只停止后续
-  调度，已在跑的任务继续。需要可取消语义的任务应自行把工作拆到可取消的 goroutine，或
-  等待后续的 context-aware 任务 API。
+- **运行中的 cron 任务不会被取消**：`cron` 的 job 函数不接收 context；租约丢失后只停止
+  后续调度，已在跑的任务继续。`Stop` 不等在途任务就释放租约，另一副本可能接管；超时的
+  `Shutdown` 返回后，剩余任务仍在后台运行，租约在其结束后才释放。需要可取消语义的任务
+  应自行把工作拆到可取消的 goroutine，或等待后续的 context-aware 任务 API。
+- **移除后的释放是异步的**：`Remove`/`RemoveAll` 立即返回；`Unlock` 失败或超出预算时，
+  墓碑、租约状态与缓存的 `Locker` 保留到之后的 `Stop`/`Shutdown` 重试成功，期间重新添加
+  的同名 id 不会获得租约。
+- **job 的 HTTP 适配器是最小实现**：只有针对整个 Handler 的 10 MiB 请求体上限
+  （`WithMaxBodyBytes`），无鉴权、无服务端超时、无按任务路由；默认 500 不泄露错误，也不
+  保留服务端痕迹（需要日志请用 `WithHTTPErrorHandler`）。
 - **没有运行历史与持久化**：任务结果、失败重试、misfire 补偿不属于本层。
 
 ## 验证

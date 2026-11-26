@@ -237,10 +237,12 @@ func (r *Registry) Register(name string, fn Func) error {
 // dlock.ErrLocked). A provider returning (nil, nil) runs that call without a
 // lease; a provider error fails the call without running the job. While the
 // job runs, a goroutine refreshes the lease; on a refresh error the job's
-// context is canceled (so a well-behaved job stops) and refreshing stops.
-// After the job returns, Run waits for the refresher, releases the lease with
-// a fresh timeout context, and joins the job, refresh and unlock errors (nil
-// errors are ignored), so no failure is hidden.
+// context is canceled (so a well-behaved job stops) and refreshing stops. A
+// refresh still in flight when the job returns is aborted and that abort is
+// not reported as an error. After the job returns, Run waits for the
+// refresher, releases the lease with a fresh timeout context, and joins the
+// job, refresh and unlock errors (nil errors are ignored), so no failure is
+// hidden.
 // Run 按 inv.Name 查找任务，把 inv 放入 context 后调用。
 //
 // 未知名称返回包装了 [ErrNotFound] 的错误。任务 panic 会被 recover 并以
@@ -251,9 +253,9 @@ func (r *Registry) Register(name string, fn Func) error {
 // 占用时以 %w 包装 Lock 错误返回且不运行任务，因此 errors.Is 仍能匹配后端的哨兵
 // 错误（例如 dlock.ErrLocked）。provider 返回 (nil, nil) 时本次调用不加租约；返回
 // 错误时本次调用失败、任务不运行。任务运行期间由 goroutine 周期续期；续期失败会
-// 取消任务的 ctx（行为良好的任务会停止）并停止续期。任务返回后，Run 等续期
-// goroutine 退出，再用全新的超时 context 释放租约，并 join 任务、续期与解锁错误
-// （忽略 nil），不隐藏任何失败。
+// 取消任务的 ctx（行为良好的任务会停止）并停止续期。任务返回时仍在途的续期会被
+// 中止，该中止不会作为错误上报。任务返回后，Run 等续期 goroutine 退出，再用全新的
+// 超时 context 释放租约，并 join 任务、续期与解锁错误（忽略 nil），不隐藏任何失败。
 func (r *Registry) Run(ctx context.Context, inv Invocation) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -295,6 +297,18 @@ func (r *Registry) lookup(name string) (Func, LockerProvider, lockConfig, bool) 
 	fn, ok := r.funcs[name]
 
 	return fn, r.lockProvider, r.lock, ok
+}
+
+// has reports whether name is registered. The HTTP adapter uses it to reject
+// an unknown job before reading the request body.
+// has 报告 name 是否已注册。HTTP 适配器用它先拒绝未知任务，再读取请求体。
+func (r *Registry) has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.funcs[name]
+
+	return ok
 }
 
 // callFunc invokes fn with the invocation in ctx and converts a panic into a

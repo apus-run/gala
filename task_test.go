@@ -168,6 +168,84 @@ func (t *lifecycleTask) state() (started, stopped, startAfterStop bool) {
 	return t.started, t.stopped, t.startAfterStop
 }
 
+// stopObservation is the context state a stopProbeTask saw when its Stop was
+// entered.
+// stopObservation 是 stopProbeTask 进入 Stop 时观察到的 context 状态.
+type stopObservation struct {
+	ctxErr         error
+	hadDeadline    bool
+	deadlineRemain time.Duration
+	hadService     bool
+}
+
+// stopProbeTask is a Task whose Stop can block until its context expires,
+// record the context state it observed, and return a configured error. The
+// shutdown tests use it to assert per-task budgets and cleanup-context
+// semantics.
+// stopProbeTask 的 Stop 可阻塞至其 context 过期、记录观察到的 context 状态并返回
+// 预设错误。停机测试用它断言每个任务的预算与清理 context 的语义。
+type stopProbeTask struct {
+	name      string
+	events    *eventLog
+	started   chan struct{}
+	blockStop bool
+	stopErr   error
+
+	startOnce sync.Once
+	stopCalls atomic.Int32
+
+	mu  sync.Mutex
+	obs stopObservation
+}
+
+func newStopProbeTask(name string, events *eventLog) *stopProbeTask {
+	return &stopProbeTask{
+		name:    name,
+		events:  events,
+		started: make(chan struct{}),
+	}
+}
+
+func (t *stopProbeTask) Start(context.Context) error {
+	t.events.add("task:" + t.name + ":start")
+	t.startOnce.Do(func() { close(t.started) })
+
+	return nil
+}
+
+func (t *stopProbeTask) Stop(ctx context.Context) error {
+	t.stopCalls.Add(1)
+	t.events.add("task:" + t.name + ":stop")
+
+	deadline, hasDeadline := ctx.Deadline()
+	_, hasService := ServiceContextKey.FromContext(ctx)
+	obs := stopObservation{
+		ctxErr:      ctx.Err(),
+		hadDeadline: hasDeadline,
+		hadService:  hasService,
+	}
+	if hasDeadline {
+		obs.deadlineRemain = time.Until(deadline)
+	}
+	t.mu.Lock()
+	t.obs = obs
+	t.mu.Unlock()
+
+	if t.blockStop {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	return t.stopErr
+}
+
+func (t *stopProbeTask) observed() stopObservation {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.obs
+}
+
 func waitForSignal(t *testing.T, ch <-chan struct{}, what string) {
 	t.Helper()
 	select {
@@ -295,8 +373,11 @@ func TestTask_StartError(t *testing.T) {
 	badTask := &fakeTask{name: "bad", events: events, startErr: wantErr}
 
 	app := New(WithServers(srv), WithTasks(okTask, badTask))
-	err := app.Run()
-	if !errors.Is(err, wantErr) {
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	if err := waitRun(t, runErr); !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want %v", err, wantErr)
 	}
 	if got := okTask.stopCalls.Load(); got != 1 {
@@ -442,4 +523,181 @@ func TestTask_ServiceStopStopsOnce(t *testing.T) {
 	if got := task.stopCalls.Load(); got != 1 {
 		t.Fatalf("task Stop calls = %d, want 1", got)
 	}
+}
+
+// TestTask_StopPerTaskBudget verifies that every task Stop gets its own fresh
+// deadline-bounded context: a task that blocks until its budget expires does
+// not starve the tasks stopped after it, and its timeout error is returned.
+// TestTask_StopPerTaskBudget 验证每个任务的 Stop 获得独立的、带截止时间的新鲜
+// context：阻塞至预算耗尽的任务不会饿死其后停止的任务，其超时错误会被返回。
+func TestTask_StopPerTaskBudget(t *testing.T) {
+	events := &eventLog{}
+	first := newStopProbeTask("first", events)
+	first.blockStop = true
+	second := newStopProbeTask("second", events)
+
+	const budget = 50 * time.Millisecond
+	app := New(WithTasks(first, second), WithTaskStopTimeout(budget))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, second.started, "second task to start")
+	begin := time.Now()
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	err := waitRun(t, runErr)
+	elapsed := time.Since(begin)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run() error = %v, want context.DeadlineExceeded from the exhausted first task", err)
+	}
+	if elapsed < budget {
+		t.Fatalf("Run() returned after %v, want at least one %v task budget", elapsed, budget)
+	}
+	if got := first.stopCalls.Load(); got != 1 {
+		t.Fatalf("first task Stop calls = %d, want 1", got)
+	}
+	if got := second.stopCalls.Load(); got != 1 {
+		t.Fatalf("second task Stop calls = %d, want 1", got)
+	}
+
+	obs := second.observed()
+	if obs.ctxErr != nil {
+		t.Fatalf("second task Stop context error = %v, want a fresh live context", obs.ctxErr)
+	}
+	if !obs.hadDeadline || obs.deadlineRemain <= 0 {
+		t.Fatalf("second task Stop deadline remaining = %v (deadline set = %v), want a fresh future deadline",
+			obs.deadlineRemain, obs.hadDeadline)
+	}
+	if !obs.hadService {
+		t.Fatal("second task Stop context is missing the application service value")
+	}
+	assertEventOrder(t, events, "task:first:stop", "task:second:stop")
+}
+
+// TestTask_StopSurvivesCanceledAppContext verifies that externally canceling the
+// application context does not pre-cancel task cleanup: Stop still sees a live
+// context carrying the app values, and its error (even context.Canceled) is
+// surfaced by Run instead of filtered.
+// TestTask_StopSurvivesCanceledAppContext 验证外部取消应用 context 不会提前取消
+// 任务清理：Stop 仍看到携带应用值的可用 context，其错误（即使是
+// context.Canceled）也会由 Run 返回而不是被过滤。
+func TestTask_StopSurvivesCanceledAppContext(t *testing.T) {
+	events := &eventLog{}
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	defer cancelApp()
+
+	task := newStopProbeTask("cleanup", events)
+	task.stopErr = context.Canceled
+
+	app := New(WithContext(appCtx), WithTasks(task))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, task.started, "task to start")
+	cancelApp()
+
+	err := waitRun(t, runErr)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want the task stop error context.Canceled to be surfaced", err)
+	}
+	if got := task.stopCalls.Load(); got != 1 {
+		t.Fatalf("task Stop calls = %d, want 1", got)
+	}
+
+	obs := task.observed()
+	if obs.ctxErr != nil {
+		t.Fatalf("task Stop context error = %v, want a cleanup context detached from app cancellation", obs.ctxErr)
+	}
+	if !obs.hadDeadline || obs.deadlineRemain <= 0 {
+		t.Fatalf("task Stop deadline remaining = %v (deadline set = %v), want the default task budget",
+			obs.deadlineRemain, obs.hadDeadline)
+	}
+	if !obs.hadService {
+		t.Fatal("task Stop context is missing the application service value")
+	}
+}
+
+// TestTask_EffectiveStopTimeout verifies the task stop budget precedence:
+// WithTaskStopTimeout overrides WithStopTimeout, which overrides the default;
+// non-positive task values are ignored.
+// TestTask_EffectiveStopTimeout 验证任务停止预算的优先级：WithTaskStopTimeout
+// 覆盖 WithStopTimeout，后者覆盖默认值；任务预算的非正值被忽略。
+func TestTask_EffectiveStopTimeout(t *testing.T) {
+	if defaultTaskStopTimeout != 30*time.Second {
+		t.Fatalf("defaultTaskStopTimeout = %v, want 30s", defaultTaskStopTimeout)
+	}
+
+	tests := []struct {
+		name string
+		opts []Option
+		want time.Duration
+	}{
+		{
+			name: "default",
+			want: defaultTaskStopTimeout,
+		},
+		{
+			name: "stop timeout fallback",
+			opts: []Option{WithStopTimeout(75 * time.Millisecond)},
+			want: 75 * time.Millisecond,
+		},
+		{
+			name: "task timeout wins",
+			opts: []Option{WithStopTimeout(75 * time.Millisecond), WithTaskStopTimeout(50 * time.Millisecond)},
+			want: 50 * time.Millisecond,
+		},
+		{
+			name: "non-positive task timeouts ignored",
+			opts: []Option{WithStopTimeout(75 * time.Millisecond), WithTaskStopTimeout(0), WithTaskStopTimeout(-time.Second)},
+			want: 75 * time.Millisecond,
+		},
+		{
+			name: "non-positive task timeout keeps default",
+			opts: []Option{WithTaskStopTimeout(-time.Second)},
+			want: defaultTaskStopTimeout,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewOptions(tt.opts...).effectiveTaskStopTimeout(); got != tt.want {
+				t.Fatalf("effectiveTaskStopTimeout() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTask_NilTask verifies that nil tasks are skipped at option time and
+// defensively by Run, so a nil Task cannot panic the lifecycle and the app
+// behaves as if no tasks were configured.
+// TestTask_NilTask 验证 nil 任务在选项阶段被跳过、Run 也会防御性跳过，nil Task
+// 不会让生命周期 panic，应用的行为与未配置任务一致。
+func TestTask_NilTask(t *testing.T) {
+	events := &eventLog{}
+	srv := newFakeServer(events)
+
+	app := New(WithServers(srv), WithTasks(nil))
+	if got := len(app.opts.tasks); got != 0 {
+		t.Fatalf("WithTasks(nil) recorded %d tasks, want 0", got)
+	}
+	// Bypass WithTasks to prove that Run also tolerates a nil entry that reached
+	// the options directly.
+	// 绕过 WithTasks，验证 Run 同样容忍直接进入选项的 nil 条目。
+	app.opts.tasks = append(app.opts.tasks, nil)
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, srv.started, "server to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	assertEventOrder(t, events, "server:start", "server:stop")
 }
