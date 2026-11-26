@@ -81,9 +81,10 @@ c.Start()
 defer c.Shutdown(context.Background())
 ```
 
-The adapter sketch above is README code: the `task` module depends only on
-`github.com/apus-run/gala/task` (which holds the `Locker` interface), so an
-application wires in `components/dlock` (or any other backend) itself. The
+The adapter sketch above is README code: the `components/task` module depends
+only on `github.com/apus-run/gala/components/task` (which holds the `Locker`
+interface), so an application wires in `components/dlock` (or any other
+backend) itself. The
 returned `Locker` must carry this replica's own ownership token — never share
 one `Locker` between replicas.
 

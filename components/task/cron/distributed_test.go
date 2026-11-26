@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	taskcontract "github.com/apus-run/gala/task"
+	taskcontract "github.com/apus-run/gala/components/task"
 )
 
 const fakeJobID = "job"

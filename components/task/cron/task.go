@@ -13,12 +13,12 @@ import (
 
 // Task adapts a Cron to the lifecycle contract used by gala.WithTasks.
 //
-// It deliberately does not import the root module: task/cron stays
+// It deliberately does not import the root module: components/task/cron stays
 // independent of github.com/apus-run/gala, and the adapter satisfies the
 // gala.Task interface structurally.
 // Task 把 Cron 适配为 gala.WithTasks 使用的生命周期契约。
 //
-// 它刻意不 import 根模块：task/cron 保持独立于 github.com/apus-run/gala，
+// 它刻意不 import 根模块：components/task/cron 保持独立于 github.com/apus-run/gala，
 // 适配器以结构化方式满足 gala.Task 接口。
 type Task struct {
 	cron *Cron

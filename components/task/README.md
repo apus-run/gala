@@ -3,7 +3,7 @@
 工作负载层：把「何时跑、谁来跑、怎么收尾」从业务代码里拆出来。
 
 ```
-task/
+components/task/
 ├── cron/   周期任务：cron 表达式 + 可选分布式租约
 └── job/    一次性任务：显式注册表 + CLI/HTTP 触发 + 可选单实例租约
 ```
@@ -99,7 +99,7 @@ HTTP 适配器默认把请求体上限设为 10 MiB（`defaultMaxBodyBytes`）�
 ## 接入应用生命周期
 
 `gala` 根模块提供 `Task` 生命周期接口（`Start(ctx) error` / `Stop(ctx) error`）与
-`WithTasks`。`task/cron` 通过 `cron.NewTask` 适配：
+`WithTasks`。`components/task/cron` 通过 `cron.NewTask` 适配：
 
 ```go
 app := gala.New(
@@ -126,24 +126,25 @@ if err := app.Run(); err != nil { ... }
 ## 从 components/cron 迁移
 
 cron 引擎从 `github.com/apus-run/gala/components/cron` 迁到
-`github.com/apus-run/gala/task/cron`。
+`github.com/apus-run/gala/components/task/cron`。
 
 > **破坏性变更（breaking）**：`components/cron` 已退役，不再接收功能更新，只保留
-> 已发布的 tag（frozen tags）供旧代码继续构建。`task` 是**独立 Go module**，拥有
-> 自己的 tag 版本线：`components/cron` 的版本号不会延续到 `task`，`task/vX.Y.Z`
-> 的 X.Y.Z 与该模块自己的提交历史对应。不要假设 `task@v<旧 components/cron 版本>`
-> 存在，请用 `go list -m -versions github.com/apus-run/gala/task` 查询已发布版本。
+> 已发布的 tag（frozen tags）供旧代码继续构建。`components/task` 是**独立 Go module**，拥有
+> 自己的 tag 版本线：`components/cron` 的版本号不会延续到 `components/task`，
+> `components/task/vX.Y.Z` 的 X.Y.Z 与该模块自己的提交历史对应。不要假设
+> `components/task@v<旧 components/cron 版本>` 存在，请用
+> `go list -m -versions github.com/apus-run/gala/components/task` 查询已发布版本。
 >
 > **滚动升级风险**：旧 `components/cron` 副本不做任何租约协调，每个副本都会在本地
-> 触发所有任务；新 `task/cron` 副本按任务抢 leader 租约。混跑期间同一个任务会在
+> 触发所有任务；新 `components/task/cron` 副本按任务抢 leader 租约。混跑期间同一个任务会在
 > 每个旧副本上各执行一次，**外加**新 leader 的一次，非幂等任务会重复执行。上线
 > 时应先把 `components/cron` 副本全部下线（或让旧副本不注册任务），再让
-> `task/cron` 副本接管；不要长时间混跑。
+> `components/task/cron` 副本接管；不要长时间混跑。
 
 | 变更 | 旧 | 新 | 动作 |
 | --- | --- | --- | --- |
-| import 路径 | `components/cron` | `task/cron` | 替换 import；包名不变 |
-| module | 独立 module，已冻结 | 新独立 module，独立 tag 线 | `go get github.com/apus-run/gala/task@latest`（版本号不沿用） |
+| import 路径 | `components/cron` | `components/task/cron` | 替换 import；包名不变 |
+| module | 独立 module，已冻结 | 新独立 module，独立 tag 线 | `go get github.com/apus-run/gala/components/task@latest`（版本号不沿用） |
 | 进程内调度 | 相同 API | 相同 API | 无需改代码 |
 | 分布式 | 不支持 | `WithLockerProvider` 可选开启 | 需要分布式时接线 dlock |
 | 混跑 | — | 不与旧副本协调 | 先下线旧副本再切新副本，避免重复执行 |
@@ -169,6 +170,6 @@ cron 引擎从 `github.com/apus-run/gala/components/cron` 迁到
 ## 验证
 
 ```sh
-cd task
+cd components/task
 go test -race ./...
 ```

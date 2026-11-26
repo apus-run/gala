@@ -167,7 +167,7 @@ Without a provider, `Run` calls the job directly with the caller's context.
   name across replicas only while an execution holds it; a caller can still
   trigger the same logical work twice (for example after a timeout or after the
   first run finished), and the second call runs.
-- One-shot only — scheduling belongs to `task/cron`.
+- One-shot only — scheduling belongs to `components/task/cron`.
 - The HTTP adapter is generic: no auth, only a whole-handler body cap (10 MiB
   by default, `WithMaxBodyBytes`), no server-side timeout and no per-job
   routes. Platform protocols belong in dedicated adapters.

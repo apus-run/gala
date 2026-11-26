@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	taskcontract "github.com/apus-run/gala/task"
+	taskcontract "github.com/apus-run/gala/components/task"
 )
 
 const (
@@ -65,14 +65,14 @@ type LockerProvider func(ctx context.Context, jobName string) (taskcontract.Lock
 // so across replicas only the holder runs the job.
 //
 // Calling it with a nil provider is a no-op (the current configuration is
-// kept). The lease interface comes from github.com/apus-run/gala/task, so any
+// kept). The lease interface comes from github.com/apus-run/gala/components/task, so any
 // dlock backend can be adapted without this module depending on
 // components/dlock. The option is meant for NewRegistry; it performs no I/O.
 // WithLockerProvider 启用单次执行租约：每次 Run 向 provider 索取 Locker，调用任务
 // 前获取、结束后释放，因此多副本中只有持有者会运行任务。
 //
 // provider 为 nil 时是空操作（保持当前配置）。租约接口来自
-// github.com/apus-run/gala/task，任何 dlock 后端都可适配，而本模块不依赖
+// github.com/apus-run/gala/components/task，任何 dlock 后端都可适配，而本模块不依赖
 // components/dlock。该选项用于 NewRegistry，不做任何 I/O。
 func WithLockerProvider(p LockerProvider, opts ...LockOption) Option {
 	return func(c *config) {
