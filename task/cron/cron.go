@@ -7,19 +7,24 @@
 // prevents a job from overlapping itself). A minute repeated by a DST
 // fall-back fires once; a minute erased by a spring-forward is skipped.
 // A panic in a job is recovered and reported to the PanicHandler instead of
-// crashing the process. Not a distributed scheduler: no persistence and no
-// coordination between replicas — every process fires its own jobs.
+// crashing the process. By default every process fires its own jobs; with
+// WithLockerProvider, replicas instead coordinate a per-job leader lease, so
+// only the replica owning a job's lease runs it. It is still not a full
+// distributed scheduler: no persistence, no catch-up and no fencing token.
 // 单个 ticker 以分钟粒度驱动所有任务；到期任务在各自 goroutine 中运行，慢任务
 // 不阻塞其它任务（SkipIfRunning 防止同一任务重叠）。DST 回拨产生的重复分钟只
 // 触发一次，前跳消失的分钟不触发。任务 panic 会被 recover 并交给
-// PanicHandler，不会拖垮进程。它不是分布式调度器：不持久化、多副本间不协调，
-// 每个进程各自触发自己的任务。
+// PanicHandler，不会拖垮进程。默认每个进程各自触发自己的任务；使用
+// WithLockerProvider 后，副本间通过任务级 leader 租约协调，只有持有某任务
+// 租约的副本才运行它。它仍不是完整的分布式调度器：不持久化、没有补跑，
+// 也没有 fencing token。
 //
 // # Features | 功能
 //
 // - 5-field expressions, @daily-style macros, per-job CRON_TZ= prefix | 5 段表达式、@daily 等宏、单任务的 CRON_TZ= 前缀
 // - Add/Remove reconfigure a live cron; Jobs snapshots next run times | Add/Remove 在线增删任务，Jobs 快照各任务下次运行时间
 // - Shutdown stops the ticker and waits for running jobs, bounded by ctx | Shutdown 停止 ticker 并等待运行中的任务结束，由 ctx 限时
+// - Optional per-job distributed leases make replicas coordinate each due fire | 可选的任务级分布式租约让副本间协调每次到期触发
 //
 // # Example | 示例
 //
@@ -166,6 +171,32 @@ type Cron struct {
 	cancel   context.CancelFunc // non-nil while started | 已启动时非 nil。
 	onPanic  PanicHandler
 
+	// Distributed lease settings (see WithLockerProvider) and the per-job
+	// lease state. The settings are immutable once New returns; leases and
+	// stopped are guarded by mu.
+	// 分布式租约配置（见 WithLockerProvider）与按任务保存的租约状态。
+	// 配置在 New 返回后不可变；leases 与 stopped 由 mu 保护。
+	lockProvider LockerProvider
+	lockCfg      lockConfig
+	leases       map[string]*jobLease
+
+	// stopped fences lease acquisition from fires dispatched before Stop: a
+	// tick already in progress may still call runDue, but it must not acquire
+	// a lease the stopped Cron would keep refreshing forever. Start clears it
+	// for new fires.
+	// stopped 隔离 Stop 之前分发的触发的租约获取：进行中的 tick 仍可能调用
+	// runDue，但不能获取一个停止后的 Cron 会永远续期的租约。Start 会为新触发
+	// 清除它。
+	stopped bool
+
+	// epoch increments on every Stop. A fire captures it at dispatch and is
+	// dropped when it no longer matches, so a fire that was waiting in the
+	// lease gate across a Stop/Start cycle can neither run nor acquire under
+	// the restarted Cron.
+	// epoch 在每次 Stop 时递增。触发在分发时捕获它，不匹配即丢弃，因此跨越
+	// Stop/Start 仍停留在租约闸门的旧触发既不会在新周期运行，也不会获取租约。
+	epoch uint64
+
 	loops    sync.WaitGroup // tick loop goroutines | tick 循环 goroutine。
 	inflight sync.WaitGroup // running jobs | 运行中的任务。
 }
@@ -183,6 +214,7 @@ func New(opts ...Option) *Cron {
 		interval: time.Minute,
 		location: time.UTC,
 		jobs:     map[string]*job{},
+		leases:   map[string]*jobLease{},
 		onPanic:  defaultPanicHandler,
 	}
 
@@ -264,13 +296,18 @@ func (c *Cron) MustAdd(jobId string, cronExpr string, run func(), opts ...JobOpt
 //
 // If there is already a job with the provided id, then the old job
 // will be replaced with the new one (a run of the old job that is
-// already in progress is not interrupted).
+// already in progress is not interrupted). With distributed leases the
+// replacement also keeps the job's lease state, so it stays leader; a fire
+// that was dispatched for the old version but has not reached the lease gate
+// yet is skipped, and the next due fire runs the new version.
 //
 // cronExpr is a regular cron expression, eg. "0 */3 * * *" (aka. at minute 0
 // past every 3rd hour). Check cron.NewSchedule() for the supported tokens.
 // Add 注册一个定时任务。
 //
-// 若已有同 id 的任务，旧任务会被替换（进行中的那次运行不会被中断）。
+// 若已有同 id 的任务，旧任务会被替换（进行中的那次运行不会被中断）。启用分布式
+// 租约时，替换还会保留该任务的租约状态，因此它仍是 leader；已分发给旧版本、但
+// 尚未到达租约闸门的触发会被跳过，下次到期触发运行新版本。
 //
 // cronExpr 是常规 cron 表达式，如 "0 */3 * * *"（每 3 小时的第 0 分钟）。
 // 支持的语法见 cron.NewSchedule()。
@@ -308,29 +345,76 @@ func (c *Cron) Add(jobId string, cronExpr string, run func(), opts ...JobOption)
 	}
 
 	c.jobs[jobId] = j
+	// A previously removed id keeps its tombstone until the removal's release
+	// finishes (see finishRemoval): the fire for this new version must not
+	// acquire while that stale Unlock may still run.
+	// 曾被移除的 id 会保留墓碑，直到移除的释放结束（见 finishRemoval）：这次
+	// 新版本的触发不能在旧 Unlock 仍可能运行时获取租约。
 
 	return nil
 }
 
 // Remove removes a single cron job by its id.
 //
-// A run that is already in progress is not interrupted.
+// A run that is already in progress (it passed the lease gate) is not
+// interrupted. With distributed leases the job's lease is released and its
+// state forgotten: a fire that was dispatched before Remove but has not
+// reached the lease gate yet is skipped instead of acquiring, and re-adding
+// the id later starts a fresh lifecycle.
 // Remove 按 id 移除一个定时任务。
 //
-// 进行中的那次运行不会被中断。
+// 已经通过租约闸门的运行不会被中断。启用分布式租约时，该任务的租约会被释放、
+// 状态被遗忘：Remove 之前已分发、但尚未到达租约闸门的触发会被跳过而不是获取
+// 租约；之后重新添加该 id 会开始新的生命周期。
 func (c *Cron) Remove(jobId string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	delete(c.jobs, jobId)
+
+	l := c.leases[jobId]
+	if l != nil {
+		// Tombstone before releasing: a fire for a re-added job must skip
+		// until the release (and its Unlock) has finished.
+		// 释放前先写墓碑：被重新添加任务的触发必须等到释放（及其 Unlock）完成后
+		// 才能继续。
+		l.mu.Lock()
+		l.removed = true
+		l.mu.Unlock()
+	}
+
+	c.mu.Unlock()
+
+	if l != nil {
+		c.releaseLease(jobId, l, true)
+	}
 }
 
-// RemoveAll removes all registered cron jobs | RemoveAll 移除所有已注册的任务。
+// RemoveAll removes all registered cron jobs.
+//
+// With distributed leases every lease is released and all lease state is
+// forgotten. Fires dispatched before RemoveAll but not yet past the lease gate
+// are skipped, and re-adding any id later starts a fresh lifecycle.
+// RemoveAll 移除所有已注册的任务。
+//
+// 启用分布式租约时，所有租约都会被释放、所有租约状态被遗忘。RemoveAll 之前已
+// 分发、但尚未通过租约闸门的触发会被跳过；之后重新添加任何 id 都会开始新的
+// 生命周期。
 func (c *Cron) RemoveAll() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+
+	locks := make([]leaseRef, 0, len(c.leases))
+	for id, l := range c.leases {
+		l.mu.Lock()
+		l.removed = true
+		l.mu.Unlock()
+		locks = append(locks, leaseRef{id: id, lease: l})
+	}
 
 	c.jobs = map[string]*job{}
+
+	c.mu.Unlock()
+
+	c.releaseRefs(locks)
 }
 
 // Total returns the current total number of registered cron jobs.
@@ -369,19 +453,41 @@ func (c *Cron) Jobs() []JobInfo {
 //
 // It doesn't wait for the jobs that are already running (use Shutdown for that).
 // You can resume the ticker by calling Start().
+//
+// With distributed leases Stop also releases every held lease immediately,
+// without waiting for running jobs, so another replica may take over before
+// they finish. It also fences fires that were dispatched before Stop but have
+// not passed the lease gate yet: they are skipped instead of re-acquiring a
+// lease a stopped Cron would keep refreshing forever. Restarting the ticker
+// with Start never releases leases and reopens the gate for new fires; a fire
+// dispatched before Stop stays fenced because it carries the old stop epoch.
 // Stop 停止当前 cron ticker（若尚未停止）。
 //
 // 它不等待已在运行的任务（那用 Shutdown）。之后可以再调用 Start() 恢复 ticker。
+//
+// 启用分布式租约时，Stop 还会立即释放所有持有的租约（不等待运行中的任务），
+// 因此其他副本可能在其结束前接管。它还会隔离 Stop 之前已分发、但尚未通过租约
+// 闸门的触发：这些触发会被跳过，而不是重新获取一个停止后的 Cron 会永远续期的
+// 租约。用 Start 重启 ticker 不会释放租约，并会为新触发重新打开闸门；Stop 之前
+// 分发的旧触发携带着旧的 epoch，仍会被隔离。
 func (c *Cron) Stop() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.stopLocked()
+	c.stopped = true
+	c.epoch++
+	c.mu.Unlock()
+
+	c.releaseAllLeases()
 }
 
 // Shutdown stops the ticker and waits for the running jobs to return
 // or for ctx to be done, whichever comes first (in which case ctx.Err()
 // is returned and the remaining jobs keep running in the background).
+//
+// With distributed leases it stops only the ticker first, waits for the
+// loops and in-flight jobs, then releases every lease. If ctx expires first
+// it returns ctx.Err() without releasing anything, so background jobs keep
+// their leases and refreshers; a later Shutdown call releases them.
 //
 // Don't call Start() concurrently with or after Shutdown().
 //
@@ -392,12 +498,18 @@ func (c *Cron) Stop() {
 // Shutdown 停止 ticker 并等待运行中的任务返回，或直到 ctx 结束（此时返回
 // ctx.Err()，剩余任务继续在后台运行），以先到者为准。
 //
+// 启用分布式租约时，它先只停 ticker，等循环与进行中的任务结束，再释放所有
+// 租约。若 ctx 先到期，则返回 ctx.Err() 且不释放任何租约，后台任务继续持有
+// 租约和续期器；之后再调用 Shutdown 会释放它们。
+//
 // 不要与 Shutdown() 并发调用 Start()，也不要在 Shutdown() 之后再调用。
 //
 // 不要在任务（job）里调用 Shutdown：它要等所有运行中的任务返回，包括调用它的这一个，
 // 传 context.Background() 会永久阻塞，传带超时的 ctx 会白等到超时。任务想让调度器停下来时调用 Stop。
 func (c *Cron) Shutdown(ctx context.Context) error {
-	c.Stop()
+	c.mu.Lock()
+	c.stopLocked()
+	c.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -408,6 +520,7 @@ func (c *Cron) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
+		c.releaseAllLeases()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -429,6 +542,7 @@ func (c *Cron) Start() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.stopped = false
 	c.startLocked()
 }
 
@@ -508,8 +622,9 @@ func (c *Cron) loop(ctx context.Context, interval time.Duration) {
 // runDue 运行所有在指定时间到期的已注册任务。
 func (c *Cron) runDue(t time.Time) {
 	c.mu.Lock()
+	epoch := c.epoch
 
-	var due []*job
+	var due []fire
 
 	for _, j := range c.jobs {
 		lt := t.In(c.location)
@@ -533,15 +648,15 @@ func (c *Cron) runDue(t time.Time) {
 		j.ran = true
 		j.lastKey = key
 
-		due = append(due, j)
+		due = append(due, fire{job: j, epoch: epoch})
 	}
 
 	c.mu.Unlock()
 
 	// dispatch without holding the lock so that Add/Remove never wait for it
 	// 不持锁分发，Add/Remove 无需等待该锁。
-	for _, j := range due {
-		c.dispatch(j)
+	for _, f := range due {
+		c.dispatch(f)
 	}
 }
 
@@ -552,16 +667,25 @@ func wallKey(t time.Time) int64 {
 	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC).Unix() / 60
 }
 
-func (c *Cron) dispatch(j *job) {
+// fire is one due dispatch: the job plus the stop epoch it was dispatched in.
+// fire 是一次到期分发：任务以及分发时所在的 stop epoch。
+type fire struct {
+	job   *job
+	epoch uint64
+}
+
+func (c *Cron) dispatch(f fire) {
+	j := f.job
 	if j.skipIfRunning && !j.running.CompareAndSwap(false, true) {
 		return // the previous run is still in progress | 上一次运行尚未结束。
 	}
 
 	c.inflight.Add(1)
-	go c.execute(j)
+	go c.execute(f)
 }
 
-func (c *Cron) execute(j *job) {
+func (c *Cron) execute(f fire) {
+	j := f.job
 	defer c.inflight.Done()
 
 	if j.skipIfRunning {
@@ -573,6 +697,14 @@ func (c *Cron) execute(j *job) {
 			c.onPanic(j.id, r, debug.Stack())
 		}
 	}()
+
+	// Distributed gating happens here, in the job goroutine and after
+	// dispatch's SkipIfRunning CAS, so lease I/O never blocks scheduling.
+	// 分布式协调在这里进行（任务 goroutine 中、dispatch 的 SkipIfRunning CAS
+	// 之后），因此租约 I/O 绝不会阻塞调度。
+	if c.lockProvider != nil && !c.ensureLeader(j, f.epoch) {
+		return
+	}
 
 	j.run()
 }

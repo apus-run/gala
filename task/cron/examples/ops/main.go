@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/apus-run/gala/components/cron"
+	"github.com/apus-run/gala/task/cron"
 
 	// parse CRON_TZ=Asia/Shanghai even on machines without a system tz
 	// database (eg. a scratch image)

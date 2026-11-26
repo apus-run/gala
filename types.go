@@ -43,6 +43,24 @@ func (f OptionFunc) apply(o *Options) {
 	f(o)
 }
 
+// Task is a background job managed by the Service lifecycle.
+//
+// Start must return promptly after launching its background loop: long-running
+// work belongs in a goroutine owned by the task. Stop must be idempotent and
+// bounded by ctx; it may be called for a task whose Start never ran or did not
+// finish.
+// Task 是受 Service 生命周期管理的后台任务。
+//
+// Start 必须在启动后台循环后立即返回：长时间运行的工作应放在任务自己持有的
+// goroutine 中。Stop 必须幂等，并以其 ctx 约束自身时长；即使某个任务的 Start
+// 未曾执行或未执行完，也可能收到 Stop 调用。
+type Task interface {
+	// Start starts the task | 启动任务.
+	Start(ctx context.Context) error
+	// Stop stops the task | 停止任务.
+	Stop(ctx context.Context) error
+}
+
 // Options holds the application configuration | 持有应用配置.
 type Options struct {
 	// service id | 服务 id
@@ -64,6 +82,8 @@ type Options struct {
 	stopTimeout time.Duration
 	// services | 承载服务的服务器列表
 	servers []server.Server
+	// background tasks managed alongside the servers | 与服务器一同托管的后台任务
+	tasks []Task
 
 	context context.Context
 	signals []os.Signal
@@ -141,6 +161,13 @@ func WithContext(ctx context.Context) Option {
 // WithServers with transport servers | WithServers 设置承载服务的服务器.
 func WithServers(srvs ...server.Server) Option {
 	return OptionFunc(func(o *Options) { o.servers = srvs })
+}
+
+// WithTasks appends background tasks managed by the app lifecycle | WithTasks 追加由应用生命周期托管的后台任务.
+func WithTasks(tasks ...Task) Option {
+	return OptionFunc(func(o *Options) {
+		o.tasks = append(o.tasks, tasks...)
+	})
 }
 
 // WithSignal with exit signals | WithSignal 设置触发停止的信号.

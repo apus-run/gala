@@ -1,0 +1,445 @@
+package gala
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/apus-run/gala/server"
+)
+
+var _ server.Server = (*fakeServer)(nil)
+
+// eventLog records lifecycle events in append order | eventLog 按追加顺序记录生命周期事件.
+type eventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *eventLog) add(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, event)
+}
+
+func (l *eventLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...)
+}
+
+func (l *eventLog) index(event string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i, e := range l.events {
+		if e == event {
+			return i
+		}
+	}
+	return -1
+}
+
+// fakeServer is a minimal server.Server that blocks in Start until Stop is
+// called, so lifecycle ordering can be observed without opening a port.
+// fakeServer 是极简的 server.Server：Start 阻塞至 Stop 被调用，无需监听端口
+// 即可观察生命周期顺序。
+type fakeServer struct {
+	events   *eventLog
+	started  chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
+}
+
+func newFakeServer(events *eventLog) *fakeServer {
+	return &fakeServer{
+		events:  events,
+		started: make(chan struct{}),
+		stopCh:  make(chan struct{}),
+	}
+}
+
+func (s *fakeServer) Start(context.Context) error {
+	s.events.add("server:start")
+	close(s.started)
+	<-s.stopCh
+	return nil
+}
+
+func (s *fakeServer) Stop(context.Context) error {
+	s.events.add("server:stop")
+	s.stopOnce.Do(func() { close(s.stopCh) })
+	return nil
+}
+
+func (s *fakeServer) Health() bool { return true }
+
+// fakeTask records Start/Stop calls, can fail either step, and can signal when
+// its Start has been invoked.
+// fakeTask 记录 Start/Stop 调用，可使任一步骤失败，并可发出 Start 已调用的信号。
+type fakeTask struct {
+	name      string
+	events    *eventLog
+	startErr  error
+	stopErr   error
+	started   chan struct{}
+	startOnce sync.Once
+	stopCalls atomic.Int32
+}
+
+func (t *fakeTask) Start(context.Context) error {
+	t.events.add("task:" + t.name + ":start")
+	t.startOnce.Do(func() {
+		if t.started != nil {
+			close(t.started)
+		}
+	})
+	return t.startErr
+}
+
+func (t *fakeTask) Stop(context.Context) error {
+	t.stopCalls.Add(1)
+	t.events.add("task:" + t.name + ":stop")
+	return t.stopErr
+}
+
+// lifecycleTask records Start/Stop entry and detects a Start that happens
+// after the task has already been stopped.
+// lifecycleTask 记录 Start/Stop 的进入，并检测任务被停止后才发生的 Start。
+type lifecycleTask struct {
+	name      string
+	events    *eventLog
+	startGate chan struct{} // when non-nil, Start blocks until it is closed
+	startedCh chan struct{} // closed when Start is entered
+	stopDone  chan struct{} // closed when Stop is entered
+
+	startedOnce sync.Once
+	stopOnce    sync.Once
+
+	mu             sync.Mutex
+	started        bool
+	stopped        bool
+	startAfterStop bool
+}
+
+func newLifecycleTask(name string, events *eventLog, startGate chan struct{}) *lifecycleTask {
+	return &lifecycleTask{
+		name:      name,
+		events:    events,
+		startGate: startGate,
+		startedCh: make(chan struct{}),
+		stopDone:  make(chan struct{}),
+	}
+}
+
+func (t *lifecycleTask) Start(context.Context) error {
+	t.events.add(t.name + ":start")
+	t.mu.Lock()
+	if t.stopped {
+		t.startAfterStop = true
+	}
+	t.started = true
+	t.mu.Unlock()
+	t.startedOnce.Do(func() { close(t.startedCh) })
+
+	if t.startGate != nil {
+		<-t.startGate
+	}
+
+	return nil
+}
+
+func (t *lifecycleTask) Stop(context.Context) error {
+	t.events.add(t.name + ":stop")
+	t.mu.Lock()
+	t.stopped = true
+	t.mu.Unlock()
+	t.stopOnce.Do(func() { close(t.stopDone) })
+
+	return nil
+}
+
+func (t *lifecycleTask) state() (started, stopped, startAfterStop bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.started, t.stopped, t.startAfterStop
+}
+
+func waitForSignal(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func waitRun(t *testing.T, runErr <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-runErr:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return")
+		return nil
+	}
+}
+
+func assertEventOrder(t *testing.T, events *eventLog, want ...string) {
+	t.Helper()
+	prev := -1
+	for _, event := range want {
+		idx := events.index(event)
+		if idx < 0 {
+			t.Fatalf("event %q not recorded, got %v", event, events.snapshot())
+		}
+		if idx <= prev {
+			t.Fatalf("event %q out of order, got %v", event, events.snapshot())
+		}
+		prev = idx
+	}
+}
+
+// TestTask_LifecycleOrder verifies that tasks start after the transport server
+// and afterStart hooks, and stop before the transport server.
+// TestTask_LifecycleOrder 验证任务在传输服务器与 afterStart 钩子之后启动，并在
+// 传输服务器之前停止。
+func TestTask_LifecycleOrder(t *testing.T) {
+	events := &eventLog{}
+	srv := newFakeServer(events)
+	first := &fakeTask{name: "first", events: events, started: make(chan struct{})}
+	second := &fakeTask{name: "second", events: events, started: make(chan struct{})}
+
+	app := New(
+		WithServers(srv),
+		AfterStart(func(_ context.Context) error {
+			select {
+			case <-srv.started:
+			case <-time.After(5 * time.Second):
+				return errors.New("server did not start before afterStart hook")
+			}
+			events.add("afterStart")
+			return nil
+		}),
+		WithTasks(first, second),
+	)
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, second.started, "second task to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	assertEventOrder(t, events,
+		"server:start",
+		"afterStart",
+		"task:first:start",
+		"task:second:start",
+		"task:first:stop",
+		"task:second:stop",
+		"server:stop",
+	)
+}
+
+// TestTask_StopOrder verifies that multiple tasks stop sequentially in option
+// order.
+// TestTask_StopOrder 验证多个任务按选项顺序依次停止。
+func TestTask_StopOrder(t *testing.T) {
+	events := &eventLog{}
+	tasks := []*fakeTask{
+		{name: "one", events: events, started: make(chan struct{})},
+		{name: "two", events: events, started: make(chan struct{})},
+		{name: "three", events: events, started: make(chan struct{})},
+	}
+
+	app := New(WithTasks(tasks[0], tasks[1], tasks[2]))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, tasks[2].started, "third task to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	assertEventOrder(t, events,
+		"task:one:start",
+		"task:two:start",
+		"task:three:start",
+		"task:one:stop",
+		"task:two:stop",
+		"task:three:stop",
+	)
+}
+
+// TestTask_StartError verifies that a Task.Start error is returned by Run and
+// still triggers shutdown of the remaining tasks and servers.
+// TestTask_StartError 验证 Task.Start 的错误由 Run 返回，且仍会触发其余任务与
+// 服务器的停机。
+func TestTask_StartError(t *testing.T) {
+	events := &eventLog{}
+	srv := newFakeServer(events)
+	wantErr := errors.New("task start failed")
+	okTask := &fakeTask{name: "ok", events: events}
+	badTask := &fakeTask{name: "bad", events: events, startErr: wantErr}
+
+	app := New(WithServers(srv), WithTasks(okTask, badTask))
+	err := app.Run()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Run() error = %v, want %v", err, wantErr)
+	}
+	if got := okTask.stopCalls.Load(); got != 1 {
+		t.Fatalf("ok task Stop calls = %d, want 1", got)
+	}
+	if got := badTask.stopCalls.Load(); got != 1 {
+		t.Fatalf("bad task Stop calls = %d, want 1", got)
+	}
+	if events.index("server:stop") < 0 {
+		t.Fatalf("server not stopped after task start failure, got %v", events.snapshot())
+	}
+}
+
+// TestTask_StopError verifies that a Task.Stop error is returned by Run.
+// TestTask_StopError 验证 Task.Stop 的错误由 Run 返回。
+func TestTask_StopError(t *testing.T) {
+	events := &eventLog{}
+	wantErr := errors.New("task stop failed")
+	task := &fakeTask{
+		name:    "failing",
+		events:  events,
+		started: make(chan struct{}),
+		stopErr: wantErr,
+	}
+
+	app := New(WithTasks(task))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, task.started, "task to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); !errors.Is(err, wantErr) {
+		t.Fatalf("Run() error = %v, want %v", err, wantErr)
+	}
+}
+
+// TestTask_StopDuringStart verifies that a shutdown requested while a task is
+// still starting cannot produce a Stop-before-Start pair or a start that lands
+// after a stop: every task Start is followed by exactly one Stop.
+// TestTask_StopDuringStart 验证在任务仍在启动时请求停机，不会产生
+// Stop 先于 Start，或 Stop 之后又启动的情况：每个任务的 Start 之后都恰好有一次 Stop。
+func TestTask_StopDuringStart(t *testing.T) {
+	events := &eventLog{}
+	gate := make(chan struct{})
+	blocked := newLifecycleTask("blocked", events, gate)
+	second := newLifecycleTask("second", events, nil)
+
+	app := New(WithTasks(blocked, second))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, blocked.startedCh, "first task to enter Start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	// Give an implementation that stops tasks independently of the start pass
+	// the chance to stop the second task while the first Start is still
+	// blocked. The corrected implementation cannot: Start and Stop share one
+	// goroutine, so this select waits out the grace period.
+	// 给"启动与停止由不同 goroutine 执行"的实现一个机会：在第一个 Start 仍阻塞时
+	// 先停止第二个任务。修正后的实现不会如此——Start 与 Stop 共用一个 goroutine，
+	// 因此这里会等满宽限期。
+	select {
+	case <-second.stopDone:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(gate)
+
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	started, stopped, startAfterStop := blocked.state()
+	if !started || !stopped {
+		t.Fatalf("blocked task started=%v stopped=%v, want both true", started, stopped)
+	}
+	if startAfterStop {
+		t.Fatal("blocked task was started after it had been stopped")
+	}
+
+	secondStarted, secondStopped, secondStartAfterStop := second.state()
+	if !secondStopped || secondStartAfterStop {
+		t.Fatalf("second task started=%v stopped=%v startAfterStop=%v, want stopped without start-after-stop; events = %v",
+			secondStarted, secondStopped, secondStartAfterStop, events.snapshot())
+	}
+	if idxStart, idxStop := events.index("second:start"), events.index("second:stop"); idxStart >= 0 && idxStart > idxStop {
+		t.Fatalf("second task events out of order, got %v", events.snapshot())
+	}
+}
+
+// TestTask_NoTasks verifies that an app without tasks keeps the plain
+// server-only lifecycle.
+// TestTask_NoTasks 验证未配置任务的应用保持纯服务器生命周期。
+func TestTask_NoTasks(t *testing.T) {
+	events := &eventLog{}
+	srv := newFakeServer(events)
+
+	app := New(WithServers(srv))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, srv.started, "server to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	assertEventOrder(t, events, "server:start", "server:stop")
+}
+
+// TestTask_ServiceStopStopsOnce verifies that Service.Stop triggers each task's
+// Stop exactly once, even when Stop is called repeatedly.
+// TestTask_ServiceStopStopsOnce 验证 Service.Stop 恰好触发每个任务的 Stop 一次，
+// 重复调用 Stop 亦然。
+func TestTask_ServiceStopStopsOnce(t *testing.T) {
+	events := &eventLog{}
+	task := &fakeTask{name: "once", events: events, started: make(chan struct{})}
+
+	app := New(WithTasks(task))
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, task.started, "task to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("first Stop() error = %v", err)
+	}
+	if err := app.Stop(); err != nil {
+		t.Fatalf("second Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := task.stopCalls.Load(); got != 1 {
+		t.Fatalf("task Stop calls = %d, want 1", got)
+	}
+}
