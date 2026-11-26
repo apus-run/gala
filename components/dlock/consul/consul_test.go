@@ -119,11 +119,11 @@ func newTestClient(t *testing.T, fake *fakeConsul) *api.Client {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/session/create", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("PUT /v1/session/create", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"ID":"session-1"}`)
 	})
-	mux.HandleFunc("/v1/session/renew/session-1", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("PUT /v1/session/renew/session-1", func(w http.ResponseWriter, _ *http.Request) {
 		fake.mu.Lock()
 		status := fake.renewStatus
 		fake.mu.Unlock()
@@ -137,30 +137,26 @@ func newTestClient(t *testing.T, fake *fakeConsul) *api.Client {
 		}
 		_, _ = fmt.Fprint(w, `[{"ID":"session-1","TTL":"10s"}]`)
 	})
-	mux.HandleFunc("/v1/session/destroy/session-1", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("PUT /v1/session/destroy/session-1", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, "true")
 	})
-	mux.HandleFunc("/v1/kv/lock", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPut:
-			if r.URL.Query().Get("release") != "" {
-				fake.mu.Lock()
-				fake.released = true
-				fake.mu.Unlock()
-			}
-			_, _ = fmt.Fprint(w, "true")
-		case http.MethodGet:
+	mux.HandleFunc("PUT /v1/kv/lock", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("release") != "" {
 			fake.mu.Lock()
-			session := fake.keySession
+			fake.released = true
 			fake.mu.Unlock()
-			if session == "" {
-				session = "session-1"
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, `[{"Key":"lock","Session":%q}]`, session)
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
+		_, _ = fmt.Fprint(w, "true")
+	})
+	mux.HandleFunc("GET /v1/kv/lock", func(w http.ResponseWriter, _ *http.Request) {
+		fake.mu.Lock()
+		session := fake.keySession
+		fake.mu.Unlock()
+		if session == "" {
+			session = "session-1"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `[{"Key":"lock","Session":%q}]`, session)
 	})
 
 	server := httptest.NewServer(mux)
