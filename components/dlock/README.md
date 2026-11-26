@@ -158,9 +158,10 @@ GOWORK=off go test -race ./...
 
 Redis 使用 miniredis 覆盖抢锁/释放/续期、令牌校验、取消上下文下的释放、typed-nil 校验、
 毫秒 TTL 与过期接管；`noop` 覆盖 `ErrLockNotHeld` 契约；Consul 用 `httptest` 假服务覆盖
-Renew 404、key 易主和取消上下文下的释放。etcd、GORM、Mongo 的单元测试只覆盖构造校验、
-`Init` 参数校验与重复键识别——发布前仍需在真实服务上验证竞争、过期接管、坏时钟下的接管
-以及旧持有者 `Unlock`/`Refresh` 不生效。
+Renew 404、key 易主、session 清理和取消上下文下的释放；GORM 使用纯 Go SQLite 加入共享
+契约测试，并覆盖过期接管后旧持有者 `Refresh`/`Unlock` 返回 `ErrLockNotHeld`。etcd 与
+MongoDB 的单元测试只覆盖构造校验、`Init` 参数校验、索引判定与协议辅助逻辑——发布前仍需
+在真实服务上验证竞争、过期接管、坏时钟下的接管以及旧持有者 `Unlock`/`Refresh` 不生效。
 
 ## 已知边界
 
@@ -173,3 +174,7 @@ Renew 404、key 易主和取消上下文下的释放。etcd、GORM、Mongo 的�
   时间大于 `LockTimeout`。
 - `noop` 完全不提供排他性，只用于接线测试与本地运行；它仍遵守 `ErrLockNotHeld` 契约，并可
   用 `Lose()` 模拟丢锁。
+- `gorm`/`mongo` 的 `Unlock` 会顺带删除仍带本令牌的过期行/文档，但持有者崩溃且不再调用
+  `Unlock` 时不会自动清理；长期运行需要定期删除 `expired_at` 已过期的记录。
+- `mongo.Client.NewLock` 创建的 Locker 共享一次唯一索引校验；直接调用 `mongo.NewLock`
+  时每个 Locker 各自校验一次（fail-closed 的代价）。

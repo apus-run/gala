@@ -7,6 +7,7 @@ package cron
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -665,16 +666,16 @@ func (c *Cron) refresher(l *jobLease, jobID string, locker taskcontract.Locker, 
 // 并并发执行，因此 N 个租约不会花费 N 份超时。状态保持可复用：Stop 之后
 // ensureLeader 在 Cron 停止期间拒绝获取；Start 之后（或 Shutdown 等在途任务
 // 排空后）新的触发可再次成为 leader。租约 I/O 期间不持有 Cron 锁。
-func (c *Cron) releaseAllLeases() {
+func (c *Cron) releaseAllLeases() error {
 	refs := c.leaseSnapshot()
 	if len(refs) == 0 {
-		return
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.lockCfg.acquireTimeout)
 	defer cancel()
 
-	c.releaseRefs(ctx, refs, false)
+	return c.releaseRefs(ctx, refs, false)
 }
 
 // releaseRemoved releases a tombstoned snapshot in the background, with one
@@ -687,7 +688,7 @@ func (c *Cron) releaseRemoved(refs []leaseRef) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.lockCfg.acquireTimeout)
 	defer cancel()
 
-	c.releaseRefs(ctx, refs, true)
+	_ = c.releaseRefs(ctx, refs, true)
 }
 
 // leaseSnapshot snapshots Cron.leases together with each state's leader
@@ -726,24 +727,41 @@ type leaseRef struct {
 // releaseRefs 并发释放租约快照（每个状态一个 goroutine）并等待全部完成。所有
 // Unlock 共享 ctx，因此整批只有一份总预算，而不是每个租约一份超时。ctx 到期后
 // 不再启动新的释放：未处理的状态（及其墓碑）留给之后的 Stop/Shutdown 重试。
-func (c *Cron) releaseRefs(ctx context.Context, refs []leaseRef, markRemoved bool) {
+func (c *Cron) releaseRefs(ctx context.Context, refs []leaseRef, markRemoved bool) error {
+	errCh := make(chan error, len(refs)+1)
 	var wg sync.WaitGroup
 
-	for _, ref := range refs {
+	for i, ref := range refs {
 		if ctx.Err() != nil {
-			// Budget exhausted: do not start more releases.
-			// 预算已耗尽：不再启动新的释放。
+			// Budget exhausted: do not start more releases. The skipped
+			// states (and tombstones) stay for a later retry, and the
+			// truncation is reported.
+			// 预算已耗尽：不再启动新的释放。跳过的状态（及墓碑）留给之后重试，
+			// 同时报告本次截断。
+			errCh <- fmt.Errorf(
+				"cron: lease release budget exhausted with %d states skipped: %w",
+				len(refs)-i, ctx.Err(),
+			)
 			break
 		}
 
 		wg.Add(1)
 		go func(ref leaseRef) {
 			defer wg.Done()
-			c.releaseLease(ctx, ref, markRemoved)
+			if err := c.releaseLease(ctx, ref, markRemoved); err != nil {
+				errCh <- err
+			}
 		}(ref)
 	}
 
 	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // releaseLease stops the refresher and, when the lease may still be held,
@@ -781,10 +799,33 @@ func (c *Cron) releaseRefs(ctx context.Context, refs []leaseRef, markRemoved boo
 // 成功则清除 mayHold 并结算墓碑状态：任务仍被移除时删除，期间被重新添加时重新
 // 开放（removed=false）。finishRemoval 会再次检查 mayHold，因此失败的释放绝不
 // 遗忘状态或其缓存的 Locker。
-func (c *Cron) releaseLease(ctx context.Context, ref leaseRef, markRemoved bool) {
+func (c *Cron) releaseLease(ctx context.Context, ref leaseRef, markRemoved bool) error {
 	jobID, l := ref.id, ref.lease
 
-	l.opMu.Lock()
+	// Wait for a concurrent release of this state without outliving the batch
+	// budget: an unbounded wait could hand Unlock an already-expired context
+	// and turn a retry into an instant failure.
+	// 在不超出整批预算的前提下等待该状态的并发释放：无界等待可能把已过期的
+	// context 交给 Unlock，使重试瞬间失败。
+	waited := make(chan struct{})
+	go func() {
+		l.opMu.Lock()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-ctx.Done():
+		go func() {
+			// The acquire eventually lands; release it so the state is usable
+			// after this batch. The goroutine itself is bounded by the
+			// in-flight release.
+			// 获取最终会成功；随即释放，使该状态在本批结束后仍可用。该 goroutine
+			// 的生命周期受在途释放约束。
+			<-waited
+			l.opMu.Unlock()
+		}()
+		return fmt.Errorf("cron: wait for lease release %q: %w", jobID, ctx.Err())
+	}
 
 	var (
 		event LockEvent
@@ -822,7 +863,7 @@ func (c *Cron) releaseLease(ctx context.Context, ref leaseRef, markRemoved bool)
 		// 该状态在此释放快照之后已被重新开放并重新获取，此时写墓碑会隔离重新添加
 		// 的 id，而新的续期器仍在续期其租约。同一次移除的更早释放已经结算过它。
 		l.mu.Unlock()
-		return
+		return nil
 	}
 	if markRemoved {
 		l.removed = true
@@ -845,7 +886,14 @@ func (c *Cron) releaseLease(ctx context.Context, ref leaseRef, markRemoved bool)
 	// local-only job never has one.
 	// 只有租约"可能仍被持有"时才尝试 Unlock；纯本地任务从来没有租约。
 	if !mayHold || locker == nil {
-		return
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		// The batch budget expired while waiting: do not hand an expired
+		// context to Unlock. Keep the state for a later retry.
+		// 等待期间整批预算已到期：不要把过期 context 交给 Unlock，保留状态供
+		// 之后重试。
+		return fmt.Errorf("cron: release lease %q: %w", jobID, err)
 	}
 
 	if err := locker.Unlock(ctx); err != nil {
@@ -853,10 +901,11 @@ func (c *Cron) releaseLease(ctx context.Context, ref leaseRef, markRemoved bool)
 		// later release retries.
 		// 租约可能仍被持有：保留 mayHold（与墓碑），让之后的释放重试。
 		event, evErr, emit = LockReleaseFailed, err, true
-		return
+		return err
 	}
 
 	l.mu.Lock()
 	l.mayHold = false
 	l.mu.Unlock()
+	return nil
 }

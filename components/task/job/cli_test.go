@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -192,4 +193,49 @@ func TestRunCLIReturnsJobError(t *testing.T) {
 	if err := r.RunCLI(context.Background(), []string{"--job", "fail"}, nil); !errors.Is(err, jobErr) {
 		t.Fatalf("got %v, want %v", err, jobErr)
 	}
+}
+
+func TestRunCLIUnknownJobDoesNotReadStdin(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Register("known", func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	reader := &trackingReader{}
+	err := r.RunCLI(context.Background(), []string{"--job", "unknown", "--job-data", "-"}, reader)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RunCLI() error = %v, want ErrNotFound", err)
+	}
+	if reader.reads != 0 {
+		t.Fatalf("RunCLI() read stdin %d times for an unknown job, want 0", reader.reads)
+	}
+}
+
+func TestRunCLIOversizedStdinIsRejected(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Register("known", func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	big := io.LimitReader(repeatingReader{}, defaultMaxBodyBytes+1)
+	err := r.RunCLI(context.Background(), []string{"--job", "known", "--job-data", "-"}, big)
+	if err == nil || !strings.Contains(err.Error(), "stdin payload exceeds") {
+		t.Fatalf("RunCLI() error = %v, want stdin payload size error", err)
+	}
+}
+
+type trackingReader struct{ reads int }
+
+func (r *trackingReader) Read([]byte) (int, error) {
+	r.reads++
+	return 0, io.EOF
+}
+
+type repeatingReader struct{}
+
+func (repeatingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
 }

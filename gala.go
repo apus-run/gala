@@ -147,7 +147,18 @@ func (s *Service) Run() error {
 	// 携带相同的值但不继承取消信号：外部取消应用 context 不应提前取消优雅清理，
 	// 因此服务器与任务的停止 context 都从它派生。
 	octx := ServiceContextKey.NewContext(s.opts.context, s)
-	cleanupBase := ServiceContextKey.NewContext(context.WithoutCancel(s.opts.context), s)
+	// WithoutCancel drops a deadline as well as cancellation; keep the
+	// caller's deadline so a WithContext deadline still bounds transport drain
+	// when WithStopTimeout is unset.
+	// WithoutCancel 同时丢弃截止时间与取消信号；保留调用方截止时间，使未设置
+	// WithStopTimeout 时 WithContext 的截止时间仍能约束传输服务的排水。
+	detached := context.WithoutCancel(s.opts.context)
+	if deadline, ok := s.opts.context.Deadline(); ok {
+		var cancel context.CancelFunc
+		detached, cancel = context.WithDeadline(detached, deadline)
+		defer cancel()
+	}
+	cleanupBase := ServiceContextKey.NewContext(detached, s)
 
 	// tasksStopped is closed once task shutdown finishes, or immediately when no
 	// tasks are configured. The server stop goroutines wait for it, so tasks
@@ -284,17 +295,16 @@ func (s *Service) Run() error {
 		err = nil
 	}
 	// Surface task stop errors even when eg.Wait only reported the
-	// context.Canceled of a normal shutdown.
-	// 即使 eg.Wait 只返回正常停机时的 context.Canceled，任务停止错误也在此返回。
+	// context.Canceled of a normal shutdown, and still run the afterStop
+	// cleanup hooks: a task that exhausted its budget must not skip DB/tracer
+	// cleanup.
+	// 即使 eg.Wait 只返回正常停机时的 context.Canceled，任务停止错误也在此返回；
+	// 同时仍执行 afterStop 清理钩子：耗尽预算的任务不应跳过数据库/追踪器清理。
 	if taskStopErr != nil {
 		err = errors.Join(err, taskStopErr)
 	}
-	if err != nil {
-		return err
-	}
-	err = nil
 	for _, fn := range s.opts.afterStop {
-		err = fn(c)
+		err = errors.Join(err, fn(c))
 	}
 	return err
 }

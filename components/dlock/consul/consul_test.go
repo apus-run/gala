@@ -103,16 +103,24 @@ func TestUnlockWithCanceledContext(t *testing.T) {
 }
 
 type fakeConsul struct {
-	mu          sync.Mutex
-	renewStatus int
-	keySession  string
-	released    bool
+	mu           sync.Mutex
+	renewStatus  int
+	keySession   string
+	releaseFails bool
+	released     bool
+	destroyed    int
 }
 
 func (f *fakeConsul) wasReleased() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.released
+}
+
+func (f *fakeConsul) wasDestroyed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.destroyed > 0
 }
 
 func newTestClient(t *testing.T, fake *fakeConsul) *api.Client {
@@ -138,13 +146,20 @@ func newTestClient(t *testing.T, fake *fakeConsul) *api.Client {
 		_, _ = fmt.Fprint(w, `[{"ID":"session-1","TTL":"10s"}]`)
 	})
 	mux.HandleFunc("PUT /v1/session/destroy/session-1", func(w http.ResponseWriter, _ *http.Request) {
+		fake.mu.Lock()
+		fake.destroyed++
+		fake.mu.Unlock()
 		_, _ = fmt.Fprint(w, "true")
 	})
 	mux.HandleFunc("PUT /v1/kv/lock", func(w http.ResponseWriter, r *http.Request) {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
 		if r.URL.Query().Get("release") != "" {
-			fake.mu.Lock()
+			if fake.releaseFails {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			fake.released = true
-			fake.mu.Unlock()
 		}
 		_, _ = fmt.Fprint(w, "true")
 	})
@@ -167,4 +182,29 @@ func newTestClient(t *testing.T, fake *fakeConsul) *api.Client {
 		t.Fatalf("api.NewClient() error = %v", err)
 	}
 	return client
+}
+
+func TestUnlockAfterKeyReassignedDestroysSession(t *testing.T) {
+	fake := &fakeConsul{renewStatus: http.StatusOK, keySession: "another-session", releaseFails: true}
+	client := newTestClient(t, fake)
+	ctx := context.Background()
+
+	locker, err := consul.NewLock(ctx, client, dlock.WithLockName("lock"), dlock.WithLockTimeout(10*time.Second))
+	if err != nil {
+		t.Fatalf("NewLock() error = %v", err)
+	}
+	if err := locker.Lock(ctx); err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+
+	// KV.Release fails and the ownership read shows the key belongs to another
+	// session: Unlock must report ErrLockNotHeld and still destroy our session.
+	// KV.Release 失败且所有权读显示 key 属于其他 session：Unlock 必须返回
+	// ErrLockNotHeld，并且仍然销毁本 session。
+	if err := locker.Unlock(ctx); !errors.Is(err, dlock.ErrLockNotHeld) {
+		t.Fatalf("Unlock() error = %v, want ErrLockNotHeld", err)
+	}
+	if !fake.wasDestroyed() {
+		t.Fatal("Unlock() left the live session behind after losing the key")
+	}
 }

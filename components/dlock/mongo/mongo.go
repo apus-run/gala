@@ -60,8 +60,18 @@ type Lock struct {
 	ownerID          string
 	token            string
 
-	indexMu    sync.Mutex
-	indexReady bool
+	index *indexCache
+}
+
+// indexCache records a successful unique-index verification. Client-created
+// Lockers share one cache, so the listIndexes check runs once per client
+// rather than once per Run; a direct NewLock gets its own cache.
+// indexCache 记录一次成功的唯一索引校验。由 Client 创建的 Locker 共享同一个缓存，
+// 因此 listIndexes 每个 client 只执行一次，而不是每个 Run 一次；直接调用 NewLock
+// 则各自持有缓存。
+type indexCache struct {
+	mu    sync.Mutex
+	ready bool
 }
 
 // lockDoc is the document stored in the collection | lockDoc 是集合中存储的文档。
@@ -82,6 +92,12 @@ var _ dlock.Locker = (*Lock)(nil)
 // NewLock 创建新的 Lock 实例，构造期不做任何 I/O；首次 Lock/Unlock/Refresh
 // 之前调用一次 [Init] 建立 name 唯一索引。
 func NewLock(_ context.Context, _ *mongo.Client, collection *mongo.Collection, opts ...dlock.Option) (*Lock, error) {
+	return newLock(collection, &indexCache{}, opts...)
+}
+
+// newLock builds a Locker with the provided index-verification cache.
+// newLock 用给定的索引校验缓存构建 Locker。
+func newLock(collection *mongo.Collection, index *indexCache, opts ...dlock.Option) (*Lock, error) {
 	if collection == nil {
 		return nil, fmt.Errorf("dlock/mongo: nil collection")
 	}
@@ -103,6 +119,7 @@ func NewLock(_ context.Context, _ *mongo.Client, collection *mongo.Collection, o
 		operationTimeout: o.OperationTimeout,
 		ownerID:          o.OwnerID,
 		token:            tok,
+		index:            index,
 	}, nil
 }
 
@@ -162,16 +179,27 @@ func (l *Lock) Lock(ctx context.Context) error {
 // （含列出索引时的暂时性错误）不缓存，下一次 Lock 会重试，从而能在 Init 执行或
 // 存储恢复后继续工作。
 func (l *Lock) requireUniqueNameIndex(ctx context.Context) error {
-	l.indexMu.Lock()
-	defer l.indexMu.Unlock()
+	l.index.mu.Lock()
+	defer l.index.mu.Unlock()
 
-	if l.indexReady {
+	if l.index.ready {
 		return nil
 	}
 
-	specs, err := l.collection.Indexes().ListSpecifications(ctx)
+	// List raw index specs: driver v1.17's IndexSpecification drops
+	// partialFilterExpression, and a partial unique index on name does not
+	// constrain lock documents that miss the filter, so it must not pass the
+	// fail-closed check.
+	// 列出原始索引文档：driver v1.17 的 IndexSpecification 会丢弃
+	// partialFilterExpression，而带 partial filter 的 name 唯一索引并不会约束
+	// 不满足 filter 的锁文档，因此不能让这种索引通过 fail-closed 校验。
+	cursor, err := l.collection.Indexes().List(ctx)
 	if err != nil {
 		return fmt.Errorf("dlock/mongo: inspect indexes on %q: %w", l.collection.Name(), err)
+	}
+	var specs []bson.M
+	if err := cursor.All(ctx, &specs); err != nil {
+		return fmt.Errorf("dlock/mongo: decode indexes on %q: %w", l.collection.Name(), err)
 	}
 	if !hasUniqueNameIndex(specs) {
 		return fmt.Errorf(
@@ -180,28 +208,51 @@ func (l *Lock) requireUniqueNameIndex(ctx context.Context) error {
 		)
 	}
 
-	l.indexReady = true
+	l.index.ready = true
 	return nil
 }
 
-// hasUniqueNameIndex reports whether specs contain a unique index whose only
-// key is name in ascending order, the index Init creates.
-// hasUniqueNameIndex 判断 specs 中是否存在 Init 所建立的、唯一键仅为 name（升序）
-// 的唯一索引。
-func hasUniqueNameIndex(specs []*mongo.IndexSpecification) bool {
+// hasUniqueNameIndex reports whether specs contain a unique, non-partial index
+// whose only key is name in ascending order, the index Init creates.
+// hasUniqueNameIndex 判断 specs 中是否存在 Init 所建立的唯一、非 partial、唯一键
+// 仅为 name（升序）的索引。
+func hasUniqueNameIndex(specs []bson.M) bool {
 	for _, spec := range specs {
-		if spec == nil || spec.Unique == nil || !*spec.Unique {
+		unique, _ := spec["unique"].(bool)
+		if !unique {
 			continue
 		}
-		keys, err := spec.KeysDocument.Elements()
-		if err != nil || len(keys) != 1 || keys[0].Key() != "name" {
+		// A partial unique index does not apply to documents missing the
+		// filter; lock documents have no such field, so it grants no
+		// exclusivity for them.
+		// partial 唯一索引不约束缺少 filter 字段的文档；锁文档没有该字段，因此
+		// 对它们不提供任何排他性。
+		if _, partial := spec["partialFilterExpression"]; partial {
 			continue
 		}
-		if v, ok := keys[0].Value().Int32OK(); ok && v == 1 {
-			return true
+		keys, ok := spec["key"].(bson.M)
+		if !ok || len(keys) != 1 {
+			continue
 		}
+		if !isOne(keys["name"]) {
+			continue
+		}
+		return true
 	}
 	return false
+}
+
+// isOne reports whether v is the BSON numeric 1 (int32 or int64).
+// isOne 判断 v 是否为 BSON 数字 1（int32 或 int64）。
+func isOne(v any) bool {
+	switch n := v.(type) {
+	case int32:
+		return n == 1
+	case int64:
+		return n == 1
+	default:
+		return false
+	}
 }
 
 // tryAcquire inserts the lock document, falling back to an atomic take-over.
@@ -209,15 +260,15 @@ func hasUniqueNameIndex(specs []*mongo.IndexSpecification) bool {
 // tryAcquire 插入锁文档，失败时回退到原子接管。文档消失、调用方应重试时
 // done 为 false。
 func (l *Lock) tryAcquire(ctx context.Context) (done bool, err error) {
-	now := time.Now()
+	insertedAt := time.Now()
 
 	_, err = l.collection.InsertOne(ctx, lockDoc{
 		Name:      l.lockName,
 		OwnerID:   l.ownerID,
 		Token:     l.token,
-		ExpiredAt: now.Add(l.lockTimeout),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ExpiredAt: insertedAt.Add(l.lockTimeout),
+		CreatedAt: insertedAt,
+		UpdatedAt: insertedAt,
 	})
 	if err == nil {
 		return true, nil
@@ -225,6 +276,13 @@ func (l *Lock) tryAcquire(ctx context.Context) (done bool, err error) {
 	if !mongo.IsDuplicateKeyError(err) {
 		return true, fmt.Errorf("dlock/mongo: acquire lock %q: %w", l.lockName, err)
 	}
+
+	// Read the clock after the insert round trip: a slow primary failover
+	// would otherwise shorten (or even expire) the lease written by the
+	// take-over, while Lock still reports success.
+	// 在插入往返之后再取时钟：否则慢速主节点切换会缩短（甚至写过期）接管写入的
+	// 租约，而 Lock 仍报告成功。
+	now := time.Now()
 
 	// Take over only our own document or an expired one. The find-and-update
 	// is atomic, so at most one contender wins.
@@ -278,6 +336,16 @@ func (l *Lock) Unlock(ctx context.Context) error {
 		return fmt.Errorf("dlock/mongo: release lock %q: %w", l.lockName, err)
 	}
 	if res.DeletedCount == 0 {
+		// The lease is expired (or already gone): it is not held anymore.
+		// Best-effort delete an expired document that still carries our
+		// token, so an abandoned lock does not accumulate forever; the token
+		// predicate guarantees we never touch another owner's document.
+		// 租约已过期（或已消失）：不再持有。尽力删除仍带本令牌的过期文档，
+		// 避免废弃锁永久堆积；令牌条件保证不会碰到其他持有者的文档。
+		_, _ = l.collection.DeleteOne(ctx, bson.M{
+			"name":  l.lockName,
+			"token": l.token,
+		})
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockName)
 	}
 	return nil

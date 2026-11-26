@@ -60,6 +60,7 @@ type fakeLocker struct {
 	owner       string
 	jobID       string
 	failRefresh atomic.Bool
+	failUnlocks atomic.Int32
 	failUnlock  atomic.Bool
 
 	// blockRefresh makes Refresh wait for its context and return ctx.Err(),
@@ -1996,5 +1997,66 @@ func TestDistributedNilProviderReplacementSkipsOldFire(t *testing.T) {
 
 	if err := c.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestDistributedShutdownRetriesFailedRelease covers the gala path: a failed
+// Unlock during Remove keeps the tombstone, and Shutdown (not just Stop) must
+// retry the release and report a retry failure.
+// TestDistributedShutdownRetriesFailedRelease 覆盖 gala 使用的路径：Remove 期间
+// Unlock 失败会保留墓碑，Shutdown（而不只是 Stop）必须重试释放，并在重试失败时
+// 报告错误。
+func TestDistributedShutdownRetriesFailedRelease(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+	locker.failUnlocks.Store(1)
+
+	c := New(WithLockerProvider(fixedProvider(locker)))
+	var runs atomic.Int32
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+
+	base := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	c.runDue(base)
+	waitFor(t, "the job to run and hold the lease", func() bool {
+		return runs.Load() == 1 && backend.ownerOf(fakeJobID) == "A"
+	})
+
+	// Remove fails its Unlock and keeps the tombstone.
+	// Remove 的 Unlock 失败并保留墓碑。
+	c.Remove(fakeJobID)
+	waitFor(t, "the failed release to keep the tombstone", func() bool {
+		l := leaseOf(c, fakeJobID)
+		if l == nil {
+			return false
+		}
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.removed && l.mayHold
+	})
+
+	// Shutdown must retry and succeed once the backend accepts Unlocks.
+	// Shutdown 必须在后端恢复后重试并成功。
+	if err := c.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v, want nil after a successful retry", err)
+	}
+	if owner := backend.ownerOf(fakeJobID); owner != "" {
+		t.Fatalf("Shutdown did not release the tombstoned lease: owner %q", owner)
+	}
+
+	// A second cycle with a still-failing Unlock must surface the error.
+	// 第二轮在 Unlock 仍失败时必须返回错误。
+	locker.failUnlocks.Store(1)
+	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
+	c.Start()
+	c.runDue(base.Add(time.Minute))
+	waitFor(t, "the re-added job to acquire", func() bool {
+		return backend.ownerOf(fakeJobID) == "A"
+	})
+
+	err := c.Shutdown(context.Background())
+	if err == nil {
+		t.Fatalf("Shutdown() error = nil, want the failed release error (failUnlocks=%d owner=%q)", locker.failUnlocks.Load(), backend.ownerOf(fakeJobID))
 	}
 }

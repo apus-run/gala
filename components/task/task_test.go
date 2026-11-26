@@ -3,6 +3,7 @@ package gala
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -700,4 +701,102 @@ func TestTask_NilTask(t *testing.T) {
 	}
 
 	assertEventOrder(t, events, "server:start", "server:stop")
+}
+
+// deadlineServer records the deadline of the context passed to Stop.
+// deadlineServer 记录传给 Stop 的 context 的截止时间。
+type deadlineServer struct {
+	started  chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	deadline atomic.Value
+}
+
+func (s *deadlineServer) Start(context.Context) error {
+	close(s.started)
+	<-s.stopCh
+	return nil
+}
+
+func (s *deadlineServer) Stop(ctx context.Context) error {
+	if d, ok := ctx.Deadline(); ok {
+		s.deadline.Store(d)
+	}
+	s.stopOnce.Do(func() { close(s.stopCh) })
+	return nil
+}
+
+func (s *deadlineServer) Health() bool { return true }
+
+func TestTask_StopErrorStillRunsAfterStop(t *testing.T) {
+	t.Parallel()
+
+	events := &eventLog{}
+	srv := newFakeServer(events)
+	task := &fakeTask{
+		name:    "bad",
+		events:  events,
+		started: make(chan struct{}),
+		stopErr: errors.New("stop failed"),
+	}
+	var afterRan atomic.Bool
+	app := New(
+		WithServers(srv),
+		WithTasks(task),
+		AfterStop(func(context.Context) error {
+			afterRan.Store(true)
+			return nil
+		}),
+	)
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, task.started, "task to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err == nil || !strings.Contains(err.Error(), "stop failed") {
+		t.Fatalf("Run() error = %v, want the task stop error", err)
+	}
+	if !afterRan.Load() {
+		t.Fatal("AfterStop hook was skipped after a task stop error")
+	}
+}
+
+func TestTask_ServerStopContextKeepsCallerDeadline(t *testing.T) {
+	t.Parallel()
+
+	deadline := time.Now().Add(time.Minute)
+	base, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	events := &eventLog{}
+	srv := &deadlineServer{started: make(chan struct{}), stopCh: make(chan struct{})}
+	task := &fakeTask{name: "ok", events: events}
+
+	app := New(
+		WithContext(base),
+		WithServers(srv),
+		WithTasks(task),
+	)
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+
+	waitForSignal(t, srv.started, "server to start")
+	if err := app.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := waitRun(t, runErr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got, ok := srv.deadline.Load().(time.Time)
+	if !ok || got.IsZero() {
+		t.Fatal("server Stop context lost the caller deadline")
+	}
+	if !got.Equal(deadline) {
+		t.Fatalf("server Stop deadline = %v, want %v", got, deadline)
+	}
 }

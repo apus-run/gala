@@ -274,6 +274,15 @@ func (l *Lock) Unlock(ctx context.Context) error {
 		return fmt.Errorf("dlock/gorm: release lock %q: %w", l.lockName, res.Error)
 	}
 	if res.RowsAffected == 0 {
+		// The lease is expired (or already gone): it is not held anymore.
+		// Best-effort delete an expired row that still carries our token, so
+		// an abandoned lock does not accumulate forever; the token predicate
+		// guarantees we never touch another owner's row.
+		// 租约已过期（或已消失）：不再持有。尽力删除仍带本令牌的过期行，避免废弃
+		// 锁永久堆积；令牌条件保证不会碰到其他持有者的行。
+		_ = l.db.WithContext(ctx).
+			Where("name = ? AND token = ?", l.lockName, l.token).
+			Delete(&GORMLock{}).Error
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockName)
 	}
 	return nil

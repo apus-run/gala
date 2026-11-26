@@ -666,3 +666,45 @@ func TestLeasePerJobKeyIndependence(t *testing.T) {
 		}
 	}
 }
+
+// testPanickingProvider panics on purpose | testPanickingProvider 故意 panic。
+func testPanickingProvider(t *testing.T) LockerProvider {
+	t.Helper()
+	return func(context.Context, string) (taskcontract.Locker, error) {
+		panic("provider boom")
+	}
+}
+
+func TestLeaseProviderPanicIsRecovered(t *testing.T) {
+	r := NewRegistry(WithLockerProvider(testPanickingProvider(t)))
+	if err := r.Register("boom", func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	err := r.Run(context.Background(), Invocation{Name: "boom"})
+	var panicErr *PanicError
+	if !errors.As(err, &panicErr) || panicErr.Value != "provider boom" {
+		t.Fatalf("Run() error = %v, want *PanicError provider boom", err)
+	}
+}
+
+type panickingUnlockLocker struct{}
+
+func (panickingUnlockLocker) Lock(context.Context) error    { return nil }
+func (panickingUnlockLocker) Refresh(context.Context) error { return nil }
+func (panickingUnlockLocker) Unlock(context.Context) error  { panic("unlock boom") }
+
+func TestLeaseLockerPanicIsRecovered(t *testing.T) {
+	r := NewRegistry(WithLockerProvider(func(context.Context, string) (taskcontract.Locker, error) {
+		return panickingUnlockLocker{}, nil
+	}))
+	if err := r.Register("boom", func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	err := r.Run(context.Background(), Invocation{Name: "boom"})
+	var panicErr *PanicError
+	if !errors.As(err, &panicErr) || panicErr.Value != "unlock boom" {
+		t.Fatalf("Run() error = %v, want *PanicError unlock boom", err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -129,7 +130,7 @@ func (r *Registry) runWithLease(ctx context.Context, inv Invocation, fn Func, pr
 	// provider 与 Lock 各自使用独立的限时 context，慢 provider 不会占用获取租约的
 	// 时间预算。
 	resolveCtx, cancelResolve := context.WithTimeout(ctx, lc.acquireTimeout)
-	locker, err := provider(resolveCtx, inv.Name)
+	locker, err := callProvider(resolveCtx, provider, inv.Name)
 	cancelResolve()
 	if err != nil {
 		return fmt.Errorf("job: resolve lease for %q: %w", inv.Name, err)
@@ -141,7 +142,7 @@ func (r *Registry) runWithLease(ctx context.Context, inv Invocation, fn Func, pr
 	}
 
 	acquireCtx, cancelAcquire := context.WithTimeout(ctx, lc.acquireTimeout)
-	lockErr := locker.Lock(acquireCtx)
+	lockErr := callLocker(func() error { return locker.Lock(acquireCtx) })
 	cancelAcquire()
 	if lockErr != nil {
 		return fmt.Errorf("job: acquire lease for %q: %w", inv.Name, lockErr)
@@ -218,8 +219,35 @@ func (r *Registry) runWithLease(ctx context.Context, inv Invocation, fn Func, pr
 	refresher.Wait()
 
 	unlockCtx, cancelUnlock := context.WithTimeout(base, lc.acquireTimeout)
-	unlockErr := locker.Unlock(unlockCtx)
+	unlockErr := callLocker(func() error { return locker.Unlock(unlockCtx) })
 	cancelUnlock()
 
 	return errors.Join(jobErr, refreshErr, unlockErr)
+}
+
+// callProvider invokes the user-supplied LockerProvider with the same panic
+// recovery as a job body, so a misconfigured provider cannot crash an HTTP or
+// CLI invocation. A panic is returned as a *PanicError.
+// callProvider 以与任务体相同的 panic 恢复调用用户提供的 LockerProvider，因此
+// 配置错误的 provider 不会拖垮 HTTP 或 CLI 调用。panic 以 *PanicError 返回。
+func callProvider(ctx context.Context, provider LockerProvider, name string) (locker taskcontract.Locker, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			locker, err = nil, &PanicError{Value: v, Stack: debug.Stack()}
+		}
+	}()
+
+	return provider(ctx, name)
+}
+
+// callLocker runs one Locker method with the same panic recovery.
+// callLocker 以相同的 panic 恢复执行一个 Locker 方法。
+func callLocker(fn func() error) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = &PanicError{Value: v, Stack: debug.Stack()}
+		}
+	}()
+
+	return fn()
 }

@@ -219,9 +219,24 @@ type Cron struct {
 // finished.
 // shutdownCycle 是一个排空并释放的周期：其等待者排空循环与在途任务，然后释放
 // 所有租约，完成时关闭 done。
+// newShutdownCycle arms a cycle with its done and releaseErr channels.
+// newShutdownCycle 创建一个带 done 与 releaseErr 通道的周期。
+func newShutdownCycle() *shutdownCycle {
+	return &shutdownCycle{
+		done:       make(chan struct{}),
+		releaseErr: make(chan error, 1),
+	}
+}
+
 type shutdownCycle struct {
 	once sync.Once
 	done chan struct{}
+	// releaseErr holds the lease-release error of this cycle, if any, so a
+	// Shutdown can report that some leases may still be held instead of
+	// claiming a clean stop.
+	// releaseErr 保存本周期租约释放的错误（若有），使 Shutdown 能报告可能仍被
+	// 持有的租约，而不是声称干净停止。
+	releaseErr chan error
 }
 
 // New create a new Cron struct with default tick interval of 1 minute
@@ -239,7 +254,7 @@ func New(opts ...Option) *Cron {
 		jobs:     map[string]*job{},
 		leases:   map[string]*jobLease{},
 		onPanic:  defaultPanicHandler,
-		shutdown: &shutdownCycle{done: make(chan struct{})},
+		shutdown: newShutdownCycle(),
 	}
 
 	for _, opt := range opts {
@@ -578,12 +593,12 @@ func (c *Cron) Shutdown(ctx context.Context) error {
 	// 周期可以再次等待同一组 WaitGroup。
 	s := c.shutdown
 	if s == nil {
-		s = &shutdownCycle{done: make(chan struct{})}
+		s = newShutdownCycle()
 		c.shutdown = s
 	}
 	select {
 	case <-s.done:
-		s = &shutdownCycle{done: make(chan struct{})}
+		s = newShutdownCycle()
 		c.shutdown = s
 	default:
 	}
@@ -596,13 +611,16 @@ func (c *Cron) Shutdown(ctx context.Context) error {
 			c.loops.Wait()    // no more jobs will be dispatched after this | 此后不再分发新任务。
 			c.inflight.Wait() // wait for the already dispatched ones | 等已分发的任务结束。
 
-			c.releaseAllLeases()
+			if err := c.releaseAllLeases(); err != nil {
+				s.releaseErr <- fmt.Errorf("cron: shutdown release: %w", err)
+			}
+			close(s.releaseErr)
 		}()
 	})
 
 	select {
 	case <-s.done:
-		return nil
+		return s.releaseError()
 	case <-ctx.Done():
 	}
 
@@ -610,7 +628,7 @@ func (c *Cron) Shutdown(ctx context.Context) error {
 	// 两者同时就绪时，优先返回已排空的结果。
 	select {
 	case <-s.done:
-		return nil
+		return s.releaseError()
 	default:
 		return ctx.Err()
 	}
@@ -796,4 +814,17 @@ func (c *Cron) execute(f fire) {
 	}
 
 	j.run()
+}
+
+// releaseError returns the release error recorded by this cycle, if any.
+// releaseError 返回本周期记录的释放错误（若有）。
+func (s *shutdownCycle) releaseError() error {
+	select {
+	case err, ok := <-s.releaseErr:
+		if ok && err != nil {
+			return err
+		}
+	default:
+	}
+	return nil
 }

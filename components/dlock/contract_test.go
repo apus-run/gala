@@ -3,23 +3,28 @@ package dlock_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/glebarez/sqlite"
 	goredis "github.com/redis/go-redis/v9"
+	gormio "gorm.io/gorm"
 
 	"github.com/apus-run/gala/components/dlock"
+	dlockgorm "github.com/apus-run/gala/components/dlock/gorm"
 	"github.com/apus-run/gala/components/dlock/redis"
 )
 
 // TestLockerContract runs the same behaviour checks against every backend
 // that can run without an external service and provides real exclusivity.
-// noop is deliberately excluded (it always succeeds); etcd, SQL, Consul and
-// MongoDB need their real services and are not exercised here (see README).
+// noop is deliberately excluded (it always succeeds); etcd, Consul and
+// MongoDB need their real services and are not exercised here (see README);
+// gorm runs on pure-Go SQLite.
 // TestLockerContract 对无需外部服务且提供真实排他性的后端执行同一组行为检查。
-// noop 故意排除（它永远成功）；etcd、SQL、Consul、MongoDB 需要真实服务，这里
-// 不覆盖（见 README）。
+// noop 故意排除（它永远成功）；etcd、Consul、MongoDB 需要真实服务，这里不覆盖
+// （见 README）；gorm 使用纯 Go 的 SQLite。
 func TestLockerContract(t *testing.T) {
 	backends := []struct {
 		name   string
@@ -32,6 +37,23 @@ func TestLockerContract(t *testing.T) {
 				rdb := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
 				t.Cleanup(func() { _ = rdb.Close() })
 				return redis.NewClient(rdb)
+			},
+		},
+		{
+			name: "gorm",
+			client: func(t *testing.T) dlock.Client {
+				db, err := gormio.Open(
+					sqlite.Open(filepath.Join(t.TempDir(), "locks.db")),
+					&gormio.Config{TranslateError: true},
+				)
+				if err != nil {
+					t.Fatalf("gorm.Open() error = %v", err)
+				}
+				client := dlockgorm.NewClient(db)
+				if err := client.Init(context.Background()); err != nil {
+					t.Fatalf("Init() error = %v", err)
+				}
+				return client
 			},
 		},
 	}

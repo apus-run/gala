@@ -48,14 +48,29 @@ func (r *Registry) RunCLI(ctx context.Context, args []string, stdin io.Reader) e
 		return fmt.Errorf("%w: --job is required", ErrEmptyName)
 	}
 
+	// Reject an unknown job before reading stdin: a typo must not consume (or
+	// buffer) the piped input only to fail with ErrNotFound.
+	// 读取 stdin 之前先拒绝未知任务：拼错任务名不应先消费（并缓冲）管道输入再
+	// 返回 ErrNotFound。
+	if !r.has(name) {
+		return fmt.Errorf("%w: %q", ErrNotFound, name)
+	}
+
 	inv := Invocation{Name: name}
 
 	switch {
 	case data == "-":
 		if stdin != nil {
-			payload, err := io.ReadAll(stdin)
+			// Cap the payload like the HTTP adapter does, so a large stream
+			// cannot exhaust memory.
+			// 与 HTTP 适配器一样限制 payload 大小，避免大输入耗尽内存。
+			limited := io.LimitReader(stdin, defaultMaxBodyBytes+1)
+			payload, err := io.ReadAll(limited)
 			if err != nil {
 				return fmt.Errorf("job: read stdin: %w", err)
+			}
+			if int64(len(payload)) > defaultMaxBodyBytes {
+				return fmt.Errorf("job: stdin payload exceeds %d bytes", defaultMaxBodyBytes)
 			}
 			inv.Payload = payload
 		}

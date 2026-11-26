@@ -188,6 +188,12 @@ func (l *Lock) Unlock(ctx context.Context) error {
 	}, writeOpts(cleanupCtx))
 	if err != nil {
 		if owned, ownErr := l.ownsLock(cleanupCtx); ownErr == nil && !owned {
+			// The key is no longer ours. Destroy our still-live session too,
+			// otherwise it lingers until the session TTL with nothing able to
+			// clean it up.
+			// key 已不属于我们。仍然要销毁还活着的 session，否则它会留到 session
+			// TTL 到期，且之后没有任何途径清理。
+			l.destroySession(l.sessionID)
 			l.held = false
 			l.sessionID = ""
 			return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
