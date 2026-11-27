@@ -2,6 +2,7 @@ package gorm_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -172,5 +173,54 @@ func TestLockUsesFreshClockForExtendAfterSlowRead(t *testing.T) {
 			"extend wrote an expired lease: ExpiredAt=%s now=%s lockTimeout=%s",
 			row.ExpiredAt, time.Now(), lockTimeout,
 		)
+	}
+}
+
+func TestExpiredWriteResponse(t *testing.T) {
+	const ttl = 100 * time.Millisecond
+	for _, operation := range []string{"insert", "extend", "takeover", "refresh"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx := t.Context()
+			db, err := gormio.Open(sqlite.Open(filepath.Join(t.TempDir(), "locks.db")), &gormio.Config{TranslateError: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := dlockgorm.Init(ctx, db); err != nil {
+				t.Fatal(err)
+			}
+			locker, err := dlockgorm.NewLock(ctx, db, dlock.WithLockTimeout(ttl))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operation == "takeover" {
+				err = db.Create(&dlockgorm.GORMLock{Name: dlock.DefaultLockName, Token: "old", ExpiredAt: time.Now().Add(-time.Minute)}).Error
+			} else if operation != "insert" {
+				err = locker.Lock(ctx)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			callback := db.Callback().Update()
+			if operation == "insert" {
+				callback = db.Callback().Create()
+			}
+			delayed := false
+			if err := callback.After("gorm:commit_or_rollback_transaction").Register("test:delay_reply", func(tx *gormio.DB) {
+				if tx.Error == nil && tx.RowsAffected == 1 {
+					delayed = true
+					time.Sleep(ttl)
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if operation == "refresh" {
+				err = locker.Refresh(ctx)
+			} else {
+				err = locker.Lock(ctx)
+			}
+			if !delayed || !errors.Is(err, dlock.ErrLockNotHeld) {
+				t.Fatalf("delayed = %v, error = %v, want successful write followed by ErrLockNotHeld", delayed, err)
+			}
+		})
 	}
 }

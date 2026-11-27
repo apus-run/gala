@@ -44,11 +44,11 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sync"
 	"time"
 
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/apus-run/gala/components/dlock"
 	"github.com/apus-run/gala/components/dlock/internal/cleanup"
@@ -65,7 +65,7 @@ type Lock struct {
 	operationTimeout time.Duration
 	token            string
 
-	mu      sync.Mutex
+	mu      *semaphore.Weighted
 	leaseID clientv3.LeaseID
 	held    bool
 	closed  bool
@@ -94,6 +94,7 @@ func NewLock(_ context.Context, cli *clientv3.Client, opts ...dlock.Option) (*Lo
 	}
 
 	return &Lock{
+		mu:               semaphore.NewWeighted(1),
 		cli:              cli,
 		lease:            clientv3.NewLease(cli),
 		lockKey:          o.LockName,
@@ -103,17 +104,30 @@ func NewLock(_ context.Context, cli *clientv3.Client, opts ...dlock.Option) (*Lo
 	}, nil
 }
 
+// enter serializes lease operations within their deadline. A closed locker
+// reports ErrClosed even if the caller has already canceled its context.
+func (l *Lock) enter(ctx context.Context) error {
+	if !l.mu.TryAcquire(1) {
+		if err := l.mu.Acquire(ctx, 1); err != nil {
+			return err
+		}
+	}
+	if l.closed {
+		l.mu.Release(1)
+		return fmt.Errorf("%w: lock %q", dlock.ErrClosed, l.lockKey)
+	}
+	return nil
+}
+
 // Lock acquires the distributed lock | Lock 获取分布式锁。
 func (l *Lock) Lock(ctx context.Context) error {
 	ctx, cancel := opctx.WithTimeout(ctx, l.operationTimeout)
 	defer cancel()
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.closed {
-		return fmt.Errorf("%w: lock %q", dlock.ErrClosed, l.lockKey)
+	if err := l.enter(ctx); err != nil {
+		return err
 	}
+	defer l.mu.Release(1)
 
 	// A second Lock on the same Locker is idempotent while its lease lives and
 	// the key still carries this Locker's token.
@@ -171,21 +185,19 @@ func (l *Lock) Lock(ctx context.Context) error {
 
 // Unlock releases the distributed lock | Unlock 释放分布式锁。
 func (l *Lock) Unlock(ctx context.Context) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.closed {
-		return fmt.Errorf("%w: lock %q", dlock.ErrClosed, l.lockKey)
-	}
-	if !l.held {
-		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
-	}
-
 	// Release is cleanup: a canceled caller context must not leave the lease
 	// behind.
 	// 释放属于清理：调用方 ctx 取消不应让租约留下。
 	cleanupCtx, cancel := cleanup.Context(ctx)
 	defer cancel()
+
+	if err := l.enter(cleanupCtx); err != nil {
+		return err
+	}
+	defer l.mu.Release(1)
+	if !l.held {
+		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
+	}
 
 	// A live lease does not prove the key still belongs to this Locker: an old
 	// binary or an operator may have deleted or replaced it. Check ownership
@@ -230,12 +242,10 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	ctx, cancel := opctx.WithTimeout(ctx, l.operationTimeout)
 	defer cancel()
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.closed {
-		return fmt.Errorf("%w: lock %q", dlock.ErrClosed, l.lockKey)
+	if err := l.enter(ctx); err != nil {
+		return err
 	}
+	defer l.mu.Release(1)
 	if !l.held {
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
 	}
@@ -275,13 +285,13 @@ func (l *Lock) Refresh(ctx context.Context) error {
 // Close 释放 NewLock 创建的 lease client，可重复调用。Close 不会撤销仍持有的
 // 租约：先调用 Unlock，或等待租约自然过期。
 func (l *Lock) Close() error {
-	l.mu.Lock()
+	_ = l.mu.Acquire(context.Background(), 1)
 	if l.closed {
-		l.mu.Unlock()
+		l.mu.Release(1)
 		return nil
 	}
 	l.closed = true
-	l.mu.Unlock()
+	l.mu.Release(1)
 
 	return l.lease.Close()
 }
@@ -293,14 +303,13 @@ func (l *Lock) ownsKey(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(resp.Kvs) == 1 && string(resp.Kvs[0].Value) == l.token, nil
+	return len(resp.Kvs) == 1 && string(resp.Kvs[0].Value) == l.token &&
+		resp.Kvs[0].Lease == int64(l.leaseID), nil
 }
 
-// discardLease revokes a lease that was granted but never used, without
-// letting a cancelled caller context prevent the cleanup.
-// discardLease 撤销已申请但未使用的租约；调用方 ctx 已取消也要完成清理。
+// discardLease uses the remaining operation budget. An unreclaimed lease expires by TTL.
 func (l *Lock) discardLease(ctx context.Context, id clientv3.LeaseID) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	_, _ = l.lease.Revoke(ctx, id)
 }

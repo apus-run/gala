@@ -12,11 +12,6 @@ import (
 type Client struct {
 	client     *mongo.Client
 	collection *mongo.Collection
-	// index is shared by every Locker this client creates, so the fail-closed
-	// index check runs once per client instead of once per Run.
-	// index 由该 client 创建的所有 Locker 共享，使 fail-closed 索引校验每个
-	// client 只执行一次，而不是每个 Run 一次。
-	index *indexCache
 }
 
 // Ensure Client implements dlock.Client and the optional dlock.Initializer |
@@ -39,7 +34,6 @@ func NewClient(cli *mongo.Client, collection *mongo.Collection) *Client {
 	return &Client{
 		client:     cli,
 		collection: collection,
-		index:      &indexCache{},
 	}
 }
 
@@ -47,7 +41,7 @@ func NewClient(cli *mongo.Client, collection *mongo.Collection) *Client {
 // call Init once before first use.
 // NewLock 构建基于 MongoDB 的 Locker。这里不建索引：首次使用前调用一次 Init。
 func (cli *Client) NewLock(ctx context.Context, opts ...dlock.Option) (dlock.Locker, error) {
-	locker, err := newLock(cli.collection, cli.index, opts...)
+	locker, err := NewLock(ctx, cli.client, cli.collection, opts...)
 	if err != nil {
 		// Return an untyped nil so callers never receive a non-nil interface
 		// wrapping a nil *Lock.

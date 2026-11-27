@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,5 +80,44 @@ func TestLockTakeoverInvalidatesOldOwner(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("rows after unlock = %d, want 0", count)
+	}
+}
+
+func TestExpiredCleanupPreservesReacquiredLease(t *testing.T) {
+	ctx := t.Context()
+	db, err := gormio.Open(sqlite.Open(filepath.Join(t.TempDir(), "locks.db")), &gormio.Config{TranslateError: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dlockgorm.Init(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	locker, err := dlockgorm.NewLock(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := locker.Lock(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&dlockgorm.GORMLock{}).Where("name = ?", dlock.DefaultLockName).
+		Update("expired_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	if err := db.Callback().Delete().After("gorm:commit_or_rollback_transaction").Register("test:reacquire", func(tx *gormio.DB) {
+		if tx.Error == nil && tx.RowsAffected == 0 {
+			once.Do(func() { err = locker.Lock(ctx) })
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if releaseErr := locker.Unlock(ctx); !errors.Is(releaseErr, dlock.ErrLockNotHeld) {
+		t.Fatalf("expired Unlock() = %v", releaseErr)
+	}
+	if err != nil {
+		t.Fatalf("reacquire = %v", err)
+	}
+	if err := locker.Refresh(ctx); err != nil {
+		t.Fatalf("reacquired lease lost during cleanup: %v", err)
 	}
 }

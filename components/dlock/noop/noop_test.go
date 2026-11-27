@@ -36,7 +36,7 @@ func TestClientNewLock(t *testing.T) {
 }
 
 func TestNewLockValidation(t *testing.T) {
-	if _, err := noop.NewLock(context.Background(), dlock.WithLockName("")); err == nil {
+	if l, err := noop.NewClient().NewLock(t.Context(), dlock.WithLockName("")); err == nil || l != nil {
 		t.Fatal("NewLock(empty name) error = nil, want validation error")
 	}
 }

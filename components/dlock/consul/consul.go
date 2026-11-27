@@ -37,10 +37,10 @@ package consul
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/apus-run/gala/components/dlock"
 	"github.com/apus-run/gala/components/dlock/internal/cleanup"
@@ -62,7 +62,7 @@ type Lock struct {
 	operationTimeout time.Duration
 	token            string
 
-	mu        sync.Mutex
+	mu        *semaphore.Weighted
 	sessionID string
 	held      bool
 }
@@ -93,6 +93,7 @@ func NewLock(_ context.Context, client *api.Client, opts ...dlock.Option) (*Lock
 	}
 
 	return &Lock{
+		mu:               semaphore.NewWeighted(1),
 		client:           client,
 		lockKey:          o.LockName,
 		lockTimeout:      o.LockTimeout,
@@ -106,8 +107,10 @@ func (l *Lock) Lock(ctx context.Context) error {
 	ctx, cancel := opctx.WithTimeout(ctx, l.operationTimeout)
 	defer cancel()
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if err := l.mu.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer l.mu.Release(1)
 
 	// A second Lock on the same Locker is idempotent while its session lives
 	// and the key is still bound to it.
@@ -131,7 +134,7 @@ func (l *Lock) Lock(ctx context.Context) error {
 		// entry: clean up the old session and re-acquire.
 		// session 消失、key 易主，或 Consul 对 404 返回 nil entry：清理旧 session
 		// 后继续走重新获取。
-		l.destroySession(l.sessionID)
+		l.destroySession(ctx, l.sessionID)
 		l.held = false
 		l.sessionID = ""
 	}
@@ -151,11 +154,11 @@ func (l *Lock) Lock(ctx context.Context) error {
 		Session: sessionID,
 	}, writeOpts(ctx))
 	if err != nil {
-		l.destroySession(sessionID)
+		l.destroySession(ctx, sessionID)
 		return fmt.Errorf("dlock/consul: acquire lock %q: %w", l.lockKey, err)
 	}
 	if !acquired {
-		l.destroySession(sessionID)
+		l.destroySession(ctx, sessionID)
 		if holder := l.holder(ctx); holder != "" {
 			return fmt.Errorf("%w: lock %q held by %q", dlock.ErrLocked, l.lockKey, holder)
 		}
@@ -169,18 +172,20 @@ func (l *Lock) Lock(ctx context.Context) error {
 
 // Unlock releases the distributed lock | Unlock 释放分布式锁。
 func (l *Lock) Unlock(ctx context.Context) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if !l.held {
-		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
-	}
-
 	// Release is cleanup: a canceled caller context must not leave the key
 	// bound to a session that will not be renewed.
 	// 释放属于清理：调用方 ctx 取消不应让 key 继续绑定在一个不再续期的 session 上。
 	cleanupCtx, cancel := cleanup.Context(ctx)
 	defer cancel()
+
+	if err := l.mu.Acquire(cleanupCtx, 1); err != nil {
+		return err
+	}
+	defer l.mu.Release(1)
+
+	if !l.held {
+		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
+	}
 
 	released, _, err := l.client.KV().Release(&api.KVPair{
 		Key:     l.lockKey,
@@ -193,7 +198,7 @@ func (l *Lock) Unlock(ctx context.Context) error {
 			// clean it up.
 			// key 已不属于我们。仍然要销毁还活着的 session，否则它会留到 session
 			// TTL 到期，且之后没有任何途径清理。
-			l.destroySession(l.sessionID)
+			l.destroySession(cleanupCtx, l.sessionID)
 			l.held = false
 			l.sessionID = ""
 			return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
@@ -223,8 +228,10 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	ctx, cancel := opctx.WithTimeout(ctx, l.operationTimeout)
 	defer cancel()
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if err := l.mu.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer l.mu.Release(1)
 
 	if !l.held {
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
@@ -234,7 +241,7 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	if renewErr != nil {
 		owned, ownErr := l.ownsLock(ctx)
 		if ownErr == nil && !owned {
-			l.lose()
+			l.lose(ctx)
 			return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
 		}
 		return fmt.Errorf("dlock/consul: refresh lock %q: %w", l.lockKey, renewErr)
@@ -244,7 +251,7 @@ func (l *Lock) Refresh(ctx context.Context) error {
 		// is gone, so a nil entry is a lost lock, not a successful renewal.
 		// session 消失后 Consul 返回 404：entry 为 nil 且 err 为 nil，这是丢锁
 		// 而不是续期成功。
-		l.lose()
+		l.lose(ctx)
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
 	}
 
@@ -256,7 +263,7 @@ func (l *Lock) Refresh(ctx context.Context) error {
 		return fmt.Errorf("dlock/consul: verify lock %q: %w", l.lockKey, ownErr)
 	}
 	if !owned {
-		l.lose()
+		l.lose(ctx)
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockKey)
 	}
 	return nil
@@ -265,22 +272,16 @@ func (l *Lock) Refresh(ctx context.Context) error {
 // lose clears the local state and destroys a session that no longer protects
 // the key, so a lost lock does not strand a Consul session for its full TTL.
 // lose 清理本地状态并销毁已不再保护 key 的 session，避免丢锁后把 session 留到 TTL。
-func (l *Lock) lose() {
+func (l *Lock) lose(ctx context.Context) {
 	if l.sessionID != "" {
-		l.destroySession(l.sessionID)
+		l.destroySession(ctx, l.sessionID)
 	}
 	l.held = false
 	l.sessionID = ""
 }
 
-// destroySession cleans up a session that failed to acquire the key or no
-// longer protects it. It always finishes even when the caller context is
-// cancelled, bounded by a 5s timeout.
-// destroySession 清理抢占失败或已不再保护 key 的 session；调用方 ctx 取消也要
-// 完成，最多等待 5s。
-func (l *Lock) destroySession(sessionID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+// destroySession spends only the remaining operation budget. TTL handles a failed cleanup.
+func (l *Lock) destroySession(ctx context.Context, sessionID string) {
 	_, _ = l.client.Session().Destroy(sessionID, writeOpts(ctx))
 }
 

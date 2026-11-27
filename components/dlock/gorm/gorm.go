@@ -50,6 +50,7 @@ import (
 
 	"github.com/apus-run/gala/components/dlock"
 	"github.com/apus-run/gala/components/dlock/internal/cleanup"
+	"github.com/apus-run/gala/components/dlock/internal/expiry"
 	"github.com/apus-run/gala/components/dlock/internal/opctx"
 	"github.com/apus-run/gala/components/dlock/internal/token"
 )
@@ -150,24 +151,17 @@ func (l *Lock) Lock(ctx context.Context) error {
 	defer cancel()
 
 	for range 2 {
-		// Use one clock reading per attempt for the insert, the liveness check
-		// and the version CAS predicate. Reusing a reading from before a slow
-		// store round trip would shorten the new lease, or even write an
-		// already-expired lease on the retry.
-		// 每次尝试使用同一个时钟读数，供插入、存活判断与 version CAS 条件共用。
-		// 若复用慢速存储往返之前的读数，会缩短新租约，甚至在重试时写入已过期的
-		// 租约。
-		now := time.Now()
+		deadline := expiry.Deadline(time.Now(), l.lockTimeout)
 
 		err := l.db.WithContext(ctx).Create(&GORMLock{
 			Name:      l.lockName,
 			OwnerID:   l.ownerID,
 			Token:     l.token,
 			Version:   1,
-			ExpiredAt: now.Add(l.lockTimeout),
+			ExpiredAt: deadline,
 		}).Error
 		if err == nil {
-			return nil
+			return expiry.Check(l.lockName, deadline)
 		}
 		if !isDuplicateEntry(err) {
 			return fmt.Errorf("dlock/gorm: acquire lock %q: %w", l.lockName, err)
@@ -209,6 +203,7 @@ func (l *Lock) takeOver(ctx context.Context) (done bool, err error) {
 	// 在读出行之后再取时钟：此前的插入尝试可能在存储中耗时很久，复用它之前的
 	// 读数会缩短（甚至写过期）extend/take-over 更新所写的租约。
 	now := time.Now()
+	deadline := expiry.Deadline(now, l.lockTimeout)
 
 	// Retry-friendly: this Locker already owns the row, extend its TTL.
 	// 重试友好：本 Locker 已持有该行，延长 TTL 即可。
@@ -216,7 +211,7 @@ func (l *Lock) takeOver(ctx context.Context) (done bool, err error) {
 		res := db.Model(&GORMLock{}).
 			Where("name = ? AND token = ?", l.lockName, l.token).
 			Updates(map[string]any{
-				"expired_at": now.Add(l.lockTimeout),
+				"expired_at": deadline,
 				"version":    gorm.Expr("version + 1"),
 			})
 		if res.Error != nil {
@@ -230,7 +225,7 @@ func (l *Lock) takeOver(ctx context.Context) (done bool, err error) {
 			// 报告竞争。
 			return false, nil
 		}
-		return true, nil
+		return true, expiry.Check(l.lockName, deadline)
 	}
 
 	if now.Before(current.ExpiredAt) {
@@ -243,7 +238,7 @@ func (l *Lock) takeOver(ctx context.Context) (done bool, err error) {
 			"owner_id":   l.ownerID,
 			"token":      l.token,
 			"version":    gorm.Expr("version + 1"),
-			"expired_at": now.Add(l.lockTimeout),
+			"expired_at": deadline,
 		})
 	if res.Error != nil {
 		return true, fmt.Errorf("dlock/gorm: take over lock %q: %w", l.lockName, res.Error)
@@ -251,7 +246,7 @@ func (l *Lock) takeOver(ctx context.Context) (done bool, err error) {
 	if res.RowsAffected == 0 {
 		return true, fmt.Errorf("%w: lock %q", dlock.ErrLocked, l.lockName)
 	}
-	return true, nil
+	return true, expiry.Check(l.lockName, deadline)
 }
 
 // Unlock releases the distributed lock | Unlock 释放分布式锁。
@@ -281,7 +276,7 @@ func (l *Lock) Unlock(ctx context.Context) error {
 		// 租约已过期（或已消失）：不再持有。尽力删除仍带本令牌的过期行，避免废弃
 		// 锁永久堆积；令牌条件保证不会碰到其他持有者的行。
 		_ = l.db.WithContext(ctx).
-			Where("name = ? AND token = ?", l.lockName, l.token).
+			Where("name = ? AND token = ? AND expired_at <= ?", l.lockName, l.token, now).
 			Delete(&GORMLock{}).Error
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockName)
 	}
@@ -294,12 +289,13 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	defer cancel()
 
 	now := time.Now()
+	deadline := expiry.Deadline(now, l.lockTimeout)
 
 	res := l.db.WithContext(ctx).
 		Model(&GORMLock{}).
 		Where("name = ? AND token = ? AND expired_at > ?", l.lockName, l.token, now).
 		Updates(map[string]any{
-			"expired_at": now.Add(l.lockTimeout),
+			"expired_at": deadline,
 			// Incrementing the version guarantees a changed row, so MySQL's
 			// "rows affected" cannot report zero for an unchanged timestamp.
 			// 版本递增保证行确有变化，避免 MySQL 因时间戳未变而返回 0 行。
@@ -311,7 +307,7 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	if res.RowsAffected == 0 {
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockName)
 	}
-	return nil
+	return expiry.Check(l.lockName, deadline)
 }
 
 // isDuplicateEntry reports whether err is a unique-key violation on MySQL,

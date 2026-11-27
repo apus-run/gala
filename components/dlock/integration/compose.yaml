@@ -1,0 +1,61 @@
+services:
+  redis:
+    tmpfs: ["/data"]
+    image: redis:7
+    ports: ["127.0.0.1::6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 40
+  mysql:
+    tmpfs: ["/var/lib/mysql"]
+    image: mysql:8
+    environment:
+      MYSQL_DATABASE: dlock
+      MYSQL_USER: dlock
+      MYSQL_PASSWORD: dlock
+      MYSQL_ROOT_PASSWORD: integration-only
+    ports: ["127.0.0.1::3306"]
+    healthcheck:
+      test: ["CMD", "mysql", "-h127.0.0.1", "-udlock", "-pdlock", "dlock", "-e", "SELECT 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  postgres:
+    tmpfs: ["/var/lib/postgresql/data"]
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dlock
+      POSTGRES_PASSWORD: dlock
+      POSTGRES_DB: dlock
+    ports: ["127.0.0.1::5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "dlock", "-d", "dlock"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  mongo:
+    tmpfs: ["/data/db"]
+    image: mongo:7
+    ports: ["127.0.0.1::27017"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+  etcd:
+    tmpfs: ["/etcd-data"]
+    image: quay.io/coreos/etcd:v3.5.15
+    command: ["/usr/local/bin/etcd", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://etcd:2379"]
+    ports: ["127.0.0.1::2379"]
+  consul:
+    tmpfs: ["/consul/data"]
+    image: hashicorp/consul:1.19
+    command: ["agent", "-dev", "-client=0.0.0.0"]
+    ports: ["127.0.0.1::8500"]
+    healthcheck:
+      test: ["CMD", "consul", "operator", "raft", "list-peers"]
+      interval: 2s
+      timeout: 3s
+      retries: 40

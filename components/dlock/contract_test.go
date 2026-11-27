@@ -26,22 +26,32 @@ import (
 // noop 故意排除（它永远成功）；etcd、Consul、MongoDB 需要真实服务，这里不覆盖
 // （见 README）；gorm 使用纯 Go 的 SQLite。
 func TestLockerContract(t *testing.T) {
+	const lockName = "contract"
+	const ttl = time.Minute
+	type fixture struct {
+		client dlock.Client
+		expire func(t *testing.T)
+	}
+
 	backends := []struct {
-		name   string
-		client func(t *testing.T) dlock.Client
+		name  string
+		setup func(t *testing.T) fixture
 	}{
 		{
 			name: "redis",
-			client: func(t *testing.T) dlock.Client {
+			setup: func(t *testing.T) fixture {
 				srv := miniredis.RunT(t)
 				rdb := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
 				t.Cleanup(func() { _ = rdb.Close() })
-				return redis.NewClient(rdb)
+				return fixture{
+					client: redis.NewClient(rdb),
+					expire: func(t *testing.T) { srv.FastForward(ttl) },
+				}
 			},
 		},
 		{
 			name: "gorm",
-			client: func(t *testing.T) dlock.Client {
+			setup: func(t *testing.T) fixture {
 				db, err := gormio.Open(
 					sqlite.Open(filepath.Join(t.TempDir(), "locks.db")),
 					&gormio.Config{TranslateError: true},
@@ -53,7 +63,17 @@ func TestLockerContract(t *testing.T) {
 				if err := client.Init(context.Background()); err != nil {
 					t.Fatalf("Init() error = %v", err)
 				}
-				return client
+				return fixture{
+					client: client,
+					expire: func(t *testing.T) {
+						t.Helper()
+						result := db.Model(&dlockgorm.GORMLock{}).Where("name = ?", lockName).
+							Update("expired_at", time.Now().Add(-time.Second))
+						if result.Error != nil || result.RowsAffected != 1 {
+							t.Fatalf("expire lease: error = %v, rows = %d", result.Error, result.RowsAffected)
+						}
+					},
+				}
 			},
 		},
 	}
@@ -61,13 +81,13 @@ func TestLockerContract(t *testing.T) {
 	for _, backend := range backends {
 		t.Run(backend.name, func(t *testing.T) {
 			ctx := context.Background()
-			client := backend.client(t)
+			store := backend.setup(t)
 
 			newLocker := func(t *testing.T, owner string) dlock.Locker {
 				t.Helper()
-				locker, err := client.NewLock(ctx,
-					dlock.WithLockName("contract"),
-					dlock.WithLockTimeout(time.Minute),
+				locker, err := store.client.NewLock(ctx,
+					dlock.WithLockName(lockName),
+					dlock.WithLockTimeout(ttl),
 					dlock.WithOwnerID(owner),
 				)
 				if err != nil {
@@ -108,6 +128,29 @@ func TestLockerContract(t *testing.T) {
 
 			if err := second.Lock(ctx); err != nil {
 				t.Fatalf("second Lock() after release error = %v", err)
+			}
+
+			store.expire(t)
+			if err := second.Refresh(ctx); !errors.Is(err, dlock.ErrLockNotHeld) {
+				t.Fatalf("Refresh() after expiry, before takeover = %v, want ErrLockNotHeld", err)
+			}
+
+			successor := newLocker(t, "owner-b")
+			if err := successor.Lock(ctx); err != nil {
+				t.Fatalf("same-owner successor Lock() after expiry = %v", err)
+			}
+			if err := second.Refresh(ctx); !errors.Is(err, dlock.ErrLockNotHeld) {
+				t.Fatalf("stale Refresh() after takeover = %v, want ErrLockNotHeld", err)
+			}
+			if err := second.Unlock(ctx); !errors.Is(err, dlock.ErrLockNotHeld) {
+				t.Fatalf("stale Unlock() after takeover = %v, want ErrLockNotHeld", err)
+			}
+			if err := successor.Refresh(ctx); err != nil {
+				t.Fatalf("successor Refresh() after stale operations = %v", err)
+			}
+			store.expire(t)
+			if err := successor.Unlock(ctx); !errors.Is(err, dlock.ErrLockNotHeld) {
+				t.Fatalf("Unlock() after expiry, before takeover = %v, want ErrLockNotHeld", err)
 			}
 		})
 	}

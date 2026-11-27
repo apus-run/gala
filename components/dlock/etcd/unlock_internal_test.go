@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/apus-run/gala/components/dlock"
 )
@@ -35,12 +37,14 @@ func (f *fakeUnlockLease) Revoke(context.Context, clientv3.LeaseID) (*clientv3.L
 func newUnlockTestLock(resp *clientv3.GetResponse, kvErr error) (*Lock, *fakeUnlockLease) {
 	lease := &fakeUnlockLease{}
 	l := &Lock{
-		cli:     &clientv3.Client{KV: fakeUnlockKV{resp: resp, err: kvErr}},
-		lease:   lease,
-		lockKey: "lock",
-		token:   "owner@token",
-		held:    true,
-		leaseID: 1,
+		mu:               semaphore.NewWeighted(1),
+		operationTimeout: time.Second,
+		cli:              &clientv3.Client{KV: fakeUnlockKV{resp: resp, err: kvErr}},
+		lease:            lease,
+		lockKey:          "lock",
+		token:            "owner@token",
+		held:             true,
+		leaseID:          1,
 	}
 	return l, lease
 }
@@ -50,7 +54,7 @@ func TestUnlockChecksKeyOwnership(t *testing.T) {
 
 	t.Run("owned key releases", func(t *testing.T) {
 		l, lease := newUnlockTestLock(&clientv3.GetResponse{
-			Kvs: []*mvccpb.KeyValue{{Key: []byte("lock"), Value: []byte("owner@token")}},
+			Kvs: []*mvccpb.KeyValue{{Key: []byte("lock"), Lease: 1, Value: []byte("owner@token")}},
 		}, nil)
 		if err := l.Unlock(ctx); err != nil {
 			t.Fatalf("Unlock() error = %v", err)
@@ -103,4 +107,44 @@ func TestUnlockChecksKeyOwnership(t *testing.T) {
 			t.Fatal("Unlock() dropped the lease after a transient read error")
 		}
 	})
+}
+
+func (f *fakeUnlockLease) KeepAliveOnce(context.Context, clientv3.LeaseID) (*clientv3.LeaseKeepAliveResponse, error) {
+	return &clientv3.LeaseKeepAliveResponse{TTL: 10}, nil
+}
+
+func TestSameValueWithWrongLease(t *testing.T) {
+	for _, leaseID := range []int64{0, 2} {
+		for _, operation := range []func(*Lock, context.Context) error{(*Lock).Refresh, (*Lock).Unlock} {
+			l, lease := newUnlockTestLock(&clientv3.GetResponse{
+				Kvs: []*mvccpb.KeyValue{{Value: []byte("owner@token"), Lease: leaseID}},
+			}, nil)
+			if err := operation(l, t.Context()); !errors.Is(err, dlock.ErrLockNotHeld) {
+				t.Fatalf("lease %d: got %v, want ErrLockNotHeld", leaseID, err)
+			}
+			if l.held || lease.revoked != 1 {
+				t.Fatalf("lease %d: held = %v, revocations = %d", leaseID, l.held, lease.revoked)
+			}
+		}
+	}
+}
+
+type blockingRevoke struct{ *fakeUnlockLease }
+
+func (b blockingRevoke) Revoke(ctx context.Context, _ clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRefreshBoundsLostLeaseCleanup(t *testing.T) {
+	l, lease := newUnlockTestLock(&clientv3.GetResponse{}, nil)
+	l.lease = blockingRevoke{lease}
+	l.operationTimeout = 30 * time.Millisecond
+	start := time.Now()
+	if err := l.Refresh(t.Context()); !errors.Is(err, dlock.ErrLockNotHeld) {
+		t.Fatalf("Refresh = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("Refresh took %s with %s budget", elapsed, l.operationTimeout)
+	}
 }

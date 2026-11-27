@@ -107,6 +107,7 @@ type fakeConsul struct {
 	renewStatus  int
 	keySession   string
 	releaseFails bool
+	blockDestroy bool
 	released     bool
 	destroyed    int
 }
@@ -145,7 +146,11 @@ func newTestClient(t *testing.T, fake *fakeConsul) *api.Client {
 		}
 		_, _ = fmt.Fprint(w, `[{"ID":"session-1","TTL":"10s"}]`)
 	})
-	mux.HandleFunc("PUT /v1/session/destroy/session-1", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("PUT /v1/session/destroy/session-1", func(w http.ResponseWriter, r *http.Request) {
+		if fake.blockDestroy {
+			<-r.Context().Done()
+			return
+		}
 		fake.mu.Lock()
 		fake.destroyed++
 		fake.mu.Unlock()
@@ -206,5 +211,24 @@ func TestUnlockAfterKeyReassignedDestroysSession(t *testing.T) {
 	}
 	if !fake.wasDestroyed() {
 		t.Fatal("Unlock() left the live session behind after losing the key")
+	}
+}
+
+func TestRefreshBoundsLostSessionCleanup(t *testing.T) {
+	client := newTestClient(t, &fakeConsul{renewStatus: http.StatusNotFound, blockDestroy: true})
+	const budget = 100 * time.Millisecond
+	locker, err := consul.NewLock(t.Context(), client, dlock.WithLockName("lock"), dlock.WithOperationTimeout(budget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := locker.Lock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := locker.Refresh(t.Context()); !errors.Is(err, dlock.ErrLockNotHeld) {
+		t.Fatalf("Refresh = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Refresh took %s with %s budget", elapsed, budget)
 	}
 }

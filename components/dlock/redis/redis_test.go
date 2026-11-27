@@ -322,3 +322,45 @@ func TestUnlockWithoutHolding(t *testing.T) {
 		t.Fatalf("Unlock() on missing key error = %v, want ErrLockNotHeld", err)
 	}
 }
+
+func TestRedisFailurePaths(t *testing.T) {
+	srv := miniredis.RunT(t)
+	client := goredis.NewClient(&goredis.Options{Addr: srv.Addr(), MaxRetries: -1})
+	defer client.Close()
+	locker, err := redis.NewLock(t.Context(), client, dlock.WithLockName("held"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The Lua script can see the competing key even when the client is denied
+	// the separate diagnostic GET. Contention must keep its sentinel.
+	srv.Set("held", "peer@token")
+	client.AddHook(denyGet{})
+	if err := locker.Lock(t.Context()); !errors.Is(err, dlock.ErrLocked) || strings.Contains(err.Error(), "peer") {
+		t.Fatalf("contention without diagnostic: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []func(context.Context) error{locker.Refresh, locker.Unlock} {
+		if err := op(t.Context()); !errors.Is(err, goredis.ErrClosed) {
+			t.Fatalf("closed store: %v", err)
+		}
+	}
+}
+
+type denyGet struct{}
+
+func (denyGet) DialHook(next goredis.DialHook) goredis.DialHook { return next }
+
+func (denyGet) ProcessPipelineHook(next goredis.ProcessPipelineHook) goredis.ProcessPipelineHook {
+	return next
+}
+
+func (denyGet) ProcessHook(next goredis.ProcessHook) goredis.ProcessHook {
+	return func(ctx context.Context, cmd goredis.Cmder) error {
+		if cmd.Name() == "get" {
+			return errors.New("diagnostic read denied")
+		}
+		return next(ctx, cmd)
+	}
+}

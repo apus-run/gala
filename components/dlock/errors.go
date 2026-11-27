@@ -8,10 +8,11 @@ var (
 	// ErrLocked 表示锁仍被其他持有者占用；对方 TTL 到期后可再次 Lock 接管。
 	ErrLocked = errors.New("dlock: lock is already held")
 
-	// ErrLockNotHeld is returned by Unlock or Refresh when this Locker no
-	// longer owns the lock, typically because the lease expired and another
-	// owner took over. The owner must stop working on the protected resource.
-	// ErrLockNotHeld 表示本 Locker 已不再持有锁，通常是租约过期后他人接管；
+	// ErrLockNotHeld means the Locker no longer holds the lock. SQL and MongoDB
+	// also return it from Lock when the written lease has expired by the time
+	// the backend acknowledges the write. The owner must stop working on the protected resource.
+	// ErrLockNotHeld 表示本 Locker 已不再持有锁。GORM 和 MongoDB 的 Lock 在
+	// 确认写入时租约已到期也返回此错误。
 	// 持有者必须停止操作被保护的资源。
 	ErrLockNotHeld = errors.New("dlock: lock is not held")
 

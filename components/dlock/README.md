@@ -21,7 +21,7 @@ go get github.com/apus-run/gala/components/dlock
 | `etcd` | etcd | 租约 + 事务 `CreateRevision(key) == 0` | 撤销 / KeepAliveOnce 自己的 lease，并校验 key | 秒（向上取整） | 直接可用 |
 | `consul` | Consul | session + `KV.Acquire` | `KV.Release` + 销毁 / Renew 自己的 session，并校验 key | 秒（10s–24h） | 直接可用 |
 | `gorm` | MySQL、PostgreSQL | `name` 唯一索引 + `version` 乐观锁接管 | 按令牌删除 / 按令牌续写，均要求未过期 | 毫秒（应用时钟） | `gorm.Init(ctx, db)` |
-| `mongo` | MongoDB | `name` 唯一索引 + 原子 FindOneAndUpdate；无索引时 Lock 失败（fail closed） | 按令牌删除 / 按令牌续写，均要求未过期 | 毫秒（应用时钟） | `mongo.Init(ctx, coll)`（缺失时 Lock 报错） |
+| `mongo` | MongoDB | `name` 唯一索引 + 按名称 upsert 和条件更新；无索引时 Lock 失败（fail closed） | 按令牌删除 / 按令牌续写，均要求未过期 | 毫秒（应用时钟） | `mongo.Init(ctx, coll)`（缺失时 Lock 报错） |
 | `noop` | 无 | 无排他性，永远成功 | 无 | 无 | 直接可用 |
 
 `gorm` 与 `mongo` 的建表/建索引放在显式的 `Init(ctx)` 中，构造函数不做 I/O。
@@ -57,7 +57,8 @@ type Locker interface {
   过期后既不能释放也不能续期新持有者的锁。
 - **错误可判定。** `Lock` 在他人持有时返回 `dlock.ErrLocked`；`Unlock` / `Refresh` 在本
   Locker 已失去锁时返回 `dlock.ErrLockNotHeld`，均可用 `errors.Is` 判断。过期但尚未被
-  接管时，五个真实后端都返回 `ErrLockNotHeld`。
+  接管时，五个真实后端的 `Unlock` / `Refresh` 都返回 `ErrLockNotHeld`。GORM 和 MongoDB
+  在 `Lock` / `Refresh` 收到写入确认时核对已写入的到期时间，租约已过期会返回同一错误。
 - **重复 `Lock` 幂等。** 同一 `Locker` 在持有期间再次 `Lock` 会延长 TTL 并返回成功。
 - **不内建等待重试。** `Lock` 冲突时立即返回 `ErrLocked`；需要排队的调用方自行做退避重试。
 - **`Unlock` 忽略调用方取消。** 释放属于清理动作：`ctx` 已取消时仍会带 `5s` 超时尝试释放，
@@ -65,6 +66,7 @@ type Locker interface {
 - **`Lock`/`Refresh` 有操作上限。** 两者在调用方 `ctx` 之外再套 `OperationTimeout`（默认
   `5s`，取两者中更早的截止时间），存储卡住时返回超时错误而不是永久挂起。Redis 需要客户
   端开启 `ContextTimeoutEnabled`，否则 go-redis 以自身的 `ReadTimeout`/`WriteTimeout` 为准。
+  Consul 和 etcd 的失败清理使用本次操作剩余的时间，未完成的 session 或 lease 由服务端 TTL 回收。
 - **释放失败交给 TTL 兜底。** `Unlock` 返回错误时不要假设锁已经释放，等待 TTL 过期即可。
 
 ## 示例
@@ -151,17 +153,23 @@ defer locker.Unlock(ctx)
 
 ## 验证
 
+在 `components/dlock` 目录下运行：
+
 ```sh
-cd components/dlock
-GOWORK=off go test -race ./...
+./test-unit.sh
+./integration/run.sh
 ```
 
-Redis 使用 miniredis 覆盖抢锁/释放/续期、令牌校验、取消上下文下的释放、typed-nil 校验、
-毫秒 TTL 与过期接管；`noop` 覆盖 `ErrLockNotHeld` 契约；Consul 用 `httptest` 假服务覆盖
-Renew 404、key 易主、session 清理和取消上下文下的释放；GORM 使用纯 Go SQLite 加入共享
-契约测试，并覆盖过期接管后旧持有者 `Refresh`/`Unlock` 返回 `ErrLockNotHeld`。etcd 与
-MongoDB 的单元测试只覆盖构造校验、`Init` 参数校验、索引判定与协议辅助逻辑——发布前仍需
-在真实服务上验证竞争、过期接管、坏时钟下的接管以及旧持有者 `Unlock`/`Refresh` 不生效。
+`test-unit.sh` 使用 `-race` 运行单元测试，按整个模块统计 Go 语句覆盖率，低于 99% 时返回失败。
+测试使用 SQLite、miniredis 和驱动模拟响应，覆盖存储错误、租约丢失、并发等待和清理超时。
+
+`integration/run.sh` 使用 Docker Compose 启动 Redis、MySQL、PostgreSQL、MongoDB、etcd 和 Consul。
+六种配置执行同一套契约测试，包括并发抢锁、续期、自然过期接管和取消请求后的释放。
+etcd 还验证同值 key 换绑租约，MongoDB 还验证索引移除与恢复、旧 ObjectID 接管、慢写入和过期清理。
+测试容器使用本机随机端口和临时数据目录，脚本在退出时清理本次 Compose 项目。
+
+单独验证 MongoDB 时，可将 `DLOCK_TEST_MONGODB_URI` 指向测试实例后运行
+`go test -race -count=1 -run TestMongoLeases ./mongo`。该测试在 `gala_dlock_test` 库中创建独立集合，结束后删除。
 
 ## 已知边界
 
@@ -176,5 +184,6 @@ MongoDB 的单元测试只覆盖构造校验、`Init` 参数校验、索引判�
   用 `Lose()` 模拟丢锁。
 - `gorm`/`mongo` 的 `Unlock` 会顺带删除仍带本令牌的过期行/文档，但持有者崩溃且不再调用
   `Unlock` 时不会自动清理；长期运行需要定期删除 `expired_at` 已过期的记录。
-- `mongo.Client.NewLock` 创建的 Locker 共享一次唯一索引校验；直接调用 `mongo.NewLock`
-  时每个 Locker 各自校验一次（fail-closed 的代价）。
+- MongoDB 每次 `Lock` 通过 `listIndexes` 校验当前集合。新文档以锁名作为 `_id`，并按
+  `name` 匹配已有记录，旧 ObjectID 文档可以原地续期和接管。重建集合前须先停止持锁业务，
+  重建后调用 `Init` 恢复索引。

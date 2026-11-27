@@ -4,8 +4,8 @@
 // # Notes | 说明
 //
 // [Init] creates the unique index on name, and runs before the first lock
-// operation. Lock inserts the document; on a duplicate key it atomically takes
-// over only when the stored token is its own or the document has expired, so a
+// operation. Lock upserts by name, using the name as _id for new documents.
+// It atomically updates an existing document only when the stored token is its own or the document has expired, so a
 // live lock is never overwritten. Unlock deletes only an unexpired document
 // with the matching token, and Refresh extends expiredAt only while the token
 // matches and the document has not expired. No background renewal is started:
@@ -14,7 +14,7 @@
 // document. Expiry uses the application clock; with skewed node clocks a
 // contender can take over a live lock early, so keep clocks synchronized (NTP)
 // or allow a margin.
-// [Init] 建立 name 唯一索引，在首次加锁前执行。Lock 插入文档；唯一键冲突时，仅当
+// [Init] 建立 name 唯一索引，在首次加锁前执行。Lock 按 name 查找，新文档使用锁名作为 _id；仅当
 // 令牌是自己的或文档已过期才原子接管，绝不会覆盖仍有效的锁。Unlock 只删除令牌
 // 匹配且未过期的文档，Refresh 仅在令牌匹配且未过期时续写 expiredAt。不会启动
 // 后台续期：长任务必须在 LockTimeout 到期前调用 Refresh。Unlock 忽略调用方取消，
@@ -36,9 +36,7 @@ package mongo
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -47,6 +45,7 @@ import (
 
 	"github.com/apus-run/gala/components/dlock"
 	"github.com/apus-run/gala/components/dlock/internal/cleanup"
+	"github.com/apus-run/gala/components/dlock/internal/expiry"
 	"github.com/apus-run/gala/components/dlock/internal/opctx"
 	"github.com/apus-run/gala/components/dlock/internal/token"
 )
@@ -59,23 +58,11 @@ type Lock struct {
 	operationTimeout time.Duration
 	ownerID          string
 	token            string
-
-	index *indexCache
-}
-
-// indexCache records a successful unique-index verification. Client-created
-// Lockers share one cache, so the listIndexes check runs once per client
-// rather than once per Run; a direct NewLock gets its own cache.
-// indexCache 记录一次成功的唯一索引校验。由 Client 创建的 Locker 共享同一个缓存，
-// 因此 listIndexes 每个 client 只执行一次，而不是每个 Run 一次；直接调用 NewLock
-// 则各自持有缓存。
-type indexCache struct {
-	mu    sync.Mutex
-	ready bool
 }
 
 // lockDoc is the document stored in the collection | lockDoc 是集合中存储的文档。
 type lockDoc struct {
+	ID        string    `bson:"_id,omitempty"`
 	Name      string    `bson:"name"`
 	OwnerID   string    `bson:"ownerID"`
 	Token     string    `bson:"token"`
@@ -92,12 +79,6 @@ var _ dlock.Locker = (*Lock)(nil)
 // NewLock 创建新的 Lock 实例，构造期不做任何 I/O；首次 Lock/Unlock/Refresh
 // 之前调用一次 [Init] 建立 name 唯一索引。
 func NewLock(_ context.Context, _ *mongo.Client, collection *mongo.Collection, opts ...dlock.Option) (*Lock, error) {
-	return newLock(collection, &indexCache{}, opts...)
-}
-
-// newLock builds a Locker with the provided index-verification cache.
-// newLock 用给定的索引校验缓存构建 Locker。
-func newLock(collection *mongo.Collection, index *indexCache, opts ...dlock.Option) (*Lock, error) {
 	if collection == nil {
 		return nil, fmt.Errorf("dlock/mongo: nil collection")
 	}
@@ -119,7 +100,6 @@ func newLock(collection *mongo.Collection, index *indexCache, opts ...dlock.Opti
 		operationTimeout: o.OperationTimeout,
 		ownerID:          o.OwnerID,
 		token:            tok,
-		index:            index,
 	}, nil
 }
 
@@ -171,21 +151,8 @@ func (l *Lock) Lock(ctx context.Context) error {
 	return fmt.Errorf("%w: lock %q", dlock.ErrLocked, l.lockName)
 }
 
-// requireUniqueNameIndex verifies once per Locker that Init created the unique
-// index on name. A successful verification is cached; failures, including
-// transient list-index errors, are not, so the next Lock retries and can
-// recover after Init runs or the store comes back.
-// requireUniqueNameIndex 对每个 Locker 只成功缓存一次 name 唯一索引校验；失败
-// （含列出索引时的暂时性错误）不缓存，下一次 Lock 会重试，从而能在 Init 执行或
-// 存储恢复后继续工作。
+// requireUniqueNameIndex checks the current collection on each acquisition.
 func (l *Lock) requireUniqueNameIndex(ctx context.Context) error {
-	l.index.mu.Lock()
-	defer l.index.mu.Unlock()
-
-	if l.index.ready {
-		return nil
-	}
-
 	// List raw index specs: driver v1.17's IndexSpecification drops
 	// partialFilterExpression, and a partial unique index on name does not
 	// constrain lock documents that miss the filter, so it must not pass the
@@ -208,7 +175,6 @@ func (l *Lock) requireUniqueNameIndex(ctx context.Context) error {
 		)
 	}
 
-	l.index.ready = true
 	return nil
 }
 
@@ -262,18 +228,23 @@ func isOne(v any) bool {
 func (l *Lock) tryAcquire(ctx context.Context) (done bool, err error) {
 	insertedAt := time.Now()
 
-	_, err = l.collection.InsertOne(ctx, lockDoc{
+	// Match legacy documents by name, including those with an ObjectID. New
+	// documents also use the name as _id so concurrent upserts remain unique
+	// if the secondary index disappears after verification.
+	deadline := expiry.Deadline(insertedAt, l.lockTimeout)
+	result, err := l.collection.UpdateOne(ctx, bson.M{"name": l.lockName}, bson.M{"$setOnInsert": lockDoc{
+		ID:        l.lockName,
 		Name:      l.lockName,
 		OwnerID:   l.ownerID,
 		Token:     l.token,
-		ExpiredAt: insertedAt.Add(l.lockTimeout),
+		ExpiredAt: deadline,
 		CreatedAt: insertedAt,
 		UpdatedAt: insertedAt,
-	})
-	if err == nil {
-		return true, nil
+	}}, options.Update().SetUpsert(true))
+	if err == nil && result.UpsertedCount == 1 {
+		return true, expiry.Check(l.lockName, deadline)
 	}
-	if !mongo.IsDuplicateKeyError(err) {
+	if err != nil && !mongo.IsDuplicateKeyError(err) {
 		return true, fmt.Errorf("dlock/mongo: acquire lock %q: %w", l.lockName, err)
 	}
 
@@ -283,6 +254,7 @@ func (l *Lock) tryAcquire(ctx context.Context) (done bool, err error) {
 	// 在插入往返之后再取时钟：否则慢速主节点切换会缩短（甚至写过期）接管写入的
 	// 租约，而 Lock 仍报告成功。
 	now := time.Now()
+	deadline = expiry.Deadline(now, l.lockTimeout)
 
 	// Take over only our own document or an expired one. The find-and-update
 	// is atomic, so at most one contender wins.
@@ -297,20 +269,18 @@ func (l *Lock) tryAcquire(ctx context.Context) (done bool, err error) {
 	update := bson.M{"$set": bson.M{
 		"ownerID":   l.ownerID,
 		"token":     l.token,
-		"expiredAt": now.Add(l.lockTimeout),
+		"expiredAt": deadline,
 		"updatedAt": now,
 	}}
 
-	var doc lockDoc
-	err = l.collection.FindOneAndUpdate(ctx, filter, update,
-		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&doc)
-	if err == nil {
-		return true, nil
+	result, err = l.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return true, fmt.Errorf("dlock/mongo: take over lock %q: %w", l.lockName, err)
 	}
-	if errors.Is(err, mongo.ErrNoDocuments) {
+	if result.MatchedCount == 0 {
 		return false, nil
 	}
-	return true, fmt.Errorf("dlock/mongo: take over lock %q: %w", l.lockName, err)
+	return true, expiry.Check(l.lockName, deadline)
 }
 
 // Unlock releases the distributed lock | Unlock 释放分布式锁。
@@ -343,8 +313,9 @@ func (l *Lock) Unlock(ctx context.Context) error {
 		// 租约已过期（或已消失）：不再持有。尽力删除仍带本令牌的过期文档，
 		// 避免废弃锁永久堆积；令牌条件保证不会碰到其他持有者的文档。
 		_, _ = l.collection.DeleteOne(ctx, bson.M{
-			"name":  l.lockName,
-			"token": l.token,
+			"name":      l.lockName,
+			"token":     l.token,
+			"expiredAt": bson.M{"$lte": now},
 		})
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockName)
 	}
@@ -357,6 +328,7 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	defer cancel()
 
 	now := time.Now()
+	deadline := expiry.Deadline(now, l.lockTimeout)
 
 	res, err := l.collection.UpdateOne(ctx,
 		bson.M{
@@ -365,7 +337,7 @@ func (l *Lock) Refresh(ctx context.Context) error {
 			"expiredAt": bson.M{"$gt": now},
 		},
 		bson.M{"$set": bson.M{
-			"expiredAt": now.Add(l.lockTimeout),
+			"expiredAt": deadline,
 			"updatedAt": now,
 		}})
 	if err != nil {
@@ -374,14 +346,15 @@ func (l *Lock) Refresh(ctx context.Context) error {
 	if res.MatchedCount == 0 {
 		return fmt.Errorf("%w: lock %q", dlock.ErrLockNotHeld, l.lockName)
 	}
-	return nil
+	return expiry.Check(l.lockName, deadline)
 }
 
 // holder reports the diagnostic owner of the current lock, best effort.
 // holder 尽力报告当前锁的持有者，仅用于错误信息。
 func (l *Lock) holder(ctx context.Context) string {
 	var doc lockDoc
-	if err := l.collection.FindOne(ctx, bson.M{"name": l.lockName}).Decode(&doc); err != nil {
+	projection := options.FindOne().SetProjection(bson.M{"ownerID": 1, "_id": 0})
+	if err := l.collection.FindOne(ctx, bson.M{"name": l.lockName}, projection).Decode(&doc); err != nil {
 		return ""
 	}
 	return doc.OwnerID
