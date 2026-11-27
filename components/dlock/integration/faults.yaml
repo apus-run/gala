@@ -1,0 +1,81 @@
+x-sentinel: &sentinel
+  image: redis:7
+  tmpfs: ["/data"]
+  depends_on: [primary, replica]
+  entrypoint: ["/bin/sh", "-ec"]
+  command:
+    - |
+      cat > /data/sentinel.conf <<CONF
+      port 26379
+      bind 0.0.0.0
+      protected-mode no
+      sentinel resolve-hostnames yes
+      sentinel announce-hostnames yes
+      sentinel monitor leases primary 6379 2
+      sentinel down-after-milliseconds leases 3000
+      sentinel failover-timeout leases 20000
+      CONF
+      exec redis-server /data/sentinel.conf --sentinel
+  ports: ["127.0.0.1::26379"]
+
+x-etcd: &etcd
+  image: quay.io/coreos/etcd:v3.5.15
+  tmpfs: ["/etcd-data"]
+  ports: ["127.0.0.1::2379"]
+
+x-etcd-env: &etcd-env
+  ETCD_DATA_DIR: /etcd-data
+  ETCD_INITIAL_CLUSTER: a=http://peer-a:2380,b=http://peer-b:2380,c=http://peer-c:2380
+  ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+  ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+
+services:
+  primary:
+    image: redis:7
+    tmpfs: ["/data"]
+    ports: ["127.0.0.1::6379"]
+  replica:
+    image: redis:7
+    tmpfs: ["/data"]
+    depends_on: [primary]
+    command: ["redis-server", "--replicaof", "primary", "6379", "--replica-announce-ip", "replica"]
+    ports: ["127.0.0.1::6379"]
+  sentinel-1: *sentinel
+  sentinel-2: *sentinel
+  sentinel-3: *sentinel
+  a:
+    <<: *etcd
+    command: ["/usr/local/bin/etcd"]
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: a
+      ETCD_ADVERTISE_CLIENT_URLS: http://a:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://peer-a:2380
+    networks:
+      default: {}
+      peers: {aliases: [peer-a]}
+  b:
+    <<: *etcd
+    command: ["/usr/local/bin/etcd"]
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: b
+      ETCD_ADVERTISE_CLIENT_URLS: http://b:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://peer-b:2380
+    networks:
+      default: {}
+      peers: {aliases: [peer-b]}
+  c:
+    <<: *etcd
+    command: ["/usr/local/bin/etcd"]
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: c
+      ETCD_ADVERTISE_CLIENT_URLS: http://c:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://peer-c:2380
+    networks:
+      default: {}
+      peers: {aliases: [peer-c]}
+networks:
+  peers:
+    internal: true

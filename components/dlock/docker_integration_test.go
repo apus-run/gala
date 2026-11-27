@@ -59,22 +59,7 @@ func dockerClient(t *testing.T, backend string) dlock.Client {
 		}
 		return consul.NewClient(c)
 	case "mongo":
-		c, err := driver.Connect(t.Context(), options.Client().ApplyURI(dockerEndpoint(t, "DLOCK_TEST_MONGODB_URI")))
-		if err != nil {
-			t.Fatal(err)
-		}
-		coll := c.Database("gala_dlock_test").Collection(rand.Text())
-		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := coll.Drop(ctx); err != nil {
-				t.Error(err)
-			}
-			if err := c.Disconnect(ctx); err != nil {
-				t.Error(err)
-			}
-		})
-		return mongo.NewClient(c, coll)
+		return dockerMongoClient(t, rand.Text(), true)
 	case "mysql", "postgres":
 		var dialector gorm.Dialector
 		if backend == "mysql" {
@@ -96,6 +81,28 @@ func dockerClient(t *testing.T, backend string) dlock.Client {
 		t.Fatalf("unknown backend %q", backend)
 		return nil
 	}
+}
+
+func dockerMongoClient(t *testing.T, collection string, dropOnCleanup bool) dlock.Client {
+	t.Helper()
+	c, err := driver.Connect(t.Context(), options.Client().ApplyURI(dockerEndpoint(t, "DLOCK_TEST_MONGODB_URI")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll := c.Database("gala_dlock_test").Collection(collection)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if dropOnCleanup {
+			if err := coll.Drop(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+		if err := c.Disconnect(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	return mongo.NewClient(c, coll)
 }
 
 func TestDockerLeases(t *testing.T) {
