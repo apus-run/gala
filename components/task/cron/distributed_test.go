@@ -60,7 +60,6 @@ type fakeLocker struct {
 	owner       string
 	jobID       string
 	failRefresh atomic.Bool
-	failUnlocks atomic.Int32
 	failUnlock  atomic.Bool
 
 	// blockRefresh makes Refresh wait for its context and return ctx.Err(),
@@ -2011,9 +2010,9 @@ func TestDistributedShutdownRetriesFailedRelease(t *testing.T) {
 
 	backend := newFakeBackend()
 	locker := newFakeLocker(backend, "A", fakeJobID)
-	locker.failUnlocks.Store(1)
+	events := newLockEventRecorder()
 
-	c := New(WithLockerProvider(fixedProvider(locker)))
+	c := New(WithLockerProvider(fixedProvider(locker), WithLockEventHandler(events.handler())))
 	var runs atomic.Int32
 	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
 
@@ -2025,19 +2024,22 @@ func TestDistributedShutdownRetriesFailedRelease(t *testing.T) {
 
 	// Remove fails its Unlock and keeps the tombstone.
 	// Remove 的 Unlock 失败并保留墓碑。
+	locker.failUnlock.Store(true)
 	c.Remove(fakeJobID)
-	waitFor(t, "the failed release to keep the tombstone", func() bool {
-		l := leaseOf(c, fakeJobID)
-		if l == nil {
-			return false
-		}
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		return l.removed && l.mayHold
-	})
+	if rec := events.wait(t, LockReleaseFailed); rec.jobID != fakeJobID || !errors.Is(rec.err, errFakeUnlock) {
+		t.Fatalf("unexpected release failure event: %+v", rec)
+	}
+	lease := mustLease(t, c, fakeJobID)
+	lease.mu.Lock()
+	removed, mayHold := lease.removed, lease.mayHold
+	lease.mu.Unlock()
+	if !removed || !mayHold {
+		t.Fatalf("after failed Remove: removed=%v mayHold=%v, want true, true", removed, mayHold)
+	}
 
 	// Shutdown must retry and succeed once the backend accepts Unlocks.
 	// Shutdown 必须在后端恢复后重试并成功。
+	locker.failUnlock.Store(false)
 	if err := c.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v, want nil after a successful retry", err)
 	}
@@ -2047,7 +2049,7 @@ func TestDistributedShutdownRetriesFailedRelease(t *testing.T) {
 
 	// A second cycle with a still-failing Unlock must surface the error.
 	// 第二轮在 Unlock 仍失败时必须返回错误。
-	locker.failUnlocks.Store(1)
+	locker.failUnlock.Store(true)
 	c.MustAdd(fakeJobID, "* * * * *", func() { runs.Add(1) })
 	c.Start()
 	c.runDue(base.Add(time.Minute))
@@ -2055,8 +2057,80 @@ func TestDistributedShutdownRetriesFailedRelease(t *testing.T) {
 		return backend.ownerOf(fakeJobID) == "A"
 	})
 
-	err := c.Shutdown(context.Background())
-	if err == nil {
-		t.Fatalf("Shutdown() error = nil, want the failed release error (failUnlocks=%d owner=%q)", locker.failUnlocks.Load(), backend.ownerOf(fakeJobID))
+	if err := c.Shutdown(context.Background()); !errors.Is(err, errFakeUnlock) {
+		t.Fatalf("Shutdown() error = %v, want %v", err, errFakeUnlock)
+	}
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("failed Shutdown changed the lease owner to %q, want A", owner)
+	}
+	locker.failUnlock.Store(false)
+	if err := c.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() retry error = %v", err)
+	}
+	if owner := backend.ownerOf(fakeJobID); owner != "" {
+		t.Fatalf("Shutdown retry did not release the lease: owner %q", owner)
+	}
+}
+
+// shutdownWaitContext signals when a caller reaches the wait on its selected cycle.
+type shutdownWaitContext struct {
+	context.Context
+	waiting chan struct{}
+}
+
+func (c shutdownWaitContext) Done() <-chan struct{} {
+	select {
+	case c.waiting <- struct{}{}:
+	default:
+	}
+	return c.Context.Done()
+}
+
+func TestDistributedShutdownSharesReleaseError(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend()
+	locker := newFakeLocker(backend, "A", fakeJobID)
+	unlock := make(chan struct{})
+	allowUnlock := sync.OnceFunc(func() { close(unlock) })
+	t.Cleanup(allowUnlock)
+	locker.unlockRelease = unlock
+	locker.blockUnlock.Store(true)
+	locker.failUnlock.Store(true)
+
+	c := New(WithLockerProvider(fixedProvider(locker), WithLockAcquireTimeout(5*time.Second)))
+	c.MustAdd(fakeJobID, "* * * * *", func() {})
+	c.runDue(time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC))
+	waitInflight(t, c)
+	if owner := backend.ownerOf(fakeJobID); owner != "A" {
+		t.Fatalf("lease owner before Shutdown = %q, want A", owner)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	results := make(chan error, 2)
+	for range 2 {
+		waiter := shutdownWaitContext{Context: ctx, waiting: make(chan struct{}, 1)}
+		go func() { results <- c.Shutdown(waiter) }()
+		select {
+		case <-waiter.waiting:
+		case <-ctx.Done():
+			t.Fatal("Shutdown did not reach the shared wait")
+		}
+	}
+
+	allowUnlock()
+	for range 2 {
+		select {
+		case err := <-results:
+			if !errors.Is(err, errFakeUnlock) {
+				t.Errorf("Shutdown() error = %v, want %v", err, errFakeUnlock)
+			}
+		case <-ctx.Done():
+			t.Fatal("Shutdown did not return after Unlock")
+		}
+	}
+	if _, _, unlocks := backend.counts(); unlocks != 1 {
+		t.Errorf("Unlock called %d times, want 1 shared release", unlocks)
 	}
 }
