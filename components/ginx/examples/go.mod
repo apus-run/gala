@@ -15,7 +15,7 @@ require (
 	github.com/apus-run/gala/components/ginx/middlewares/circuitbreaker v0.17.1
 	github.com/apus-run/gala/components/ginx/middlewares/cors v0.17.1
 	github.com/apus-run/gala/components/ginx/middlewares/cost v0.17.1
-	github.com/apus-run/gala/components/ginx/middlewares/crawlerdetect v0.0.0-00010101000000-000000000000
+	github.com/apus-run/gala/components/ginx/middlewares/crawlerdetect v0.17.3
 	github.com/apus-run/gala/components/ginx/middlewares/error v0.17.1
 	github.com/apus-run/gala/components/ginx/middlewares/gzip v0.17.1
 	github.com/apus-run/gala/components/ginx/middlewares/helmet v0.17.1
