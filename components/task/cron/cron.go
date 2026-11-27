@@ -219,24 +219,19 @@ type Cron struct {
 // finished.
 // shutdownCycle 是一个排空并释放的周期：其等待者排空循环与在途任务，然后释放
 // 所有租约，完成时关闭 done。
-// newShutdownCycle arms a cycle with its done and releaseErr channels.
-// newShutdownCycle 创建一个带 done 与 releaseErr 通道的周期。
+// newShutdownCycle arms a cycle with its completion signal.
+// newShutdownCycle 创建一个带完成信号的周期。
 func newShutdownCycle() *shutdownCycle {
-	return &shutdownCycle{
-		done:       make(chan struct{}),
-		releaseErr: make(chan error, 1),
-	}
+	return &shutdownCycle{done: make(chan struct{})}
 }
 
 type shutdownCycle struct {
 	once sync.Once
 	done chan struct{}
-	// releaseErr holds the lease-release error of this cycle, if any, so a
-	// Shutdown can report that some leases may still be held instead of
-	// claiming a clean stop.
-	// releaseErr 保存本周期租约释放的错误（若有），使 Shutdown 能报告可能仍被
-	// 持有的租约，而不是声称干净停止。
-	releaseErr chan error
+	// The waiter writes releaseErr before closing done, and every caller
+	// reads it after observing done closed.
+	// 等待者在关闭 done 前写入 releaseErr，所有调用方在观察到 done 关闭后读取。
+	releaseErr error
 }
 
 // New create a new Cron struct with default tick interval of 1 minute
@@ -548,8 +543,8 @@ func (c *Cron) Stop() {
 // lease. That waiter is started once and keeps running even when ctx expires,
 // so a timed-out Shutdown still releases the leases as soon as the in-flight
 // jobs finish; no later Shutdown call is required. Every Shutdown call made
-// while the waiter runs shares it, and a waiter that has drained the Cron is
-// reported as success even when ctx expires at the same moment. Once the waiter
+// while the waiter runs receives the same lease-release result, which takes
+// precedence if ctx expires at the same moment. Once the waiter
 // has completed, the next Shutdown starts a fresh one, so a Cron restarted with
 // Start is drained and its leases released again.
 //
@@ -568,8 +563,8 @@ func (c *Cron) Stop() {
 // 启用分布式租约时，它先只停 ticker，再由唯一的后台等待者排空循环与在途任务并
 // 释放所有租约。该等待者只启动一次，且即使 ctx 到期也继续运行，因此超时的
 // Shutdown 仍会在在途任务结束后释放租约；无需再次调用 Shutdown。等待者运行期间
-// 的所有 Shutdown 调用共享它；若等待者已排空该 Cron，即使 ctx 同时到期也返回
-// 成功。等待者完成后，下一次 Shutdown 会启动新的等待者，因此用 Start 重启的
+// 的所有 Shutdown 调用共享同一释放结果，即使 ctx 同时到期也优先返回该结果。
+// 等待者完成后，下一次 Shutdown 会启动新的等待者，因此用 Start 重启的
 // Cron 会再次被排空并释放其租约。
 //
 // 不要与 Shutdown() 并发调用 Start()，也不要在 Shutdown 返回 ctx.Err() 之后
@@ -612,15 +607,14 @@ func (c *Cron) Shutdown(ctx context.Context) error {
 			c.inflight.Wait() // wait for the already dispatched ones | 等已分发的任务结束。
 
 			if err := c.releaseAllLeases(); err != nil {
-				s.releaseErr <- fmt.Errorf("cron: shutdown release: %w", err)
+				s.releaseErr = fmt.Errorf("cron: shutdown release: %w", err)
 			}
-			close(s.releaseErr)
 		}()
 	})
 
 	select {
 	case <-s.done:
-		return s.releaseError()
+		return s.releaseErr
 	case <-ctx.Done():
 	}
 
@@ -628,7 +622,7 @@ func (c *Cron) Shutdown(ctx context.Context) error {
 	// 两者同时就绪时，优先返回已排空的结果。
 	select {
 	case <-s.done:
-		return s.releaseError()
+		return s.releaseErr
 	default:
 		return ctx.Err()
 	}
@@ -814,17 +808,4 @@ func (c *Cron) execute(f fire) {
 	}
 
 	j.run()
-}
-
-// releaseError returns the release error recorded by this cycle, if any.
-// releaseError 返回本周期记录的释放错误（若有）。
-func (s *shutdownCycle) releaseError() error {
-	select {
-	case err, ok := <-s.releaseErr:
-		if ok && err != nil {
-			return err
-		}
-	default:
-	}
-	return nil
 }
